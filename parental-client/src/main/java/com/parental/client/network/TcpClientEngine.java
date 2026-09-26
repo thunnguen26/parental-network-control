@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.parental.client.config.ClientConfig;
+import com.parental.client.enforcement.HostsFileManager;
 import com.parental.client.device.DeviceInfoCollector;
 import com.parental.client.metrics.NetworkMetricsCollector;
 import com.parental.client.metrics.OshiNetworkMetricsCollector;
@@ -82,6 +83,8 @@ public class TcpClientEngine implements AutoCloseable {
     private final ServerCommandHandler commandHandler;
     /** Bộ thu thập metrics traffic (Task 3.1) — nullable: null = tắt gửi metrics. */
     private final NetworkMetricsCollector metricsCollector;
+    /** Domain Blocking Engine (Task 3.2) — nullable: null = không can thiệp hosts. */
+    private final HostsFileManager hostsFileManager;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
@@ -128,18 +131,20 @@ public class TcpClientEngine implements AutoCloseable {
     public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
                            JsonProtocolParser parser, ServerCommandHandler commandHandler) {
         this(config, deviceInfoCollector, parser, commandHandler,
-                new OshiNetworkMetricsCollector()); // mặc định: bật metrics qua OSHI
+                new OshiNetworkMetricsCollector(), // mặc định: bật metrics qua OSHI
+                null); // mặc định: không can thiệp hosts (UI/enforcement Phase sau quyết định)
     }
 
-    /** Constructor đầy đủ — test có thể inject collector giả lập (hoặc null để tắt metrics). */
+    /** Constructor đầy đủ — test có thể inject collector/hosts manager giả lập (hoặc null để tắt). */
     public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
                            JsonProtocolParser parser, ServerCommandHandler commandHandler,
-                           NetworkMetricsCollector metricsCollector) {
+                           NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager) {
         this.config = Objects.requireNonNull(config, "config");
         this.deviceInfoCollector = Objects.requireNonNull(deviceInfoCollector, "deviceInfoCollector");
         this.parser = Objects.requireNonNull(parser, "parser");
         this.commandHandler = Objects.requireNonNull(commandHandler, "commandHandler");
         this.metricsCollector = metricsCollector; // nullable — null = tắt gửi metrics
+        this.hostsFileManager = hostsFileManager; // nullable — null = không can thiệp hosts
     }
 
     // ------------------------------------------------------------------
@@ -176,6 +181,11 @@ public class TcpClientEngine implements AutoCloseable {
         Thread hook = new Thread(() -> {
             log.info("JVM shutdown detected — cleaning up client (clientId={})", config.getClientId());
             stop();
+            // Task 3.2: gỡ block hosts khi tắt app — tránh con cái bị chặn mạng
+            // ngoài ý muốn sau khi parental control đã thoát.
+            if (hostsFileManager != null) {
+                hostsFileManager.clearBlocks();
+            }
         }, "parental-client-shutdown-hook");
         shutdownHook = hook;
         try {
@@ -664,7 +674,12 @@ public class TcpClientEngine implements AutoCloseable {
         }
     }
 
-    /** Phase 2: chỉ log và gọi listener stub — việc chặn hosts/netsh thuộc Phase 3. */
+    /**
+     * Xử lý CONFIG_SYNC (Task 3.2 + Task 2.2): đọc {@code blockedDomains} và
+     * áp vào file hosts qua {@link HostsFileManager} (idempotent, defensive —
+     * thiếu quyền chỉ log WARN, không crash); sau đó gọi listener stub.
+     * Việc ngắt card mạng qua netsh thuộc Task 3.3.
+     */
     private void handleConfigSync(BaseMessage<?> message) {
         if (!(message.getPayload() instanceof ConfigSyncPayload configSync)) {
             log.warn("CONFIG_SYNC with unexpected payload: {}", message.getPayload());
@@ -672,6 +687,14 @@ public class TcpClientEngine implements AutoCloseable {
         }
         log.info("CONFIG_SYNC received: {} blocked domains, usage limit {}s",
                 configSync.blockedDomains().size(), configSync.dailyUsageLimitSeconds());
+        if (hostsFileManager != null) {
+            try {
+                hostsFileManager.applyBlockedDomains(configSync.blockedDomains());
+            } catch (RuntimeException e) {
+                // tuyệt đối không để lỗi hosts làm chết luồng đọc socket
+                log.error("Applying blocked domains failed: {}", e.getMessage());
+            }
+        }
         try {
             commandHandler.onConfigSync(configSync);
         } catch (RuntimeException e) {

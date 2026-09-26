@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.Timeout;
 
 import com.parental.client.config.ClientConfig;
 import com.parental.client.device.DefaultDeviceInfoCollector;
+import com.parental.client.enforcement.HostsFileManager;
 import com.parental.client.device.DeviceInfoCollector;
 import com.parental.common.protocol.ActionType;
 import com.parental.common.protocol.BaseMessage;
@@ -394,7 +397,7 @@ class TcpClientEngineIntegrationTest {
 
         engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
                 new JsonProtocolParser(), recordingHandler,
-                stubCollector);
+                stubCollector, null);
         engine.start();
 
         assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
@@ -426,7 +429,7 @@ class TcpClientEngineIntegrationTest {
         };
         engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
                 new JsonProtocolParser(), recordingHandler,
-                throwingCollector);
+                throwingCollector, null);
         engine.start();
 
         assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
@@ -437,6 +440,55 @@ class TcpClientEngineIntegrationTest {
         awaitCondition("heartbeat tiếp tục sau collector exception", AWAIT_TIMEOUT_MS,
                 () -> server.count(MessageType.HEARTBEAT) > before);
         assertTrue(engine.isConnected());
+    }
+
+    @Test
+    @DisplayName("CONFIG_SYNC -> HostsFileManager.applyBlockedDomains được gọi đúng danh sách (Task 3.2)")
+    void configSyncAppliesBlockedDomainsToHostsFile() throws Exception {
+        Path tempHosts = java.nio.file.Files.createTempFile("parental-test-hosts", ".tmp");
+        java.nio.file.Files.writeString(tempHosts, "127.0.0.1  localhost\n");
+        HostsFileManager hostsManager = new HostsFileManager(tempHosts);
+
+        try {
+            engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                    new JsonProtocolParser(), recordingHandler,
+                    null, // tắt metrics cho test này
+                    hostsManager);
+            engine.start();
+            assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+
+            // Server đẩy CONFIG_SYNC chứa danh sách domain chặn
+            pushToCurrentClient(BaseMessage.of(MessageType.CONFIG_SYNC, "fake-server",
+                    new ConfigSyncPayload(List.of("tiktok.com", "facebook.com"), 14_400, 0, "06:00", "22:00")));
+
+            awaitCondition("hosts file được apply danh sách chặn", AWAIT_TIMEOUT_MS, () -> {
+                try {
+                    String content = java.nio.file.Files.readString(tempHosts);
+                    return content.contains("127.0.0.1  tiktok.com")
+                            && content.contains(HostsFileManager.MARKER_START)
+                            && content.contains("127.0.0.1  localhost");
+                } catch (IOException e) {
+                    return false;
+                }
+            });
+
+            // CONFIG_SYNC thứ hai với danh sách rỗng → clearBlocks (marker bị gỡ)
+            pushToCurrentClient(BaseMessage.of(MessageType.CONFIG_SYNC, "fake-server",
+                    new ConfigSyncPayload(List.of(), 0, 0, "00:00", "23:59")));
+            awaitCondition("hosts file được clear khi danh sách rỗng", AWAIT_TIMEOUT_MS, () -> {
+                try {
+                    return !java.nio.file.Files.readString(tempHosts)
+                            .contains(HostsFileManager.MARKER_START);
+                } catch (IOException e) {
+                    return false;
+                }
+            });
+            assertTrue(engine.isConnected(), "Engine không được chết sau khi can thiệp hosts");
+        } finally {
+            engine.stop();
+            java.nio.file.Files.deleteIfExists(tempHosts);
+            java.nio.file.Files.deleteIfExists(tempHosts.resolveSibling(tempHosts.getFileName() + ".parental.bak"));
+        }
     }
 
     @Test

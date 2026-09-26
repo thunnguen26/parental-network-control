@@ -12,7 +12,7 @@
 
 ## Phase 3: Hardware Metrics & Client Enforcement Engine
 - [x] Task 3.1: Client - Tích hợp OSHI đo lưu lượng upload/download, gửi gói tin `METRICS_REPORT`. (79/79 test toàn dự án — 40/40 client + 21/21 server; `NetworkMetricsCollector` + `OshiNetworkMetricsCollector` delta calculation, scheduler riêng `metricsIntervalMs=5s`, server lưu `session.lastMetrics`)
-- [ ] Task 3.2: Client - Can thiệp file `hosts` để chặn danh sách domain từ lệnh `CONFIG_SYNC`.
+- [x] Task 3.2: Client - Can thiệp file `hosts` để chặn danh sách domain từ lệnh `CONFIG_SYNC`. (89/89 test toàn dự án — 50/50 client; `HostsFileManager` marker block + backup/restore + idempotent + atomic write + defensive quyền, tích hợp CONFIG_SYNC + shutdown hook clearBlocks)
 - [ ] Task 3.3: Client - Thực thi lệnh hệ thống `PAUSE_NETWORK` / `RESUME_NETWORK` qua `netsh`.
 
 ## Phase 4: Server Database & Business Rules Engine

@@ -1,9 +1,9 @@
 # CURRENT PROJECT STATE & TASK LOG
 
 ## 1. Project Snapshot
-- **Current Phase:** Phase 3 (Hardware Metrics & Client Enforcement Engine) — **Task 3.1 HOÀN THÀNH**.
-- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **79/79 test pass** (18 common + 21 server + 40 client).
-- **Active Task:** Task 3.2 — Client can thiệp file `hosts` để chặn danh sách domain từ lệnh `CONFIG_SYNC`.
+- **Current Phase:** Phase 3 (Hardware Metrics & Client Enforcement Engine) — **Task 3.2 HOÀN THÀNH**.
+- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **89/89 test pass** (18 common + 21 server + 50 client).
+- **Active Task:** Task 3.3 — Client thực thi lệnh hệ thống `PAUSE_NETWORK` / `RESUME_NETWORK` qua `netsh`.
 
 ## 2. Completed Tasks
 - [x] Tạo file AGENTS.md, PROTOCOL.md, ROADMAP.md.
@@ -24,6 +24,17 @@
     - Test (24): `ClientConfigTest` (10) — defaults/UUID riêng/builder/validation/equals; `DefaultDeviceInfoCollectorTest` (6) — payload đủ 5 trường, deviceType DESKTOP, fallback IP/MAC/hostname, MAC format, idempotent; `TcpClientEngineIntegrationTest` (8) với `FakeTcpServer` (ServerSocket dynamic port 0, trả ACK cho HEARTBEAT, hỗ trợ close/reopen CÙNG port) — handshake hợp lệ đầy đủ thông tin, HEARTBEAT định kỳ + nhận ACK (`lastAckTimestampMs > 0`), **auto-reconnect 2 kịch bản** (server chết đột ngột → mở lại cùng port; server chưa sẵn sàng → retry rồi kết nối được), server đẩy `COMMAND`/`CONFIG_SYNC` → listener nhận đúng payload, `stop()` sạch sẽ < 5s + heartbeat dừng hẳn, start/stop double là no-op/an toàn, listener ném RuntimeException engine vẫn sống. Chống deadlock: mọi chờ có timeout, @Timeout(90), daemon thread, stop() trong @AfterEach.
     - `parental-client/pom.xml`: thêm `slf4j-simple` (test scope) đồng nhất với server.
     - Kết quả: **24/24 PASS** — tổng toàn dự án **51/51 test pass** (`mvn clean test`).
+- [x] **Task 3.2** — Domain Blocking Engine qua file `hosts` trong `parental-client`:
+    - `com.parental.client.enforcement.HostsFileManager`:
+        * Đường dẫn linh hoạt qua constructor (`Path hostsFilePath` — test dùng temp file, KHÔNG đụng hosts thật); `defaultHostsPath()` suy theo OS: Windows `%SystemRoot%\System32\drivers\etc\hosts` (env `SystemRoot`, fallback `C:\Windows`), Linux/macOS `/etc/hosts`.
+        * **Marker Block**: `# >>> PARENTAL_CONTROL_BLOCK_START >>>` ... `# <<< PARENTAL_CONTROL_BLOCK_END <<<` — mọi domain chặn nằm giữa 2 marker, không xáo trộn cấu hình người dùng.
+        * **Backup & Safety**: `ensureBackup()` tạo `hosts.parental.bak` đúng MỘT LẦN (lần apply sau không ghi đè backup gốc — bảo toàn trạng thái ban đầu); `restoreBackup()` khôi phục nguyên bản, không có backup → false.
+        * **Idempotent**: `applyBlockedDomains(List<String>)` — đọc file, `stripMarkerBlock()` xóa block cũ, `buildMarkerBlock()` ghi block mới (`127.0.0.1` + `0.0.0.0` cho từng domain), `appendBlock()` nối cuối; `sanitizeDomains()` lowercase/trim/khử trùng/null-safe; danh sách rỗng/null → `clearBlocks()`; `clearBlocks()` xóa sạch marker block (file chưa có marker → false, không ghi).
+        * **Atomic write**: ghi temp file cùng thư mục rồi `ATOMIC_MOVE` + `REPLACE_EXISTING` (fallback thường khi filesystem không hỗ trợ atomic); thất bại tự dọn temp file.
+        * **Defensive** (AGENTS.md): kiểm tra `Files.isWritable()`; bắt `AccessDeniedException`/`IOException` → log WARN đúng chuỗi yêu cầu "Lacking Administrator/root privileges to modify hosts file. Domain blocking is bypassed."; KHÔNG BAO GIỜ ném exception ra ngoài (trả boolean).
+    - `TcpClientEngine` tích hợp (Task 3.2): constructor overload inject `HostsFileManager` (nullable — mặc định null, UI Phase sau quyết định); `handleConfigSync()` đọc `blockedDomains` → gọi `applyBlockedDomains()` bọc try/catch RuntimeException (lỗi hosts không bao giờ chết luồng đọc socket) rồi mới gọi listener stub; **shutdown hook gọi `clearBlocks()`** khi JVM tắt (tránh con cái bị chặn mạng ngoài ý muốn sau khi app thoát).
+    - Test mới (10): `HostsFileManagerTest` (9, toàn bộ trên `@TempDir` + temp file) — ghi block mới bảo toàn nội dung OS gốc, idempotent (2 lần apply không trùng lặp), thay thế block cũ, clearBlocks giữ nội dung gốc + idempotent, backup tạo đúng 1 lần + restore nguyên bản, restore khi chưa có backup → false, null/blank/rỗng safety (khử trùng, lowercase, không dòng "null"), file chưa tồn tại tự tạo, **file read-only → trả false không crash**; `TcpClientEngineIntegrationTest` +1 — **CONFIG_SYNC từ FakeServer → temp hosts file được apply đúng danh sách, CONFIG_SYNC rỗng → clear, engine không chết**.
+    - Kết quả: **50/50 client PASS** — tổng toàn dự án **89/89 test pass** (`mvn clean test`, chạy 2 lần).
 - [x] **Task 3.1** — Network Traffic Monitoring Engine với OSHI trong `parental-client`:
     - `com.parental.client.metrics.NetworkMetricsCollector` (interface `@FunctionalInterface`): `collect()` trả `MetricsPayload` — tách interface để test stub được và Phase sau đổi nguồn đo không sửa Engine.
     - `com.parental.client.metrics.OshiNetworkMetricsCollector`: OSHI `SystemInfo().getHardware()` → `getNetworkIFs(false)`; **bắt buộc `netIF.updateAttributes()` trước mỗi lần đọc** (không thì counters bị cache → delta = 0); lọc NIC: `IfOperStatus.UP`, không `isKnownVmMacAddr()`, `queryNetworkInterface()` không loopback, có ít nhất 1 IP (check `getIPv4addr()`/`getIPv6addr()` + fallback qua `java.net.NetworkInterface`); **Delta Calculation** được tách thành `computeFrom()` (package-private, test được không cần OSHI): lần đo đầu ghi baseline trả 0; delta = current − previous (guard `max(0,...)` chống counter reset); tốc độ = delta / deltaTimeSeconds; tổng tích lũy phiên `downloadBytes`/`uploadBytes`; `sessionDurationSeconds` từ `System.nanoTime()` mốc khởi tạo; `networkStatus` = "ACTIVE" (cờ cắm cho Task 3.3). Thread-safe `synchronized (lock)`; Defensive: mọi lỗi OSHI/SocketException nuốt, trả snapshot cũ — scheduler không bao giờ chết.
@@ -55,7 +66,7 @@
 - Không có.
 
 ## 4. Next Action Items (Dành cho phiên tiếp theo)
-- **Task 3.2** (ROADMAP Phase 3): Client can thiệp file `hosts` (C:\\Windows\\System32\\drivers\\etc\\hosts) để chặn danh sách domain từ `CONFIG_SYNC` (payload `blockedDomains`) — yêu cầu quyền Administrator, phải backup/restore an toàn, idempotent, defensive khi không có quyền. KHÔNG đụng `netsh` (Task 3.3).
+- **Task 3.3** (ROADMAP Phase 3): Client thực thi `PAUSE_NETWORK`/`RESUME_NETWORK` qua `netsh` khi nhận `COMMAND` (ActionType PAUSE_NETWORK/RESUME_NETWORK) — chạy `netsh interface set interface ...` cần quyền Administrator, defensive khi thiếu quyền (bắt exception, log WARN, không crash), cập nhật `networkStatus` trong `MetricsPayload` (cờ cắm đã chuẩn bị ở Task 3.1: "ACTIVE"/"PAUSED"). KHÔNG đụng thêm hosts (Task 3.2 đã xong).
 - Lệnh build môi trường này: `JAVA_HOME="/c/Program Files/Java/jdk-17" /c/maven/apache-maven-3.9.6/bin/mvn clean test`.
 
 ## 5. Known Issues / Blockers
@@ -63,4 +74,5 @@
 - Bài học Task 2.2 (đã xử lý): sleep trong backoff phải nằm trong try/catch InterruptedException của connectLoop (không phải Error wrapper); assert trạng thái bất đồng bộ (ACK, reconnect) phải dùng await-poll có timeout, không assert tức thời.
 - Bài học Task 2.3 (đã xử lý): watchdog phải đo im lặng từ bản tin inbound cuối (`lastServerActivityMs`), KHÔNG từ thời điểm gửi heartbeat gần nhất (bị reset mỗi chu kỳ → không bao giờ vượt timeout); `awaitTermination` của handler pool phải gọi SAU khi đóng hết session (handler block trong readLine chỉ thoát khi socket đóng); assert callback fire trên thread khác (sweeper/handler) luôn dùng await-poll có timeout.
 - Bài học Task 3.1 (đã xử lý): OSHI 6.6.5 `NetworkIF` không có `isUp()/isLoopback()/isVirtual()` — dùng `getIfOperStatus()` + `queryNetworkInterface()` (ném checked SocketException); `updateAttributes()` bắt buộc trước mỗi lần đọc counters; assert delta 2 lần đo trong test phải cộng dồn đúng chuỗi delta (không so tổng với delta riêng lẻ).
+- Bài học Task 3.2 (đã xử lý): test read-only file trên Windows dùng `dos:readonly` attribute (POSIX permissions chỉ trên Unix — `UnsupportedOperationException` phải fallback); atomic move cần fallback thường khi filesystem không hỗ trợ `ATOMIC_MOVE`; Test cleanup phải xóa cả file `.parental.bak` sinh kèm.
 - Đã cấu hình `forkedProcessTimeoutInSeconds=300` cho surefire (root `pom.xml`) — tự hủy forked JVM treo, phòng ngừa zombie process giữ khóa `target/` trên Windows (đã gặp và xử lý: deadlock ClientSession.close() khi thread handler block trong socket read không interruptible).
