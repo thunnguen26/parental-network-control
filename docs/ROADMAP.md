@@ -16,7 +16,7 @@
 - [x] Task 3.3: Client - Thực thi `PAUSE_NETWORK`/`RESUME_NETWORK` qua firewall rule `netsh` + `ALERT` notifier + ACK commandId. (105/105 test toàn dự án — 66/66 client; `NetworkEnforcer`/`WindowsNetshEnforcer` (block outbound 80,443/TCP giữ LAN) + `AlertNotifier`/`SystemTrayAlertNotifier` + `ActionDispatcher`, PROTOCOL.md Mục 3.5 bổ sung ACK `commandId`, cleanup on exit)
 
 ## Phase 4: Server Database & Business Rules Engine
-- [ ] Task 4.1: Server - Tích hợp SQLite, tạo Schema (clients, metrics_log, rules, schedules).
+- [x] Task 4.1: Server - Tích hợp SQLite, tạo Schema (clients, metrics_logs, client_rules, blocked_domains, command_logs). (130/130 test toàn dự án — 46/46 server; `DatabaseManager` (WAL file DB + foreign_keys/busy_timeout per-connection + migration idempotent + anchor connection cho :memory: shared-cache), DAO layer `ClientDao`/`MetricsDao` (getTodayTrafficBytes)/`RuleDao` (+blocked domains)/`CommandLogDao` (SENT→ACKED), tích hợp HANDSHAKE→upsert ONLINE / disconnect→OFFLINE / METRICS_REPORT→insert / ACK→markAcked)
 - [ ] Task 4.2: Server - Background Rule Engine kiểm tra giới hạn giờ dùng và dung lượng, tự phát lệnh `COMMAND`.
 
 ## Phase 5: Server Management GUI

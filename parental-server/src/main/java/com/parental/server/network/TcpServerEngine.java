@@ -15,6 +15,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.parental.common.protocol.JsonProtocolParser;
+import com.parental.server.db.ClientDao;
+import com.parental.server.db.CommandLogDao;
+import com.parental.server.db.DatabaseManager;
+import com.parental.server.db.MetricsDao;
 
 /**
  * TCP Server Engine: lắng nghe {@code ServerSocket} trên background thread,
@@ -38,6 +42,12 @@ public class TcpServerEngine {
     private final JsonProtocolParser parser = new JsonProtocolParser();
     private final AtomicBoolean running = new AtomicBoolean(false);
 
+    /** DB layer (Task 4.1) — nullable: null = chạy không database. */
+    private final DatabaseManager databaseManager;
+    private ClientDao clientDao;
+    private MetricsDao metricsDao;
+    private CommandLogDao commandLogDao;
+
     private ServerSocket serverSocket;
     private ExecutorService handlerPool;
     private java.util.concurrent.ScheduledExecutorService sweeper;
@@ -51,9 +61,25 @@ public class TcpServerEngine {
     }
 
     public TcpServerEngine(int port, int poolSize, long heartbeatTimeoutSeconds) {
+        this(port, poolSize, heartbeatTimeoutSeconds, null);
+    }
+
+    /**
+     * Constructor đầy đủ (Task 4.1): gắn {@link DatabaseManager} để mọi sự
+     * kiện (handshake/metrics/ACK/disconnect) được ghi vào SQLite. Truyền
+     * {@code null} để chạy không DB (một số test cũ không đụng database).
+     */
+    public TcpServerEngine(int port, int poolSize, long heartbeatTimeoutSeconds,
+                           DatabaseManager databaseManager) {
         this.port = port;
         this.poolSize = poolSize;
         this.heartbeatTimeoutSeconds = heartbeatTimeoutSeconds;
+        this.databaseManager = databaseManager;
+        if (databaseManager != null) {
+            this.clientDao = new ClientDao(databaseManager);
+            this.metricsDao = new MetricsDao(databaseManager);
+            this.commandLogDao = new CommandLogDao(databaseManager);
+        }
     }
 
     /** Mở cổng lắng nghe và khởi động accept loop trên background thread. */
@@ -73,6 +99,17 @@ public class TcpServerEngine {
         Thread acceptor = new Thread(this::acceptLoop, "parental-server-acceptor");
         acceptor.setDaemon(true);
         acceptor.start();
+
+        if (databaseManager != null) {
+            // Task 4.1: client OFFLINE khi disconnect (mọi lý do: EOF, sweep,
+            // server shutdown — đều đi qua ClientSessionManager callbacks).
+            sessionManager.addConnectionListener(new ClientConnectionListener() {
+                @Override
+                public void onClientDisconnected(String clientId, DisconnectReason reason) {
+                    clientDao.setStatus(clientId, "OFFLINE");
+                }
+            });
+        }
 
         log.info("TcpServerEngine started on port {} (pool size {}, heartbeat timeout {}s)",
                 getPort(), poolSize, heartbeatTimeoutSeconds);
@@ -121,7 +158,8 @@ public class TcpServerEngine {
             try {
                 Socket socket = serverSocket.accept();
                 socket.setTcpNoDelay(true);
-                handlerPool.execute(new ClientHandler(socket, sessionManager, parser));
+                handlerPool.execute(new ClientHandler(socket, sessionManager, parser,
+                        clientDao, metricsDao, commandLogDao));
             } catch (IOException e) {
                 if (running.get()) {
                     log.error("Accept loop I/O error: {}", e.getMessage());
@@ -142,6 +180,21 @@ public class TcpServerEngine {
 
     public ClientSessionManager getSessionManager() {
         return sessionManager;
+    }
+
+    /** DAO lưu thông tin client (null nếu engine chạy không DB). */
+    public ClientDao getClientDao() {
+        return clientDao;
+    }
+
+    /** DAO lưu metrics (null nếu engine chạy không DB). */
+    public MetricsDao getMetricsDao() {
+        return metricsDao;
+    }
+
+    /** DAO log lệnh (null nếu engine chạy không DB). */
+    public CommandLogDao getCommandLogDao() {
+        return commandLogDao;
     }
 
     public boolean isRunning() {

@@ -22,6 +22,10 @@ import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.ProtocolParseException;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.server.db.ClientDao;
+import com.parental.server.db.ClientRecord;
+import com.parental.server.db.CommandLogDao;
+import com.parental.server.db.MetricsDao;
 
 /**
  * Xử lý một kết nối Client trên thread riêng (chạy trong ExecutorService của
@@ -46,11 +50,23 @@ public class ClientHandler implements Runnable {
     private final Socket socket;
     private final ClientSessionManager sessionManager;
     private final JsonProtocolParser parser;
+    /** DB layer (Task 4.1) — nullable: null = chạy không database. */
+    private final ClientDao clientDao;
+    private final MetricsDao metricsDao;
+    private final CommandLogDao commandLogDao;
 
     ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser) {
+        this(socket, sessionManager, parser, null, null, null);
+    }
+
+    ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser,
+                  ClientDao clientDao, MetricsDao metricsDao, CommandLogDao commandLogDao) {
         this.socket = socket;
         this.sessionManager = sessionManager;
         this.parser = parser;
+        this.clientDao = clientDao;
+        this.metricsDao = metricsDao;
+        this.commandLogDao = commandLogDao;
     }
 
     @Override
@@ -96,6 +112,12 @@ public class ClientHandler implements Runnable {
             if (handshake.getPayload() instanceof HandshakePayload payload) {
                 session.setDeviceInfo(payload);
             }
+            // Task 4.1: upsert client vào DB (set ONLINE + last_seen) khi handshake
+            if (clientDao != null && handshake.getPayload() instanceof HandshakePayload device) {
+                clientDao.upsertClient(new ClientRecord(clientId, device.deviceName(),
+                        device.deviceType(), device.osVersion(), device.ipAddress(),
+                        device.macAddress(), "ONLINE"));
+            }
             session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
             sessionManager.register(session);
             socketRef.setSoTimeout(0); // không timeout khi đọc thường, dead-session do sweeper lo
@@ -138,12 +160,16 @@ public class ClientHandler implements Runnable {
                 }
                 case ACK -> {
                     // Task 3.3: client ACK lệnh COMMAND (payload chứa commandId) —
-                    // Phase 4 (Rule Engine) sẽ đối chiếu commandId và ghi CSDL.
+                    // Task 4.1: cập nhật status ACKED trong command_logs.
                     session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
                     if (message.getPayload() instanceof Map<?, ?> payload
                             && payload.get("commandId") != null) {
+                        String commandId = String.valueOf(payload.get("commandId"));
                         log.info("[{}] COMMAND ACK received (commandId={})",
-                                session.getClientId(), payload.get("commandId"));
+                                session.getClientId(), commandId);
+                        if (commandLogDao != null) {
+                            commandLogDao.markAcked(commandId);
+                        }
                     }
                 }
                 case METRICS_REPORT -> {
@@ -153,6 +179,10 @@ public class ClientHandler implements Runnable {
                     // Task 3.1: lưu metrics traffic mới nhất vào session (GUI/CSDL Phase sau đọc từ đây).
                     if (message.getPayload() instanceof MetricsPayload metrics) {
                         session.setLastMetrics(metrics);
+                        // Task 4.1: ghi lịch sử traffic vào DB
+                        if (metricsDao != null) {
+                            metricsDao.insert(session.getClientId(), metrics);
+                        }
                         log.debug("[{}] METRICS_REPORT: down={}B up={}B ({} B/s / {} B/s)",
                                 session.getClientId(), metrics.downloadBytes(), metrics.uploadBytes(),
                                 metrics.downloadSpeedBps(), metrics.uploadSpeedBps());
