@@ -1,9 +1,9 @@
 # CURRENT PROJECT STATE & TASK LOG
 
 ## 1. Project Snapshot
-- **Current Phase:** Phase 2 (Core Server & Client TCP Networking) — Task 2.1 HOÀN THÀNH.
-- **Current Status:** `mvn clean test` BUILD SUCCESS — 27/27 test pass (18 common + 9 server), không còn process treo.
-- **Active Task:** Task 2.2 — Client TCP: kết nối, gửi `HANDSHAKE`, vòng lặp `HEARTBEAT` 5s, auto-reconnect.
+- **Current Phase:** Phase 2 (Core Server & Client TCP Networking) — Task 2.2 HOÀN THÀNH.
+- **Current Status:** `mvn clean test` BUILD SUCCESS — 51/51 test pass (18 common + 9 server + 24 client), không còn process treo.
+- **Active Task:** Task 2.3 — Xử lý đóng kết nối an toàn (Graceful Shutdown) và phát hiện timeout/ngắt kết nối bất thường.
 
 ## 2. Completed Tasks
 - [x] Tạo file AGENTS.md, PROTOCOL.md, ROADMAP.md.
@@ -16,6 +16,14 @@
     - `ClientHandler`: Runnable trong pool — bắt buộc gói đầu tiên là HANDSHAKE (timeout 30s, sai → từ chối); HEARTBEAT → cập nhật heartbeat + phản hồi ACK; METRICS_REPORT chỉ log; bắt SocketException/IOException khi client ngắt đột ngột → cleanup session trong finally + log SLF4J rõ ràng.
     - `TcpServerEngine`: mặc định cổng 8888 (constructor overload cho port động); `ServerSocket` bind trên background daemon thread accept loop; `ExecutorService` fixed pool (kích thước `availableProcessors()*2`, tối thiểu 4); scheduled sweeper quét dead session mỗi timeout/2; `stop()` graceful shutdown — đóng listener, remove toàn bộ session, chờ pool tối đa 5s; `getPort()` trả về cổng thực (hỗ trợ port động = 0).
     - Integration test `TcpServerEngineIntegrationTest` (9 test): dynamic port; handshake đăng ký đúng clientId/deviceInfo; gói đầu không phải HANDSHAKE bị từ chối; HEARTBEAT→ACK + cập nhật timestamp; 2 client đồng thời; disconnect → cleanup tự động; server chủ động đẩy COMMAND qua `session.send()`; sweep session quá hạn heartbeat; `stop()` shutdown sạch sẽ. Kết quả: **9/9 PASS** — tổng toàn dự án **27/27 test pass** (`mvn clean test`).
+- [x] **Task 2.2** — Client TCP Networking Engine trong `parental-client`:
+    - `com.parental.client.config.ClientConfig`: immutable + Builder — defaults `serverHost=127.0.0.1`, `serverPort=8888`, `clientId` tự sinh UUID, `heartbeatIntervalMs=5000`, `initialReconnectDelayMs=1000`, `maxReconnectDelayMs=30000`; validation (port 1..65535, timing > 0, max >= initial, non-blank host/clientId).
+    - `com.parental.client.device.DeviceInfoCollector` (interface `@FunctionalInterface`) + `DefaultDeviceInfoCollector` (Java Core, KHÔNG can thiệp OS): hostname qua `InetAddress.getLocalHost()` fallback `os.name` → `unknown-host`; `osVersion` = `os.name + os.version`; IP nội bộ ưu tiên NIC site-local (bỏ loopback/virtual/down) fallback `127.0.0.1`; MAC định dạng `AA-BB-CC-DD-EE-FF` ưu tiên NIC LAN fallback `00-00-00-00-00-00`; `deviceType` = `DESKTOP`; mọi trường có fallback riêng, không bao giờ quăng exception (SecurityException/UnknownHostException/SocketException đều nuốt).
+    - `com.parental.client.network.TcpClientEngine`: vòng đời `start()`/`stop()` trên background daemon thread (connector → handshake → heartbeat scheduler + inbound reader); auto-reconnect **exponential backoff** 1s→2s→4s→8s... chặn `maxReconnectDelayMs`, reset về initial khi thành công, `getReconnectAttempt()` theo dõi; gửi `HANDSHAKE` ngay khi kết nối (dùng `DeviceInfoCollector` + `JsonProtocolParser`); `ScheduledExecutorService` gửi `HEARTBEAT` định kỳ `heartbeatIntervalMs` (mặc định 5s); Inbound Reader đọc LDJSON liên tục — `ACK` → cập nhật `lastAckTimestampMs`, `COMMAND`/`CONFIG_SYNC` → gọi `ServerCommandHandler` listener (stub, chỉ log — không can thiệp OS); socket `soTimeout=30s` + `tcpNoDelay`; **chống deadlock Windows**: đóng socket TRƯỚC để đánh thức `readLine()`, heartbeat chạy thread riêng không bị reader chặn, ghi socket đồng bộ qua `writeLock`, mọi close nuốt exception; `stop()` idempotent — hủy scheduler, đóng socket, interrupt connector, join có timeout; listener ném RuntimeException không làm chết engine.
+    - `com.parental.client.network.ServerCommandHandler`: listener interface default-method `onCommand(CommandPayload)` / `onConfigSync(ConfigSyncPayload)`.
+    - Test (24): `ClientConfigTest` (10) — defaults/UUID riêng/builder/validation/equals; `DefaultDeviceInfoCollectorTest` (6) — payload đủ 5 trường, deviceType DESKTOP, fallback IP/MAC/hostname, MAC format, idempotent; `TcpClientEngineIntegrationTest` (8) với `FakeTcpServer` (ServerSocket dynamic port 0, trả ACK cho HEARTBEAT, hỗ trợ close/reopen CÙNG port) — handshake hợp lệ đầy đủ thông tin, HEARTBEAT định kỳ + nhận ACK (`lastAckTimestampMs > 0`), **auto-reconnect 2 kịch bản** (server chết đột ngột → mở lại cùng port; server chưa sẵn sàng → retry rồi kết nối được), server đẩy `COMMAND`/`CONFIG_SYNC` → listener nhận đúng payload, `stop()` sạch sẽ < 5s + heartbeat dừng hẳn, start/stop double là no-op/an toàn, listener ném RuntimeException engine vẫn sống. Chống deadlock: mọi chờ có timeout, @Timeout(90), daemon thread, stop() trong @AfterEach.
+    - `parental-client/pom.xml`: thêm `slf4j-simple` (test scope) đồng nhất với server.
+    - Kết quả: **24/24 PASS** — tổng toàn dự án **51/51 test pass** (`mvn clean test`).
 - [x] **Task 1.3** — Protocol Engine trong `parental-common` (package `com.parental.common.protocol`):
     - `JsonProtocolParser`: ObjectMapper an toàn (`FAIL_ON_UNKNOWN_PROPERTIES = false`); `toLine(BaseMessage<?>)` serialize + đảm bảo kết thúc `\n` (Framing Rule LDJSON); `fromLine(String)` tách frame `\n`/`\r\n`, kiểm tra 4 field bắt buộc `type`/`clientId`/`timestamp`/`payload` (Mục 2), parse payload polymorphic: HANDSHAKE→`HandshakePayload`, METRICS_REPORT→`MetricsPayload`, COMMAND→`CommandPayload`, CONFIG_SYNC→`ConfigSyncPayload`, HEARTBEAT/ACK→`Map` rỗng; field DTO thiếu nhận default lenient.
     - `ProtocolParseException`: bọc `JsonProcessingException`, không để exception thô của Jackson văng ra ngoài.
@@ -25,10 +33,10 @@
 - Không có.
 
 ## 4. Next Action Items (Dành cho phiên tiếp theo)
-- **Task 2.2** (ROADMAP Phase 2): Client — kết nối TCP, gửi `HANDSHAKE` ngay khi kết nối, vòng lặp gửi `HEARTBEAT` mỗi 5s, auto-reconnect exponential backoff. Client dùng `JsonProtocolParser` + DTO từ `parental-common`; KHÔNG sửa code server.
+- **Task 2.3** (ROADMAP Phase 2): Hoàn thiện graceful shutdown phía client + phát hiện timeout/ngắt kết nối bất thường (vd: server im lặng quá `soTimeout` mà không EOF → chủ động đóng + reconnect; phân biệt lỗi tạm thời/vĩnh viễn; bổ sung watchdog cho heartbeat). KHÔNG can thiệp OS (thuộc Phase 3), KHÔNG sửa protocol (PROTOCOL.md Mục 3.5 chỉ mở rộng khi có schema chuẩn).
 - Lệnh build môi trường này: `JAVA_HOME="/c/Program Files/Java/jdk-17" /c/maven/apache-maven-3.9.6/bin/mvn clean test`.
 
 ## 5. Known Issues / Blockers
 - `mvn` chưa có trong PATH (chỉ có JDK 23 không khớp target): dùng đường dẫn đầy đủ `/c/maven/apache-maven-3.9.6/bin/mvn` và `JAVA_HOME=C:\Program Files\Java\jdk-17`, hoặc cân nhắc thêm vào PATH hệ thống.
-- `PROTOCOL.md` ban đầu chưa có schema payload → đã bổ sung Mục 3 (do người dùng cung cấp schema chuẩn). Không còn blocker.
+- Bài học Task 2.2 (đã xử lý): sleep trong backoff phải nằm trong try/catch InterruptedException của connectLoop (không phải Error wrapper); assert trạng thái bất đồng bộ (ACK, reconnect) phải dùng await-poll có timeout, không assert tức thời.
 - Đã cấu hình `forkedProcessTimeoutInSeconds=300` cho surefire (root `pom.xml`) — tự hủy forked JVM treo, phòng ngừa zombie process giữ khóa `target/` trên Windows (đã gặp và xử lý: deadlock ClientSession.close() khi thread handler block trong socket read không interruptible).

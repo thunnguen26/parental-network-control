@@ -7,7 +7,7 @@
 
 ## Phase 2: Core Server & Client TCP Networking
 - [x] Task 2.1: Server - `ServerSocket` Engine với `ExecutorService` (Thread pool) và `ClientSessionManager`. (Integration test 9/9 qua)
-- [ ] Task 2.2: Client - Kết nối TCP, gửi `HANDSHAKE`, chạy vòng lặp gửi `HEARTBEAT` (5s/lần), Auto-reconnect.
+- [x] Task 2.2: Client - Kết nối TCP, gửi `HANDSHAKE`, chạy vòng lặp gửi `HEARTBEAT` (5s/lần), Auto-reconnect. (24/24 test qua — tổng 51/51; exponential backoff 1s→30s, `ClientConfig`, `DeviceInfoCollector`, `TcpClientEngine`, `ServerCommandHandler`)
 - [ ] Task 2.3: Xử lý đóng kết nối an toàn (Graceful Shutdown) và phát hiện timeout/ngắt kết nối bất thường.
 
 ## Phase 3: Hardware Metrics & Client Enforcement Engine
