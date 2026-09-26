@@ -1,9 +1,9 @@
 # CURRENT PROJECT STATE & TASK LOG
 
 ## 1. Project Snapshot
-- **Current Phase:** **Phase 4 HOÀN THÀNH 100%** — sẵn sàng chuyển sang Phase 5 (Server Management GUI).
-- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **149/149 test pass** (18 common + 65 server + 66 client).
-- **Active Task:** Phase 5 — Task 5.1: Server Management GUI Dashboard (Swing/JavaFX) hiển thị danh sách client, online/offline, traffic realtime.
+- **Current Phase:** **Phase 5 — Task 5.1 HOÀN THÀNH** — chuẩn bị Task 5.2 (GUI cấu hình giới hạn/chặn website/điều khiển thủ công).
+- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **155/155 test pass** (18 common + 71 server + 66 client).
+- **Active Task:** Task 5.2 — GUI cấu hình giới hạn (rule), chặn website (blocked domains), nút tạm dừng/khôi phục mạng thủ công.
 
 ## 2. Completed Tasks
 - [x] Tạo file AGENTS.md, PROTOCOL.md, ROADMAP.md.
@@ -24,6 +24,18 @@
     - Test (24): `ClientConfigTest` (10) — defaults/UUID riêng/builder/validation/equals; `DefaultDeviceInfoCollectorTest` (6) — payload đủ 5 trường, deviceType DESKTOP, fallback IP/MAC/hostname, MAC format, idempotent; `TcpClientEngineIntegrationTest` (8) với `FakeTcpServer` (ServerSocket dynamic port 0, trả ACK cho HEARTBEAT, hỗ trợ close/reopen CÙNG port) — handshake hợp lệ đầy đủ thông tin, HEARTBEAT định kỳ + nhận ACK (`lastAckTimestampMs > 0`), **auto-reconnect 2 kịch bản** (server chết đột ngột → mở lại cùng port; server chưa sẵn sàng → retry rồi kết nối được), server đẩy `COMMAND`/`CONFIG_SYNC` → listener nhận đúng payload, `stop()` sạch sẽ < 5s + heartbeat dừng hẳn, start/stop double là no-op/an toàn, listener ném RuntimeException engine vẫn sống. Chống deadlock: mọi chờ có timeout, @Timeout(90), daemon thread, stop() trong @AfterEach.
     - `parental-client/pom.xml`: thêm `slf4j-simple` (test scope) đồng nhất với server.
     - Kết quả: **24/24 PASS** — tổng toàn dự án **51/51 test pass** (`mvn clean test`).
+- [x] **Task 5.1** — Server Management GUI Dashboard trong `parental-server` (package `com.parental.server.gui`):
+    - **Dependency**: `com.formdev:flatlaf:3.5.1` (root pom `dependencyManagement` + module server — FlatLaf Light theme hiện đại, không cần native runtime như JavaFX).
+    - **`GuiFormat`** (pure function, không Swing — unit test headless được): `formatBytes` (B→KB→MB→GB→TB chia 1024, 1 chữ số thập phân, âm → "n/a"), `formatSpeedBps` (+"/s"), `formatDuration` ("Xh Ym Zs" lược bỏ phần tử 0 đầu), `clampPercent` (kẹp [0,100], limit ≤ 0 → 0).
+    - **`ServerDashboardFrame`** (1000x650, canh giữa, min-size responsive; BorderLayout 3 vùng):
+        * Left sidebar — `JList<ClientRecord>` renderer icon ●/○ Online/Offline + tên máy + IP + trạng thái; nguồn `ClientDao.getAllClients()` (mới — ORDER BY ONLINE trước + device_name; lỗi → danh sách rỗng defensive).
+        * Center — GridBagLayout thông tin thiết bị (tên/MAC/OS/thời gian phiên), 3 metric cards (tốc độ down/up, tổng hôm nay từ `MetricsDao.getTodayTrafficBytes`), 2 `JProgressBar` hạn mức dung lượng/thời gian so rule (`RuleDao.getRule`) — không rule → "Không giới hạn", đang khóa bởi Rule Engine → màu đỏ.
+        * Bottom — `JTextArea` monospace trong `JScrollPane` (auto-scroll cuối) log sự kiện "[HH:mm:ss] Client '...' đã kết nối/ngắt (reason)".
+    - **Event bridge & threading**: `ClientSessionManager.addConnectionListener` → log + reload danh sách, mọi callback bọc `SwingUtilities.invokeLater`; UI refresher `javax.swing.Timer` 1s (tick trên EDT an toàn mặc định) đọc `ClientSession.getLastMetrics()` + `RuleEvaluationEngine.isEnforced()` cập nhật cards/progress; `stopRefresher()` cho shutdown.
+    - **`ServerApp`** (main): `FlatLightLaf.setup()` trước Swing; `DatabaseManager(Path.of("parental_control.db"))` + `TcpServerEngine` port 8888 (args[0] tùy chọn, parse lỗi → fallback); mở Dashboard; WindowClosing → `stopRefresher()` → `engine.stop()` (giải phóng port + rule scheduler + đóng session) → dispose → `System.exit(0)`; lỗi khởi động (port bận...) → JOptionPane + exit(1). `parsePort` tách hàm package-private để test.
+    - **Surefire headless**: root pom thêm `java.awt.headless=true` cho toàn bộ forked test JVM — test cũ không văng `HeadlessException` khi chạm Swing.
+    - Test mới (6): `GuiFormatTest` — formatBytes các bậc (512/1024/1.5MB/1GB/1TB) + âm, formatSpeedBps, formatDuration (3661→"1h 1m 1s", 600→"10m 0s", 45→"45s"), clampPercent biên (50/100, vượt→100, limit≤0→0, âm→0).
+    - Kết quả: **71/71 server PASS** — tổng toàn dự án **155/155 test pass** (`mvn clean test`, chạy 2 lần liên tiếp).
 - [x] **Task 4.2** — Background Rule Engine trong `parental-server` (package `com.parental.server.rules`, Close-out Phase 4):
     - `RuleEvaluationEngine`: scheduler `ScheduledExecutorService` đơn thread tên `parental-server-rule-engine` (daemon), `scheduleWithFixedDelay` chu kỳ cấu hình được (ctor: mặc định 30s / test 1s; 3-arg ctor kèm `Clock` cắm được `() -> LocalTime` để unit test giả lập giờ trong ngày — mặc định `LocalTime::now`); vòng `evaluateAll()` quét mọi client ONLINE từ `ClientSessionManager.getAllSessions()` rồi `cleanupStatesForOfflineClients` (retainAll — client rời mạng bị gỡ trạng thái can thiệp + pre-warning); toàn bộ vòng quét bọc try/catch RuntimeException (task nền không bao giờ chết).
     - **3 điều kiện vi phạm theo thứ tự ưu tiên** (chỉ trả 1 reason/lượt để không spam): (1) khung giờ `isWithinAllowedSchedule(start, end, now)` — format `HH:mm`, null/blank/format hỏng → fail-open true, hỗ trợ khung thường (08:00–22:00, biên [start,end)) lẫn khung qua đêm (22:00–06:00 khi start > end), "00:00"–"00:00" = cả ngày; (2) `dailyUsageLimitSeconds > 0` so với `session.getLastMetrics().sessionDurationSeconds()` (metrics tích lũy client tự báo); (3) `dailyTrafficQuotaBytes > 0` so với `MetricsDao.getTodayTrafficBytes(clientId)` (tổng DB hôm nay). Rule null/đủ 0 + khung rỗng (`hasActiveRule`) → bỏ qua client.
@@ -98,7 +110,7 @@
 - Không có.
 
 ## 4. Next Action Items (Dành cho phiên tiếp theo)
-- **Phase 5 — Task 5.1** (ROADMAP): Server Management GUI — Dashboard (Swing/JavaFX) hiển thị danh sách client từ `ClientDao`/`ClientSessionManager` (online/offline), traffic realtime từ `ClientSession.lastMetrics` + `MetricsDao`; có sẵn `getRuleEvaluationEngine().getEnforcedClients()` để hiển thị trạng thái khóa. KHÔNG đụng client enforcement (đã xong Phase 3).
+- **Task 5.2** (ROADMAP Phase 5): Giao diện cấu hình — panel/tab trong Dashboard để: đặt hạn mức theo client (upsert `ConfigSyncPayload` → `RuleDao.upsertRule` + đẩy CONFIG_SYNC xuống client qua `session.send`), quản lý danh sách domain chặn, nút tạm dừng/khôi phục mạng thủ công (gửi COMMAND PAUSE/RESUME + ghi `CommandLogDao`); cần cơ chế nới khóa thủ công đồng bộ với `clientEnforcedState` của Rule Engine (thêm API `releaseEnforcement(clientId)` hoặc cho phép nút RESUME thủ công đi qua cùng luồng). KHÔNG đụng client enforcement (đã xong Phase 3).
 - Lệnh build môi trường này: `JAVA_HOME="/c/Program Files/Java/jdk-17" /c/maven/apache-maven-3.9.6/bin/mvn clean test`.
 
 ## 5. Known Issues / Blockers

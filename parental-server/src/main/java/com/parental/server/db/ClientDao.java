@@ -4,8 +4,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -143,6 +146,35 @@ public class ClientDao {
         } catch (SQLException e) {
             log.error("Failed to get last_seen for client [{}]: {}", clientId, e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Toàn bộ client trong DB (ONLINE đứng trước, cùng trạng thái xếp theo
+     * tên máy) — dùng cho Dashboard GUI (Task 5.1). Danh sách rỗng nếu lỗi.
+     */
+    public List<ClientRecord> getAllClients() {
+        String sql = "SELECT client_id, device_name, device_type, os_version, "
+                + "ip_address, mac_address, status FROM clients "
+                + "ORDER BY CASE WHEN status = 'ONLINE' THEN 0 ELSE 1 END, device_name";
+        List<ClientRecord> clients = new ArrayList<>();
+        try (Connection connection = database.newConnection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) {
+                clients.add(new ClientRecord(
+                        rs.getString("client_id"),
+                        rs.getString("device_name"),
+                        rs.getString("device_type"),
+                        rs.getString("os_version"),
+                        rs.getString("ip_address"),
+                        rs.getString("mac_address"),
+                        rs.getString("status")));
+            }
+            return clients;
+        } catch (SQLException e) {
+            log.error("Failed to list clients: {}", e.getMessage());
+            return clients;
         }
     }
 

@@ -24,6 +24,7 @@
         <jackson.version>2.17.2</jackson.version>
         <slf4j.version>2.0.13</slf4j.version>
         <sqlite-jdbc.version>3.46.1.0</sqlite-jdbc.version>
+        <flatlaf.version>3.5.1</flatlaf.version>
         <oshi.version>6.6.5</oshi.version>
         <junit.version>5.10.2</junit.version>
         <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
@@ -74,6 +75,13 @@
                 <version>${sqlite-jdbc.version}</version>
             </dependency>
 
+            <!-- GUI: FlatLaf (Server Dashboard — Task 5.1) -->
+            <dependency>
+                <groupId>com.formdev</groupId>
+                <artifactId>flatlaf</artifactId>
+                <version>${flatlaf.version}</version>
+            </dependency>
+
             <!-- Hardware/Network monitor: OSHI (Client) -->
             <dependency>
                 <groupId>com.github.oshi</groupId>
@@ -101,6 +109,11 @@
                     <configuration>
                         <!-- Tự hủy forked JVM treo quá 5 phút (chống zombie giữ khóa target/). -->
                         <forkedProcessTimeoutInSeconds>300</forkedProcessTimeoutInSeconds>
+                        <!-- Test chạy headless (CI/Maven không có màn hình): tránh
+                             HeadlessException khi test chạm Swing/AWT (Task 5.1). -->
+                        <systemPropertyVariables>
+                            <java.awt.headless>true</java.awt.headless>
+                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
             </plugins>

@@ -27,6 +27,12 @@
             <artifactId>sqlite-jdbc</artifactId>
         </dependency>
 
+        <!-- GUI: FlatLaf (Dashboard — Task 5.1) -->
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+        </dependency>
+
         <!-- Logging -->
         <dependency>
             <groupId>org.slf4j</groupId>
