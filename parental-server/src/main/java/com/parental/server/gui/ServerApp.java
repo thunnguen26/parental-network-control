@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.formdev.flatlaf.FlatLightLaf;
+import com.parental.server.db.DatabaseManager;
 import com.parental.server.network.TcpServerEngine;
 
 /**
@@ -59,9 +60,12 @@ public final class ServerApp {
 
     private static void startServerAndShowDashboard(int port) {
         try {
-            // DatabaseManager file DB runtime (Task 4.1 — migration idempotent)
-            var database = new com.parental.server.db.DatabaseManager(Path.of("parental_control.db"));
-            TcpServerEngine engine = new TcpServerEngine(port);
+            // DatabaseManager file DB runtime (Task 4.1 — migration idempotent).
+            // PHẢI truyền DB vào engine (ctor 2 tham số) — nếu không, toàn bộ
+            // DAO (ClientDao/MetricsDao/RuleDao/...) trả về null và Dashboard
+            // văng NullPointerException khi load danh sách thiết bị.
+            DatabaseManager database = new DatabaseManager(Path.of("parental_control.db"));
+            TcpServerEngine engine = new TcpServerEngine(port, database);
             engine.start();
             log.info("Server started on port {} (rule engine interval 30s)", engine.getPort());
 

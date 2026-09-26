@@ -14,9 +14,13 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Câu lệnh:</p>
  * <ul>
- *   <li>Block: {@code netsh advfirewall firewall add rule name="ParentalControlBlock"
+ *   <li>Block TCP: {@code netsh advfirewall firewall add rule name="ParentalControlBlockTCP"
  *       dir=out action=block remoteport=80,443 protocol=TCP}</li>
- *   <li>Unblock: {@code netsh advfirewall firewall delete rule name="ParentalControlBlock"}</li>
+ *   <li>Block UDP: {@code netsh advfirewall firewall add rule name="ParentalControlBlockUDP"
+ *       dir=out action=block remoteport=80,443,53 protocol=UDP} — chặn QUIC/HTTP3
+ *       (UDP 443) mà Chrome/Edge/Firefox dùng để lách rule chỉ chặn TCP, kèm cả
+ *       DNS-over-UDP cổng 53 (phòng resolution nhưng vẫn giữ DNS qua TCP).</li>
+ *   <li>Unblock: xóa CẢ HAI rule TCP + UDP khi khôi phục mạng.</li>
  * </ul>
  *
  * <p><b>Defensive OS Interfacing</b> (AGENTS.md):
@@ -28,7 +32,8 @@ import org.slf4j.LoggerFactory;
  */
 public class WindowsNetshEnforcer implements NetworkEnforcer {
 
-    public static final String FIREWALL_RULE_NAME = "ParentalControlBlock";
+    public static final String FIREWALL_RULE_NAME_TCP = "ParentalControlBlockTCP";
+    public static final String FIREWALL_RULE_NAME_UDP = "ParentalControlBlockUDP";
     /** Thời gian tối đa chờ tiến trình netsh (theo yêu cầu Task 3.3). */
     public static final int PROCESS_TIMEOUT_SECONDS = 5;
 
@@ -56,28 +61,52 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
             log.debug("Network already paused — skipping duplicate PAUSE command");
             return true;
         }
-        // Chỉ chặn outbound HTTP/HTTPS (80,443/TCP) — giữ LAN và DNS, server không mất quyền điều khiển.
-        boolean ok = execute("advfirewall", "firewall", "add", "rule",
-                "name=" + FIREWALL_RULE_NAME, "dir=out", "action=block",
+        // TCP: chặn HTTP/HTTPS thường (80,443/TCP).
+        boolean tcpOk = execute("advfirewall", "firewall", "add", "rule",
+                "name=" + FIREWALL_RULE_NAME_TCP, "dir=out", "action=block",
                 "remoteport=80,443", "protocol=TCP");
-        if (ok) {
+        // UDP: chặn QUIC/HTTP3 (UDP 443 — Chrome/Edge/Firefox dùng lách rule TCP)
+        // và DNS-over-UDP cổng 53. LAN tới Server vẫn giữ (rule chỉ chặn outbound).
+        boolean udpOk = execute("advfirewall", "firewall", "add", "rule",
+                "name=" + FIREWALL_RULE_NAME_UDP, "dir=out", "action=block",
+                "remoteport=80,443,53", "protocol=UDP");
+        if (tcpOk && udpOk) {
             paused = true;
-            log.warn("Network PAUSED: outbound HTTP/HTTPS blocked by firewall rule '{}'", FIREWALL_RULE_NAME);
+            log.warn("Network PAUSED: outbound HTTP/HTTPS blocked by firewall rules '{}' (TCP) "
+                    + "+ '{}' (UDP/QUIC)", FIREWALL_RULE_NAME_TCP, FIREWALL_RULE_NAME_UDP);
+        } else {
+            // Bán khóa: rollback rule đã thêm để không rơi vào trạng thái lửng
+            // (chặn TCP nhưng UDP/QUIC vẫn thông = duyệt web vẫn hoạt động).
+            log.warn("Network pause INCOMPLETE (tcpOk={}, udpOk={}) — rolling back partial rules",
+                    tcpOk, udpOk);
+            execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_TCP);
+            execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_UDP);
         }
-        return ok;
+        return tcpOk && udpOk;
     }
 
     @Override
     public boolean resumeNetwork() {
         if (!paused) {
-            // Idempotent: xóa rule dù cờ đang ACTIVE (phòng trường hợp rule còn sót)
-            execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME);
+            // Idempotent best-effort: xóa rule sót (phòng crash phiên trước).
+            // Rule không tồn tại → netsh exit 1 — KHÔNG coi là thất bại vì không
+            // có gì để gỡ (giữ semantic cũ: resume khi chưa pause luôn true).
+            execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_TCP);
+            execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_UDP);
             return true;
         }
-        boolean ok = execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME);
+        // Đang paused: cả hai rule đáng lẽ tồn tại → xóa CẢ HAI, thành công khi
+        // cả hai lệnh netsh đều exit 0.
+        boolean tcpOk = execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_TCP);
+        boolean udpOk = execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_UDP);
+        boolean ok = tcpOk && udpOk;
         if (ok) {
             paused = false;
-            log.info("Network RESUMED: firewall rule '{}' removed", FIREWALL_RULE_NAME);
+            log.info("Network RESUMED: firewall rules '{}' + '{}' removed",
+                    FIREWALL_RULE_NAME_TCP, FIREWALL_RULE_NAME_UDP);
+        } else {
+            log.warn("Network resume incomplete (tcpOk={}, udpOk={}) — firewall rules may remain, "
+                    + "check Administrator privileges", tcpOk, udpOk);
         }
         return ok;
     }
@@ -95,7 +124,8 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
                 resumeNetwork();
             } else {
                 // Phòng trường hợp rule còn sót từ phiên trước (crash đột ngột)
-                execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME);
+                execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_TCP);
+                execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_UDP);
             }
         } catch (RuntimeException e) {
             log.warn("Cleanup failed: {}", e.getMessage());
@@ -130,9 +160,11 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
             }
             int exitCode = process.exitValue();
             if (exitCode != 0) {
-                // Thường gặp: thiếu quyền Administrator (exit 1) — không crash, chỉ báo thất bại
-                log.warn("netsh exited with code {} (likely lacking Administrator privileges): {}",
-                        exitCode, String.join(" ", netshArgs));
+                // WARN rõ ràng cho lập trình viên: gần như luôn do thiếu quyền
+                // Administrator (netsh advfirewall yêu cầu elevated process).
+                log.warn("netsh exited with code {} — Firewall rule FAILED. Most likely the client "
+                        + "is NOT running as Administrator (netsh advfirewall requires elevation). "
+                        + "Command: {}", exitCode, String.join(" ", netshArgs));
                 return false;
             }
             return true;

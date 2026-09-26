@@ -69,6 +69,17 @@ public class TcpServerEngine {
         this(port, Math.max(4, Runtime.getRuntime().availableProcessors() * 2), 30);
     }
 
+    /**
+     * Constructor tiện lợi cho ứng dụng thật (ServerApp): cấu hình pool/
+     * heartbeat mặc định KÈM {@link DatabaseManager} — đảm bảo mọi DAO
+     * ({@link ClientDao}, {@link MetricsDao}, {@link RuleDao}...) được khởi
+     * tạo, Dashboard không bao giờ nhận DAO null.
+     */
+    public TcpServerEngine(int port, DatabaseManager databaseManager) {
+        this(port, Math.max(4, Runtime.getRuntime().availableProcessors() * 2), 30,
+                databaseManager);
+    }
+
     public TcpServerEngine(int port, int poolSize, long heartbeatTimeoutSeconds) {
         this(port, poolSize, heartbeatTimeoutSeconds, null);
     }

@@ -45,4 +45,19 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Chạy Client trực tiếp: mvn -pl parental-client exec:java
+                 (args tùy chọn: serverHost serverPort) -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+                <configuration>
+                    <mainClass>com.parental.client.app.ClientApp</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

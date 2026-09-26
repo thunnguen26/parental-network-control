@@ -1,5 +1,7 @@
 # PROJECT ROADMAP & IMPLEMENTATION PHASES
 
+> **✅ TRẠNG THÁI: TOÀN DỰ ÁN HOÀN THÀNH 100%** — đủ 5/5 Phase, 12/12 Task, 167/167 test pass (2026-09-26).
+
 ## Phase 1: Foundation & Common Protocol Engine
 - [x] Task 1.1: Setup Maven Multi-module (`parental-network-control`, `parental-common`, `parental-server`, `parental-client`).
 - [x] Task 1.2: Định nghĩa Models, Enums, DTOs theo `PROTOCOL.md` trong `parental-common`.
@@ -19,6 +21,9 @@
 - [x] Task 4.1: Server - Tích hợp SQLite, tạo Schema (clients, metrics_logs, client_rules, blocked_domains, command_logs). (130/130 test toàn dự án — 46/46 server; `DatabaseManager` (WAL file DB + foreign_keys/busy_timeout per-connection + migration idempotent + anchor connection cho :memory: shared-cache), DAO layer `ClientDao`/`MetricsDao` (getTodayTrafficBytes)/`RuleDao` (+blocked domains)/`CommandLogDao` (SENT→ACKED), tích hợp HANDSHAKE→upsert ONLINE / disconnect→OFFLINE / METRICS_REPORT→insert / ACK→markAcked)
 - [x] Task 4.2: Server - Background Rule Engine kiểm tra giới hạn giờ dùng và dung lượng, tự phát lệnh `COMMAND`. (149/149 test toàn dự án — 65/65 server; `RuleEvaluationEngine` scheduler `parental-server-rule-engine` chu kỳ cấu hình được (mặc định 30s), 3 điều kiện vi phạm theo thứ tự ưu tiên khung giờ (HH:mm, hỗ trợ qua đêm + fail-open) → thời gian (sessionDurationSeconds) → dung lượng (getTodayTrafficBytes), enforcement state chống spam + RESUME khi nới lỏng/gỡ rule, pre-warning ALERT ≤ 5 phút đúng 1 lần, offline cleanup, `setRuleScanIntervalSeconds`, start/stop cùng `TcpServerEngine`)
 
-## Phase 5: Server Management GUI
+## Phase 5: Server Management GUI — HOÀN THÀNH 100%
 - [x] Task 5.1: Xây dựng Dashboard (Swing + FlatLaf) hiển thị danh sách client, tình trạng online/offline, traffic realtime. (155/155 test toàn dự án — 71/71 server; `ServerDashboardFrame` 3 vùng (sidebar thiết bị / center chi tiết + metric cards + progress hạn mức / event log console), `ClientConnectionListener` bridge + `javax.swing.Timer` 1s, mọi cập nhật qua `SwingUtilities.invokeLater`, `GuiFormat` pure-function test headless, `ServerApp` (FlatLightLaf, port 8888, WindowClosing → graceful shutdown), FlatLaf 3.5.1, surefire `java.awt.headless=true`)
-- [ ] Task 5.2: Giao diện cấu hình giới hạn, chặn website, nút điều khiển tạm dừng/khôi phục mạng thủ công.
+- [x] Task 5.2: Giao diện cấu hình giới hạn, chặn website, nút điều khiển tạm dừng/khôi phục mạng thủ công. (167/167 test toàn dự án — 83/83 server; `RuleEvaluationEngine` manual API `manualPause`/`manualResume`/`sendAlert`/`releaseEnforcement`/`syncConfigToClient` (refactor `sendCommand` dùng chung), `RuleDao.setBlockedDomains` transactional, Quick Actions Panel (pause/resume enable theo trạng thái enforced + SwingWorker tránh block EDT), `PolicyConfigDialog` (blocked domains Thêm/Xóa, spinner giờ/ngày + GB/ngày, khung giờ HH:mm, Lưu & Đồng bộ ngay → `upsertRule` + `setBlockedDomains` + đẩy `CONFIG_SYNC` tức thì), exec-maven-plugin 3.2.0 (`mvn -pl parental-server exec:java`))
+
+---
+**Dự án hoàn thành toàn bộ theo ROADMAP.** Luồng end-to-end: Client (OSHI metrics + netsh/hosts enforcement) ⇄ TCP LDJSON ⇄ Server (SQLite + Rule Engine tự động + GUI giám sát/điều khiển thủ công).

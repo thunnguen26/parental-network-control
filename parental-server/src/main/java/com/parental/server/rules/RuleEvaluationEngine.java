@@ -17,6 +17,7 @@ import com.parental.common.protocol.ActionType;
 import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.payload.CommandPayload;
+import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.server.db.CommandLogDao;
 import com.parental.server.db.MetricsDao;
@@ -54,6 +55,7 @@ public class RuleEvaluationEngine {
     public static final String REASON_USAGE_LIMIT = "Daily usage time limit exceeded";
     public static final String REASON_TRAFFIC_QUOTA = "Daily traffic quota exceeded";
     public static final String REASON_RESUME = "Network access restored: usage limits no longer exceeded";
+    public static final String REASON_MANUAL_RESUME = "Network access restored manually by parent";
 
     private static final Logger log = LoggerFactory.getLogger(RuleEvaluationEngine.class);
 
@@ -69,8 +71,14 @@ public class RuleEvaluationEngine {
     private final long scanIntervalSeconds;
     private final Clock clock;
 
-    /** Trạng thái can thiệp: clientId → TRUE = đang bị khóa bởi rule engine. */
+    /** Trạng thái can thiệp: clientId → TRUE = đang bị khóa (tự động hoặc thủ công). */
     private final ConcurrentHashMap<String, Boolean> clientEnforcedState = new ConcurrentHashMap<>();
+    /**
+     * Client bị khóa THỦ CÔNG bởi phụ huynh qua {@link #manualPause(String, String)}:
+     * vòng quét tự động TUYỆT ĐỐI không gửi RESUME_NETWORK cho client trong set này
+     * (kể cả khi hạn mức hợp lệ) — chỉ {@link #manualResume(String)} mới gỡ được.
+     */
+    private final Set<String> manualEnforcedClients = ConcurrentHashMap.newKeySet();
     /** Đã gửi ALERT pre-warning cho chu kỳ vi phạm hiện tại chưa. */
     private final ConcurrentHashMap<String, Boolean> preWarned = new ConcurrentHashMap<>();
 
@@ -149,6 +157,14 @@ public class RuleEvaluationEngine {
         return Boolean.TRUE.equals(clientEnforcedState.get(clientId));
     }
 
+    /**
+     * Client có đang bị khóa THỦ CÔNG bởi phụ huynh không? Client trong trạng
+     * thái này được vòng quét tự động bỏ qua hoàn toàn (không RESUME tự động).
+     */
+    public boolean isManuallyEnforced(String clientId) {
+        return manualEnforcedClients.contains(clientId);
+    }
+
     /** Danh sách client đang bị khóa (dành cho GUI/monitoring Phase 5). */
     public List<String> getEnforcedClients() {
         return List.copyOf(clientEnforcedState.keySet());
@@ -174,6 +190,12 @@ public class RuleEvaluationEngine {
 
     void evaluateClient(ClientSession session) {
         final String clientId = session.getClientId();
+
+        // Client phụ huynh khóa THỦ CÔNG → vòng quét tự động TUYỆT ĐỐI BỎ QUA:
+        // không PAUSE spam, không RESUME tự động (chỉ manualResume mới gỡ được).
+        if (manualEnforcedClients.contains(clientId)) {
+            return;
+        }
 
         RuleRecord rule = ruleDao.getRule(clientId);
         boolean hasActiveRule = hasActiveRule(rule);
@@ -234,33 +256,160 @@ public class RuleEvaluationEngine {
     }
 
     // ------------------------------------------------------------------
+    // Manual control API (Task 5.2 — Quick Actions Panel của Dashboard)
+    // ------------------------------------------------------------------
+
+    /**
+     * Tạm dừng mạng THỦ CÔNG do phụ huynh yêu cầu (Quick Actions): gửi
+     * PAUSE_NETWORK, ghi command_logs và đánh dấu trạng thái khóa — Rule
+     * Engine tự động không đụng thêm client này cho tới khi
+     * {@link #manualResume(String)} hoặc {@link #releaseEnforcement(String)}.
+     *
+     * @return commandId nếu gửi thành công, {@code null} nếu client offline/gửi hỏng
+     */
+    public String manualPause(String clientId, String reason) {
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || session.isClosed()) {
+            log.warn("Manual pause skipped: client [{}] not online", clientId);
+            return null;
+        }
+        String safeReason = reason != null && !reason.isBlank() ? reason : "Manual pause by parent";
+        String commandId = sendCommand(session, ActionType.PAUSE_NETWORK, safeReason, true);
+        if (commandId != null) {
+            // Đánh dấu khóa thủ công SAU khi gửi thành công — vòng quét tự động
+            // từ đây bỏ qua client này cho tới khi manualResume/releaseEnforcement.
+            manualEnforcedClients.add(clientId);
+            log.info("[{}] Manual pause — auto rule engine will skip this client", clientId);
+        }
+        return commandId;
+    }
+
+    /**
+     * Khôi phục mạng THỦ CÔNG (Quick Actions): gỡ trạng thái khóa (kể cả khóa
+     * tự động của Rule Engine) + gửi RESUME_NETWORK + ghi command_logs.
+     *
+     * @return commandId nếu gửi thành công, {@code null} nếu client offline/gửi hỏng
+     */
+    public String manualResume(String clientId) {
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || session.isClosed()) {
+            log.warn("Manual resume skipped: client [{}] not online", clientId);
+            return null;
+        }
+        String commandId = sendCommand(session, ActionType.RESUME_NETWORK, REASON_MANUAL_RESUME, false);
+        if (commandId != null) {
+            // Gỡ khóa thủ công → lượt quét kế tiếp tự đánh giá lại từ đầu (vi phạm
+            // kéo dài sẽ bị PAUSE tự động lại).
+            manualEnforcedClients.remove(clientId);
+            clientEnforcedState.remove(clientId);
+            preWarned.remove(clientId);
+            log.info("[{}] Manual resume — enforcement released", clientId);
+        }
+        return commandId;
+    }
+
+    /**
+     * Gửi ALERT thủ công xuống client (tin nhắn nhanh của phụ huynh).
+     *
+     * @return commandId nếu gửi thành công, {@code null} nếu client offline/gửi hỏng
+     */
+    public String sendAlert(String clientId, String message) {
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || session.isClosed()) {
+            log.warn("Alert skipped: client [{}] not online", clientId);
+            return null;
+        }
+        String safeMessage = message != null && !message.isBlank()
+                ? message : "Message from parent";
+        return sendCommand(session, ActionType.ALERT, safeMessage, false);
+    }
+
+    /**
+     * Gỡ cờ cưỡng chế KHÔNG gửi lệnh — client được coi là tự do; lượt quét
+     * Rule Engine kế tiếp sẽ tự đánh giá lại từ đầu (vi phạm kéo dài sẽ bị
+     * PAUSE lại). Dùng khi muốn reset trạng thái khóa mà không can thiệp mạng.
+     *
+     * @return {@code true} nếu client trước đó đang bị khóa
+     */
+    public boolean releaseEnforcement(String clientId) {
+        boolean wasManual = manualEnforcedClients.remove(clientId);
+        boolean wasEnforced = clientEnforcedState.remove(clientId) != null | wasManual;
+        preWarned.remove(clientId);
+        if (wasEnforced) {
+            log.info("[{}] Enforcement released (no command sent)", clientId);
+        }
+        return wasEnforced;
+    }
+
+    /**
+     * Đồng bộ cấu hình chính sách hiện hành trong DB (Task 4.1) xuống client:
+     * đóng gói {@link ConfigSyncPayload} (domain chặn + hạn mức + khung giờ)
+     * và gửi {@code CONFIG_SYNC} qua phiên đang online. GUI gọi ngay sau khi
+     * lưu rule mới để client áp dụng tức thì không đợi chu kỳ sync khác.
+     *
+     * @return {@code true} nếu client online và gửi thành công
+     */
+    public boolean syncConfigToClient(String clientId) {
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || session.isClosed()) {
+            log.warn("Config sync skipped: client [{}] not online", clientId);
+            return false;
+        }
+        RuleRecord rule = ruleDao.getRule(clientId);
+        java.util.List<String> domains = ruleDao.getBlockedDomains(clientId);
+        ConfigSyncPayload payload = rule != null
+                ? new ConfigSyncPayload(domains,
+                        rule.dailyUsageLimitSeconds(), rule.dailyTrafficQuotaBytes(),
+                        rule.allowedStartTime(), rule.allowedEndTime())
+                : new ConfigSyncPayload(domains, 0, 0, null, null);
+        boolean sent = session.send(BaseMessage.of(
+                MessageType.CONFIG_SYNC, ClientHandler.SERVER_ID, payload));
+        if (sent) {
+            log.info("[{}] CONFIG_SYNC pushed ({} domains, usage {}s, quota {}B, schedule {}-{})",
+                    clientId, domains.size(),
+                    payload.dailyUsageLimitSeconds(), payload.dailyTrafficQuotaBytes(),
+                    payload.allowedStartTime(), payload.allowedEndTime());
+        }
+        return sent;
+    }
+
+    // ------------------------------------------------------------------
     // Enforcement actions
     // ------------------------------------------------------------------
 
+    /**
+     * Luồng gửi COMMAND dùng chung (tự động + thủ công — Task 5.2): sinh
+     * commandId UUID, gửi qua session; thành công → ghi command_logs (SENT)
+     * và tùy chọn đánh dấu trạng thái khóa. Thất bại → trả {@code null},
+     * KHÔNG ghi DB (chưa khóa; vòng quét tự động sẽ thử lại chu kỳ sau).
+     */
+    private String sendCommand(ClientSession session, ActionType action, String reason, boolean markEnforced) {
+        String commandId = UUID.randomUUID().toString();
+        CommandPayload payload = new CommandPayload(commandId, action, reason);
+        if (session.send(BaseMessage.of(MessageType.COMMAND, ClientHandler.SERVER_ID, payload))) {
+            commandLogDao.recordSent(commandId, session.getClientId(), action, reason);
+            if (markEnforced) {
+                clientEnforcedState.put(session.getClientId(), Boolean.TRUE);
+                preWarned.remove(session.getClientId());
+            }
+            log.info("{} sent to [{}] (reason: {})", action, session.getClientId(), reason);
+            return commandId;
+        }
+        log.warn("{} send failed to [{}] — will retry next cycle", action, session.getClientId());
+        return null;
+    }
+
     /** Gửi PAUSE_NETWORK + ghi SENT vào command_logs + đánh dấu trạng thái khóa. */
     private void enforcePause(ClientSession session, String reason) {
-        String commandId = UUID.randomUUID().toString();
-        CommandPayload payload = new CommandPayload(commandId, ActionType.PAUSE_NETWORK, reason);
-        if (session.send(BaseMessage.of(MessageType.COMMAND, ClientHandler.SERVER_ID, payload))) {
-            commandLogDao.recordSent(commandId, session.getClientId(), ActionType.PAUSE_NETWORK, reason);
-            clientEnforcedState.put(session.getClientId(), Boolean.TRUE);
-            preWarned.remove(session.getClientId());
-            log.info("PAUSE_NETWORK sent to [{}] (reason: {})", session.getClientId(), reason);
-        } else {
-            // Gửi hỏng (mạng giật) → giữ trạng thái chưa khóa, chu kỳ sau thử lại
-            log.warn("PAUSE send failed to [{}] — will retry next cycle", session.getClientId());
-        }
+        sendCommand(session, ActionType.PAUSE_NETWORK, reason, true);
     }
 
     /** Gửi RESUME_NETWORK + ghi SENT + gỡ trạng thái khóa. */
     private void resumeNetwork(ClientSession session) {
-        String commandId = UUID.randomUUID().toString();
-        CommandPayload payload = new CommandPayload(commandId, ActionType.RESUME_NETWORK, REASON_RESUME);
-        if (session.send(BaseMessage.of(MessageType.COMMAND, ClientHandler.SERVER_ID, payload))) {
-            commandLogDao.recordSent(commandId, session.getClientId(), ActionType.RESUME_NETWORK, REASON_RESUME);
+        String commandId = sendCommand(session, ActionType.RESUME_NETWORK, REASON_RESUME, false);
+        if (commandId != null) {
             clientEnforcedState.remove(session.getClientId());
             preWarned.remove(session.getClientId());
-            log.info("RESUME_NETWORK sent to [{}] (no violation)", session.getClientId());
         }
     }
 
@@ -279,12 +428,10 @@ public class RuleEvaluationEngine {
         if (Boolean.TRUE.equals(preWarned.get(clientId))) {
             return; // đã cảnh báo 1 lần rồi
         }
-        String commandId = UUID.randomUUID().toString();
         long minutesLeft = Math.max(1, remainingSeconds / 60);
         String reason = "You have " + minutesLeft + " minutes of screen time left";
-        CommandPayload payload = new CommandPayload(commandId, ActionType.ALERT, reason);
-        if (session.send(BaseMessage.of(MessageType.COMMAND, ClientHandler.SERVER_ID, payload))) {
-            commandLogDao.recordSent(commandId, clientId, ActionType.ALERT, reason);
+        String commandId = sendCommand(session, ActionType.ALERT, reason, false);
+        if (commandId != null) {
             preWarned.put(clientId, Boolean.TRUE);
             log.info("Pre-warning ALERT sent to [{}] ({}s remaining)", clientId, remainingSeconds);
         }
@@ -297,6 +444,7 @@ public class RuleEvaluationEngine {
             onlineIds.add(session.getClientId());
         }
         clientEnforcedState.keySet().retainAll(onlineIds);
+        manualEnforcedClients.retainAll(onlineIds);
         preWarned.keySet().retainAll(onlineIds);
     }
 

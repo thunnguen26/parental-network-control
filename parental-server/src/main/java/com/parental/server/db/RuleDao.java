@@ -99,6 +99,32 @@ public class RuleDao {
         }
     }
 
+    /**
+     * Thay thế toàn bộ danh sách domain chặn của client (Task 5.2 — GUI quản
+     * lý blocked domains): DELETE all + INSERT OR IGNORE trong 1 transaction,
+     * sanitize trim+lowercase, bỏ phần tử null/blank. Client chưa tồn tại
+     * (FK) hoặc lỗi SQL → {@code false}.
+     */
+    public boolean setBlockedDomains(String clientId, java.util.List<String> domains) {
+        try (Connection connection = database.newConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                replaceBlockedDomains(connection, clientId, domains);
+                connection.commit();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+            log.debug("Blocked domains replaced for client [{}]", clientId);
+            return true;
+        } catch (SQLException e) {
+            log.error("Failed to set blocked domains for client [{}]: {}", clientId, e.getMessage());
+            return false;
+        }
+    }
+
     /** Bản ghi rule hiện hành của client (null nếu chưa có). */
     public RuleRecord getRule(String clientId) {
         String sql = """

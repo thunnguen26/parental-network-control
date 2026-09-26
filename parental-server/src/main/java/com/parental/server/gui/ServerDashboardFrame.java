@@ -12,19 +12,26 @@ import java.awt.GridLayout;
 import java.awt.Insets;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
+import javax.swing.JButton;
+import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
@@ -100,6 +107,12 @@ public class ServerDashboardFrame extends JFrame {
     // --- Bottom event log ---
     private JTextArea eventLogArea;
 
+    // --- Quick actions (Task 5.2) ---
+    private JButton pauseButton;
+    private JButton resumeButton;
+    private JTextField alertMessageField;
+    private JButton sendAlertButton;
+
     private Timer uiRefresher;
 
     /** Dựng dashboard gắn với engine đang chạy (các thành phần không null). */
@@ -108,11 +121,15 @@ public class ServerDashboardFrame extends JFrame {
                                 ClientSessionManager sessionManager,
                                 RuleEvaluationEngine ruleEngine) {
         super("Parental Network Control - Server Dashboard");
-        this.serverEngine = serverEngine;
-        this.clientDao = clientDao;
-        this.metricsDao = metricsDao;
-        this.ruleDao = ruleDao;
-        this.sessionManager = sessionManager;
+        // Fail-fast các dependency bắt buộc — một DAO null (inject sai từ
+        // ServerApp) phải bùng nổ NGAY tại constructor, không phải NPE muộn
+        // trong vòng refresh định kỳ.
+        this.serverEngine = Objects.requireNonNull(serverEngine, "serverEngine must not be null");
+        this.clientDao = Objects.requireNonNull(clientDao, "clientDao must not be null");
+        this.metricsDao = Objects.requireNonNull(metricsDao, "metricsDao must not be null");
+        this.ruleDao = Objects.requireNonNull(ruleDao, "ruleDao must not be null");
+        this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
+        // Rule Engine tùy chọn (null = chạy không DB — các quick action tự tắt).
         this.ruleEngine = ruleEngine;
         initUi();
         registerEngineListeners();
@@ -133,6 +150,10 @@ public class ServerDashboardFrame extends JFrame {
         add(buildSidebar(), BorderLayout.WEST);
         add(buildCenterPanel(), BorderLayout.CENTER);
         add(buildBottomPanel(), BorderLayout.SOUTH);
+
+        // Load danh sách thiết bị lần đầu + cập nhật trạng thái nút ngay
+        reloadDeviceList();
+        updateQuickActionButtons();
     }
 
     private JPanel buildSidebar() {
@@ -149,9 +170,102 @@ public class ServerDashboardFrame extends JFrame {
         scrollPane.setPreferredSize(new Dimension(300, 0));
         scrollPane.setBorder(BorderFactory.createTitledBorder("Thiết bị đang quản lý"));
 
+        // Nút mở dialog cấu hình chính sách (Task 5.2)
+        JButton policyButton = new JButton("⚙ Cấu hình chính sách...");
+        policyButton.addActionListener(event -> openPolicyDialog());
+
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(scrollPane, BorderLayout.CENTER);
+        panel.add(policyButton, BorderLayout.SOUTH);
         return panel;
+    }
+
+    /**
+     * Quick Actions Panel (Task 5.2): Tạm dừng mạng / Khôi phục mạng / Gửi
+     * cảnh báo — gọi thẳng manual API của {@link RuleEvaluationEngine}.
+     */
+    private JPanel buildQuickActionsPanel() {
+        pauseButton = new JButton("⏸ Tạm dừng mạng");
+        resumeButton = new JButton("▶ Khôi phục mạng");
+        alertMessageField = new JTextField(18);
+        sendAlertButton = new JButton("Gửi cảnh báo");
+
+        pauseButton.addActionListener(event -> runQuickAction(() ->
+                ruleEngine.manualPause(selectedClientId(), "Tạm dừng thủ công từ phụ huynh"),
+                "đã gửi lệnh TẠM DỪNG mạng"));
+        resumeButton.addActionListener(event -> runQuickAction(() ->
+                ruleEngine.manualResume(selectedClientId()),
+                "đã gửi lệnh KHÔI PHỤC mạng"));
+        sendAlertButton.addActionListener(event -> {
+            String message = alertMessageField.getText().trim();
+            if (message.isEmpty()) {
+                appendEventLog("⚠ Tin nhắn cảnh báo rỗng — bỏ qua");
+                return;
+            }
+            runQuickAction(() -> ruleEngine.sendAlert(selectedClientId(), message),
+                    "đã gửi cảnh báo: \"" + message + "\"");
+            alertMessageField.setText("");
+        });
+
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
+        panel.setBorder(BorderFactory.createTitledBorder("Điều khiển nhanh (thủ công)"));
+        panel.add(pauseButton);
+        panel.add(resumeButton);
+        panel.add(alertMessageField);
+        panel.add(sendAlertButton);
+        return panel;
+    }
+
+    /** Chạy quick action trên nền SwingWorker tránh block EDT, log kết quả. */
+    private void runQuickAction(java.util.function.Supplier<String> action, String successMessage) {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("⚠ Chưa chọn thiết bị nào");
+            return;
+        }
+        String clientId = selected.clientId();
+        String deviceName = selected.deviceName();
+        new javax.swing.SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                return action.get();
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String commandId = get();
+                    if (commandId != null) {
+                        appendEventLog("Client '" + deviceName + "' (" + commandId.substring(0, 8) + "...) "
+                                + successMessage);
+                    } else {
+                        appendEventLog("⚠ Thao tác thất bại với client '" + deviceName
+                                + "' (offline hoặc gửi lỗi)");
+                    }
+                } catch (Exception e) {
+                    appendEventLog("⚠ Lỗi thao tác: " + e.getMessage());
+                }
+                updateQuickActionButtons();
+            }
+        }.execute();
+    }
+
+    /** ClientId đang chọn trong sidebar (null nếu không chọn gì). */
+    private String selectedClientId() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        return selected != null ? selected.clientId() : null;
+    }
+
+    /** Enable/disable nút pause/resume theo trạng thái online + enforced (EDT). */
+    private void updateQuickActionButtons() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        boolean online = selected != null && "ONLINE".equals(selected.status())
+                && ruleEngine != null; // không có rule engine → vô hiệu hóa quick action
+        boolean enforced = selected != null && ruleEngine != null && ruleEngine.isEnforced(selected.clientId());
+        pauseButton.setEnabled(online && !enforced);
+        resumeButton.setEnabled(online && enforced);
+        sendAlertButton.setEnabled(online);
+        alertMessageField.setEnabled(online);
     }
 
     private JPanel buildCenterPanel() {
@@ -252,6 +366,7 @@ public class ServerDashboardFrame extends JFrame {
         middle.add(cardsPanel, BorderLayout.NORTH);
         middle.add(rulesPanel, BorderLayout.CENTER);
         center.add(middle, BorderLayout.CENTER);
+        center.add(buildQuickActionsPanel(), BorderLayout.SOUTH);
         return center;
     }
 
@@ -341,13 +456,32 @@ public class ServerDashboardFrame extends JFrame {
     // ------------------------------------------------------------------
 
     private void reloadDeviceList() {
+        if (clientDao == null) {
+            return; // Defensive: DAO chưa sẵn sàng → không touch DB, giữ UI rỗng
+        }
+        // Giữ selection hiện tại qua lần refresh (theo clientId)
+        String previousSelection = selectedClientId();
         deviceListModel.clear();
         for (ClientRecord record : clientDao.getAllClients()) {
             deviceListModel.addElement(record);
         }
+        if (previousSelection != null) {
+            for (int i = 0; i < deviceListModel.size(); i++) {
+                if (previousSelection.equals(deviceListModel.get(i).clientId())) {
+                    deviceList.setSelectedIndex(i);
+                    deviceList.ensureIndexIsVisible(i);
+                    break;
+                }
+            }
+        }
+        updateQuickActionButtons();
     }
 
     private void refreshCenterPanel() {
+        // Defensive: vòng refresh 1s không được crash khi DAO/Engine chưa sẵn sàng
+        if (clientDao == null || metricsDao == null || ruleDao == null || sessionManager == null) {
+            return;
+        }
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
             // Không chọn gì: lấy client đầu tiên nếu có
@@ -415,6 +549,7 @@ public class ServerDashboardFrame extends JFrame {
             quotaBar.setForeground(null);
             usageBar.setForeground(null);
         }
+        updateQuickActionButtons();
     }
 
     private void clearCenterPanel() {
@@ -439,6 +574,29 @@ public class ServerDashboardFrame extends JFrame {
     private void appendEventLog(String message) {
         eventLogArea.append("[" + LocalTime.now().format(TIME_FORMAT) + "] " + message + "\n");
         eventLogArea.setCaretPosition(eventLogArea.getDocument().getLength()); // auto-scroll cuối
+    }
+
+    /**
+     * Mở dialog cấu hình chính sách cho client đang chọn (Task 5.2). Lưu
+     * thành công → đẩy CONFIG_SYNC xuống client ngay + log sự kiện.
+     */
+    private void openPolicyDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("⚠ Chưa chọn thiết bị nào để cấu hình");
+            return;
+        }
+        PolicyConfigDialog dialog = new PolicyConfigDialog(this, selected, ruleDao,
+                () -> {
+                    boolean pushed = ruleEngine != null
+                            && ruleEngine.syncConfigToClient(selected.clientId());
+                    appendEventLog(pushed
+                            ? "Đã đẩy CONFIG_SYNC xuống client '" + selected.deviceName() + "'"
+                            : "⚠ Không đồng bộ được tới client '" + selected.deviceName()
+                                    + "' (offline) — cấu hình đã lưu trong DB");
+                    refreshNow();
+                });
+        dialog.setVisible(true);
     }
 
     /** Reload danh sách thiết bị + chi tiết ngay lập tức (gọi từ ngoài EDT-safe). */

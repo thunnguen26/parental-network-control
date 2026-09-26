@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -203,15 +204,20 @@ class ActionDispatcherTest {
     }
 
     @Test
-    @DisplayName("WindowsNetshEnforcer: pause idempotent (add 1 lần); resume luôn delete (phòng rule sót)")
+    @DisplayName("WindowsNetshEnforcer: pause idempotent (add 1 lần); resume luôn delete cả TCP + UDP")
     void netshEnforcerIsIdempotent() {
-        AtomicInteger pauseCalls = new AtomicInteger();
+        AtomicInteger addTcpCalls = new AtomicInteger();
+        AtomicInteger addUdpCalls = new AtomicInteger();
         AtomicInteger deleteCalls = new AtomicInteger();
         WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
             @Override
             boolean execute(String... netshArgs) {
                 if (netshArgs.length > 2 && "add".equals(netshArgs[2])) {
-                    pauseCalls.incrementAndGet();
+                    if (hasUdpProtocol(netshArgs)) {
+                        addUdpCalls.incrementAndGet();
+                    } else {
+                        addTcpCalls.incrementAndGet();
+                    }
                 } else if (netshArgs.length > 2 && "delete".equals(netshArgs[2])) {
                     deleteCalls.incrementAndGet();
                 }
@@ -221,10 +227,91 @@ class ActionDispatcherTest {
 
         assertTrue(enforcer.pauseNetwork());
         assertTrue(enforcer.pauseNetwork(), "PAUSE lặp phải no-op (không add rule nữa)");
-        assertEquals(1, pauseCalls.get());
+        assertEquals(1, addTcpCalls.get(), "PAUSE lặp không add lại rule TCP");
+        assertEquals(1, addUdpCalls.get(), "PAUSE lặp không add lại rule UDP");
         assertTrue(enforcer.resumeNetwork());
         assertTrue(enforcer.resumeNetwork(), "RESUME khi ACTIVE vẫn delete — phòng rule sót từ crash");
-        assertEquals(2, deleteCalls.get(), "resumeNetwork luôn chạy delete (idempotent ở mức netsh)");
+        assertEquals(4, deleteCalls.get(), "Mỗi resumeNetwork xóa 2 rule (TCP + UDP); 2 lần resume → 4 delete");
+    }
+
+    @Test
+    @DisplayName("VẤN ĐỀ 2: pause tạo CẢ HAI rule TCP (80,443) + UDP (80,443,53) chống QUIC/HTTP3")
+    void netshEnforcerBlocksUdpQuic() {
+        List<String> addedRules = new ArrayList<>();
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
+            @Override
+            boolean execute(String... netshArgs) {
+                if (netshArgs.length > 2 && "add".equals(netshArgs[2])) {
+                    addedRules.add(String.join(" ", netshArgs));
+                }
+                return true;
+            }
+        };
+
+        assertTrue(enforcer.pauseNetwork());
+
+        assertEquals(2, addedRules.size(), "PAUSE phải tạo đúng 2 rule: TCP + UDP");
+        assertTrue(addedRules.get(0).contains("protocol=TCP")
+                        && addedRules.get(0).contains("remoteport=80,443")
+                        && addedRules.get(0).contains("name=ParentalControlBlockTCP"),
+                "Rule TCP: remoteport=80,443 protocol=TCP, name=ParentalControlBlockTCP");
+        assertTrue(addedRules.get(1).contains("protocol=UDP")
+                        && addedRules.get(1).contains("remoteport=80,443,53")
+                        && addedRules.get(1).contains("name=ParentalControlBlockUDP"),
+                "Rule UDP: remoteport=80,443,53 protocol=UDP, name=ParentalControlBlockUDP (chặn QUIC/HTTP3)");
+    }
+
+    @Test
+    @DisplayName("VẤN ĐỀ 2: resume xóa CẢ HAI rule TCP + UDP")
+    void netshEnforcerResumeDeletesBothRules() {
+        List<String> deletedRules = new ArrayList<>();
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
+            @Override
+            boolean execute(String... netshArgs) {
+                if (netshArgs.length > 2 && "delete".equals(netshArgs[2])) {
+                    deletedRules.add(String.join(" ", netshArgs));
+                }
+                return true;
+            }
+        };
+
+        assertTrue(enforcer.resumeNetwork());
+
+        assertEquals(2, deletedRules.size(), "RESUME phải xóa cả 2 rule TCP + UDP");
+        assertTrue(deletedRules.get(0).contains("name=ParentalControlBlockTCP"));
+        assertTrue(deletedRules.get(1).contains("name=ParentalControlBlockUDP"));
+    }
+
+    @Test
+    @DisplayName("VẤN ĐỀ 2: add UDP thất bại → rollback rule TCP, PAUSE trả false, không rơi trạng thái lửng")
+    void netshEnforcerPartialFailureRollsBack() {
+        List<String> executed = new ArrayList<>();
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
+            @Override
+            boolean execute(String... netshArgs) {
+                executed.add(String.join(" ", netshArgs));
+                // Lệnh add rule UDP luôn thất bại (mô phỏng thiếu quyền một phần)
+                return !(netshArgs.length > 2 && "add".equals(netshArgs[2]) && hasUdpProtocol(netshArgs));
+            }
+        };
+
+        assertFalse(enforcer.pauseNetwork(), "Một trong hai rule thất bại → PAUSE thất bại");
+        assertEquals("ACTIVE", enforcer.getNetworkStatus(), "Không rơi trạng thái bán khóa");
+
+        long rollbackDeletes = executed.stream()
+                .filter(cmd -> cmd.contains("delete") && cmd.contains("ParentalControlBlock"))
+                .count();
+        assertEquals(2, rollbackDeletes, "Phải rollback xóa cả 2 rule để không bỏ lỡ rule TCP đã thêm");
+    }
+
+    /** netshArgs có chứa 'protocol=UDP' không? (helper chung cho anonymous enforcer) */
+    private static boolean hasUdpProtocol(String... netshArgs) {
+        for (String arg : netshArgs) {
+            if ("protocol=UDP".equals(arg)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Test
@@ -245,21 +332,23 @@ class ActionDispatcherTest {
     }
 
     @Test
-    @DisplayName("WindowsNetshEnforcer: cleanup luôn gọi delete rule ngay cả khi chưa pause")
+    @DisplayName("WindowsNetshEnforcer: cleanup luôn xóa cả 2 rule TCP + UDP ngay cả khi chưa pause")
     void netshEnforcerCleanupAlwaysDeletesRule() {
-        AtomicBoolean cleanupExecuted = new AtomicBoolean(false);
+        List<String> deletedRules = new ArrayList<>();
         WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
             @Override
             boolean execute(String... netshArgs) {
                 if (netshArgs.length > 2 && "delete".equals(netshArgs[2])) {
-                    cleanupExecuted.set(true);
+                    deletedRules.add(String.join(" ", netshArgs));
                 }
                 return true;
             }
         };
 
         enforcer.cleanup();
-        assertTrue(cleanupExecuted.get(), "Cleanup phải xóa rule sót (phòng crash phiên trước)");
+        assertEquals(2, deletedRules.size(), "Cleanup phải xóa cả 2 rule TCP + UDP sót (phòng crash phiên trước)");
+        assertTrue(deletedRules.get(0).contains("name=ParentalControlBlockTCP"));
+        assertTrue(deletedRules.get(1).contains("name=ParentalControlBlockUDP"));
         assertEquals("ACTIVE", enforcer.getNetworkStatus());
     }
 
