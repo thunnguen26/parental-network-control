@@ -11,7 +11,7 @@
 - [x] Task 2.3: Graceful Shutdown + phát hiện timeout/ngắt kết nối bất thường. (68/68 test toàn dự án — tổng 20/20 server + 30/30 client; Watchdog Silent Server Detection 15s/3 nhịp tim + JVM shutdown hook + close(); server `DisconnectReason` + `ClientConnectionListener` callbacks + sweeper `HEARTBEAT_TIMEOUT` + `closeAll(SERVER_SHUTDOWN)`)
 
 ## Phase 3: Hardware Metrics & Client Enforcement Engine
-- [ ] Task 3.1: Client - Tích hợp OSHI đo lưu lượng upload/download, gửi gói tin `METRICS_REPORT`.
+- [x] Task 3.1: Client - Tích hợp OSHI đo lưu lượng upload/download, gửi gói tin `METRICS_REPORT`. (79/79 test toàn dự án — 40/40 client + 21/21 server; `NetworkMetricsCollector` + `OshiNetworkMetricsCollector` delta calculation, scheduler riêng `metricsIntervalMs=5s`, server lưu `session.lastMetrics`)
 - [ ] Task 3.2: Client - Can thiệp file `hosts` để chặn danh sách domain từ lệnh `CONFIG_SYNC`.
 - [ ] Task 3.3: Client - Thực thi lệnh hệ thống `PAUSE_NETWORK` / `RESUME_NETWORK` qua `netsh`.
 

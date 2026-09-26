@@ -27,6 +27,7 @@ import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.payload.HandshakePayload;
+import com.parental.common.protocol.payload.MetricsPayload;
 
 /**
  * Integration Test cho Server TCP Engine: khởi động server thật trên dynamic
@@ -332,6 +333,43 @@ class TcpServerEngineIntegrationTest {
         FakeClient client = connectAndHandshake("client-cb", "Laptop-ConTrai");
         awaitCondition("callback connected", Duration.ofSeconds(10), () -> !connected.isEmpty());
         assertTrue(connected.contains("client-cb"));
+        client.socket().close();
+    }
+
+    @Test
+    @DisplayName("METRICS_REPORT -> payload giải mã thành công và lưu vào session.lastMetrics (Task 3.1)")
+    void metricsReportUpdatesSessionLastMetrics() throws Exception {
+        FakeClient client = connectAndHandshake("client-metrics", "Laptop-ConTrai");
+        awaitCondition("session sẵn sàng", Duration.ofSeconds(10),
+                () -> engine.getSessionManager().get("client-metrics") != null);
+
+        // Client giả lập gửi 2 gói METRICS_REPORT liên tiếp (traffic tăng dần)
+        client.send(parser, BaseMessage.of(MessageType.METRICS_REPORT, "client-metrics",
+                new MetricsPayload(10_000, 5_000, 2_000, 1_000, 60, "ACTIVE")));
+
+        awaitCondition("session.lastMetrics cập nhật gói đầu", Duration.ofSeconds(10), () -> {
+            ClientSession s = engine.getSessionManager().get("client-metrics");
+            return s != null && s.getLastMetrics() != null;
+        });
+
+        ClientSession session = engine.getSessionManager().get("client-metrics");
+        MetricsPayload metrics = session.getLastMetrics();
+        assertNotNull(metrics);
+        assertEquals(10_000, metrics.downloadBytes());
+        assertEquals(5_000, metrics.uploadBytes());
+        assertEquals(2_000, metrics.downloadSpeedBps());
+        assertEquals(1_000, metrics.uploadSpeedBps());
+        assertEquals(60, metrics.sessionDurationSeconds());
+        assertEquals("ACTIVE", metrics.networkStatus());
+
+        // Gói thứ 2: traffic tăng — session phải cập nhật giá trị mới (không giữ cũ)
+        client.send(parser, BaseMessage.of(MessageType.METRICS_REPORT, "client-metrics",
+                new MetricsPayload(20_000, 9_000, 4_000, 1_800, 120, "ACTIVE")));
+        awaitCondition("session.lastMetrics cập nhật gói thứ hai", Duration.ofSeconds(10), () -> {
+            MetricsPayload m = engine.getSessionManager().get("client-metrics").getLastMetrics();
+            return m != null && m.downloadBytes() == 20_000;
+        });
+
         client.socket().close();
     }
 }

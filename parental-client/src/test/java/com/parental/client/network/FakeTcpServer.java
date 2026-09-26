@@ -51,6 +51,8 @@ final class FakeTcpServer implements AutoCloseable {
     final CountDownLatch firstHeartbeatLatch = new CountDownLatch(1);
     /** Mở khi client kết nối lần 2 (test auto-reconnect). */
     final CountDownLatch secondConnectionLatch = new CountDownLatch(1);
+    /** Mở khi gói METRICS_REPORT đầu tiên được ghi nhận (Task 3.1). */
+    final CountDownLatch firstMetricsLatch = new CountDownLatch(1);
 
     FakeTcpServer() throws IOException {
         serverSocket = new ServerSocket(0); // dynamic port
@@ -109,6 +111,9 @@ final class FakeTcpServer implements AutoCloseable {
 
                 if (message.getType() == MessageType.HANDSHAKE) {
                     handshakeLatch.countDown();
+                }
+                if (message.getType() == MessageType.METRICS_REPORT) {
+                    firstMetricsLatch.countDown();
                 }
                 if (message.getType() == MessageType.HEARTBEAT) {
                     firstHeartbeatLatch.countDown();
@@ -198,6 +203,10 @@ final class FakeTcpServer implements AutoCloseable {
 
     boolean awaitSecondConnection(long timeoutMs) throws InterruptedException {
         return secondConnectionLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
+    }
+
+    boolean awaitFirstMetrics(long timeoutMs) throws InterruptedException {
+        return firstMetricsLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
     }
 
     /** Đếm số gói tin theo loại đã nhận. */

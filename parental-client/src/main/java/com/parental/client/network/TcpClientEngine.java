@@ -24,6 +24,8 @@ import org.slf4j.LoggerFactory;
 
 import com.parental.client.config.ClientConfig;
 import com.parental.client.device.DeviceInfoCollector;
+import com.parental.client.metrics.NetworkMetricsCollector;
+import com.parental.client.metrics.OshiNetworkMetricsCollector;
 import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
@@ -31,6 +33,7 @@ import com.parental.common.protocol.ProtocolParseException;
 import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
+import com.parental.common.protocol.payload.MetricsPayload;
 
 /**
  * TCP Client Engine (Task 2.2): quản lý vòng đời kết nối tới Server.
@@ -77,6 +80,8 @@ public class TcpClientEngine implements AutoCloseable {
     private final DeviceInfoCollector deviceInfoCollector;
     private final JsonProtocolParser parser;
     private final ServerCommandHandler commandHandler;
+    /** Bộ thu thập metrics traffic (Task 3.1) — nullable: null = tắt gửi metrics. */
+    private final NetworkMetricsCollector metricsCollector;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
@@ -101,6 +106,8 @@ public class TcpClientEngine implements AutoCloseable {
 
     private volatile ScheduledExecutorService heartbeatScheduler;
     private volatile ScheduledFuture<?> heartbeatTask;
+    /** Scheduler riêng cho METRICS_REPORT — không làm nghẽn heartbeat/watchdog (Task 3.1). */
+    private volatile ScheduledExecutorService metricsScheduler;
     private volatile Thread connectorThread;
     private volatile Thread readerThread;
     /** JVM shutdown hook — đăng ký khi start(), hủy khi stop() để không rò rỉ. */
@@ -120,10 +127,19 @@ public class TcpClientEngine implements AutoCloseable {
 
     public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
                            JsonProtocolParser parser, ServerCommandHandler commandHandler) {
+        this(config, deviceInfoCollector, parser, commandHandler,
+                new OshiNetworkMetricsCollector()); // mặc định: bật metrics qua OSHI
+    }
+
+    /** Constructor đầy đủ — test có thể inject collector giả lập (hoặc null để tắt metrics). */
+    public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
+                           JsonProtocolParser parser, ServerCommandHandler commandHandler,
+                           NetworkMetricsCollector metricsCollector) {
         this.config = Objects.requireNonNull(config, "config");
         this.deviceInfoCollector = Objects.requireNonNull(deviceInfoCollector, "deviceInfoCollector");
         this.parser = Objects.requireNonNull(parser, "parser");
         this.commandHandler = Objects.requireNonNull(commandHandler, "commandHandler");
+        this.metricsCollector = metricsCollector; // nullable — null = tắt gửi metrics
     }
 
     // ------------------------------------------------------------------
@@ -191,6 +207,7 @@ public class TcpClientEngine implements AutoCloseable {
 
         unregisterShutdownHook();
         shutdownHeartbeatScheduler();
+        shutdownMetricsScheduler();
         // Đóng socket ĐẦU TIÊN để đánh thức readLine() đang block trên Windows.
         closeConnectionQuietly();
 
@@ -339,6 +356,7 @@ public class TcpClientEngine implements AutoCloseable {
         // Reset mốc hoạt động inbound: heartbeat cũ của phiên trước (stale,
         // nhỏ hơn mốc này) sẽ không bao giờ kích hoạt watchdog nhầm lẫn.
         lastServerActivityMs.set(System.currentTimeMillis());
+        startMetricsScheduler();
     }
 
     // ------------------------------------------------------------------
@@ -460,6 +478,83 @@ public class TcpClientEngine implements AutoCloseable {
         heartbeatTask = null;
         if (scheduler != null) {
             scheduler.shutdownNow();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Metrics scheduler (Task 3.1): gửi METRICS_REPORT định kỳ, scheduler
+    // RIÊNG để không làm nghẽn heartbeat/watchdog
+    // ------------------------------------------------------------------
+
+    /**
+     * Khởi động scheduler riêng gửi METRICS_REPORT mỗi
+     * {@code metricsIntervalMs} (mặc định 5s). Chỉ chạy khi
+     * {@code metricsCollector != null} (test có thể tắt bằng null).
+     */
+    private void startMetricsScheduler() {
+        if (metricsCollector == null || metricsScheduler != null) {
+            return;
+        }
+        ScheduledExecutorService scheduler =
+                Executors.newSingleThreadScheduledExecutor(namedDaemonFactory("parental-client-metrics"));
+        metricsScheduler = scheduler;
+        long period = config.getMetricsIntervalMs();
+        scheduler.scheduleAtFixedRate(this::sendMetricsReport, period, period, TimeUnit.MILLISECONDS);
+        if (!running.get()) { // race với stop(): dọn ngay
+            shutdownMetricsScheduler();
+        }
+    }
+
+    private void shutdownMetricsScheduler() {
+        ScheduledExecutorService scheduler = metricsScheduler;
+        metricsScheduler = null;
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+    }
+
+    /**
+     * Lấy metrics từ {@link NetworkMetricsCollector} rồi đẩy gói
+     * METRICS_REPORT lên Server qua luồng TCP (ghi đồng bộ qua writeLock cùng
+     * heartbeat/handshake — không hỏng khung LDJSON). Trạng thái
+     * {@code networkStatus} mặc định "ACTIVE" (cờ cắm cho Task 3.3).
+     */
+    private void sendMetricsReport() {
+        if (!running.get() || !connected.get() || metricsCollector == null) {
+            return;
+        }
+        MetricsPayload metrics;
+        try {
+            metrics = metricsCollector.collect();
+        } catch (RuntimeException e) {
+            // Defensive: collector lỗi không được làm chết scheduler
+            log.error("Metrics collector threw: {}", e.getMessage());
+            return;
+        }
+        if (metrics == null) {
+            return;
+        }
+        String line;
+        try {
+            line = parser.toLine(BaseMessage.of(MessageType.METRICS_REPORT, config.getClientId(), metrics));
+        } catch (ProtocolParseException e) {
+            log.error("Serialize METRICS_REPORT failed: {}", e.getMessage());
+            return;
+        }
+        try {
+            synchronized (writeLock) {
+                Writer w = writer;
+                Socket s = socket;
+                if (w == null || s == null || s.isClosed()) {
+                    return;
+                }
+                w.write(line);
+                w.flush();
+            }
+            log.debug("METRICS_REPORT sent (down={}B, up={}B)",
+                    metrics.downloadBytes(), metrics.uploadBytes());
+        } catch (IOException e) {
+            log.warn("METRICS_REPORT write failed (clientId={}): {}", config.getClientId(), e.getMessage());
         }
     }
 
@@ -597,6 +692,7 @@ public class TcpClientEngine implements AutoCloseable {
     private void closeConnectionQuietly() {
         connected.set(false);
         shutdownHeartbeatScheduler();
+        shutdownMetricsScheduler();
         Socket s = socket;
         socket = null;
         writer = null;

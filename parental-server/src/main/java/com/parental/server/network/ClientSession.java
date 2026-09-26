@@ -14,6 +14,7 @@ import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.ProtocolParseException;
 import com.parental.common.protocol.payload.HandshakePayload;
+import com.parental.common.protocol.payload.MetricsPayload;
 
 /**
  * Đại diện cho một phiên kết nối Client đang hoạt động.
@@ -39,6 +40,9 @@ public class ClientSession {
 
     /** Epoch seconds của HEARTBEAT gần nhất — dùng cho dead-session detection. */
     private volatile long lastHeartbeatTimestamp;
+
+    /** Metrics traffic gần nhất nhận từ client (METRICS_REPORT — Task 3.1). */
+    private volatile MetricsPayload lastMetrics;
 
     public ClientSession(String clientId, Socket socket,
                          BufferedReader reader, PrintWriter writer, JsonProtocolParser parser) {
@@ -136,6 +140,15 @@ public class ClientSession {
 
     public void setDeviceInfo(HandshakePayload deviceInfo) {
         this.deviceInfo = deviceInfo;
+    }
+
+    /** Metrics traffic gần nhất (null nếu client chưa ever gửi METRICS_REPORT). */
+    public MetricsPayload getLastMetrics() {
+        return lastMetrics;
+    }
+
+    public void setLastMetrics(MetricsPayload lastMetrics) {
+        this.lastMetrics = lastMetrics;
     }
 
     public long getLastHeartbeatTimestamp() {

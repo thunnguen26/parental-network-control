@@ -21,6 +21,7 @@ import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.ProtocolParseException;
 import com.parental.common.protocol.payload.HandshakePayload;
+import com.parental.common.protocol.payload.MetricsPayload;
 
 /**
  * Xử lý một kết nối Client trên thread riêng (chạy trong ExecutorService của
@@ -139,7 +140,16 @@ public class ClientHandler implements Runnable {
                     // Task 2.3: MỌI dữ liệu inbound (không chỉ HEARTBEAT) là dấu hiệu
                     // client còn sống — làm mới timestamp để sweeper không gỡ nhầm.
                     session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
-                    log.debug("[{}] METRICS_REPORT: {}", session.getClientId(), message.getPayload());
+                    // Task 3.1: lưu metrics traffic mới nhất vào session (GUI/CSDL Phase sau đọc từ đây).
+                    if (message.getPayload() instanceof MetricsPayload metrics) {
+                        session.setLastMetrics(metrics);
+                        log.debug("[{}] METRICS_REPORT: down={}B up={}B ({} B/s / {} B/s)",
+                                session.getClientId(), metrics.downloadBytes(), metrics.uploadBytes(),
+                                metrics.downloadSpeedBps(), metrics.uploadSpeedBps());
+                    } else {
+                        log.debug("[{}] METRICS_REPORT with unexpected payload: {}",
+                                session.getClientId(), message.getPayload());
+                    }
                 }
                 case HANDSHAKE ->
                         log.warn("[{}] Redundant HANDSHAKE ignored", session.getClientId());

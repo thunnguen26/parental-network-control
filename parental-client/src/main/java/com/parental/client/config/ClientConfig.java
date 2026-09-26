@@ -24,6 +24,8 @@ public final class ClientConfig {
     public static final long DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
     /** Mặc định 15s = 3 chu kỳ nhịp tim 5s (Task 2.3 — Silent Server Detection). */
     public static final long DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
+    /** Chu kỳ gửi METRICS_REPORT mặc định (Task 3.1). */
+    public static final long DEFAULT_METRICS_INTERVAL_MS = 5_000;
     public static final long DEFAULT_INITIAL_RECONNECT_DELAY_MS = 1_000;
     public static final long DEFAULT_MAX_RECONNECT_DELAY_MS = 30_000;
 
@@ -32,6 +34,7 @@ public final class ClientConfig {
     private final String clientId;
     private final long heartbeatIntervalMs;
     private final long heartbeatTimeoutMs;
+    private final long metricsIntervalMs;
     private final long initialReconnectDelayMs;
     private final long maxReconnectDelayMs;
 
@@ -41,6 +44,7 @@ public final class ClientConfig {
         this.clientId = builder.clientId;
         this.heartbeatIntervalMs = builder.heartbeatIntervalMs;
         this.heartbeatTimeoutMs = builder.heartbeatTimeoutMs;
+        this.metricsIntervalMs = builder.metricsIntervalMs;
         this.initialReconnectDelayMs = builder.initialReconnectDelayMs;
         this.maxReconnectDelayMs = builder.maxReconnectDelayMs;
     }
@@ -79,6 +83,11 @@ public final class ClientConfig {
         return heartbeatTimeoutMs;
     }
 
+    /** Chu kỳ gửi gói METRICS_REPORT lên Server (mặc định {@value #DEFAULT_METRICS_INTERVAL_MS} ms). */
+    public long getMetricsIntervalMs() {
+        return metricsIntervalMs;
+    }
+
     public long getInitialReconnectDelayMs() {
         return initialReconnectDelayMs;
     }
@@ -98,6 +107,7 @@ public final class ClientConfig {
         return serverPort == other.serverPort
                 && heartbeatIntervalMs == other.heartbeatIntervalMs
                 && heartbeatTimeoutMs == other.heartbeatTimeoutMs
+                && metricsIntervalMs == other.metricsIntervalMs
                 && initialReconnectDelayMs == other.initialReconnectDelayMs
                 && maxReconnectDelayMs == other.maxReconnectDelayMs
                 && Objects.equals(serverHost, other.serverHost)
@@ -107,7 +117,8 @@ public final class ClientConfig {
     @Override
     public int hashCode() {
         return Objects.hash(serverHost, serverPort, clientId,
-                heartbeatIntervalMs, heartbeatTimeoutMs, initialReconnectDelayMs, maxReconnectDelayMs);
+                heartbeatIntervalMs, heartbeatTimeoutMs, metricsIntervalMs,
+                initialReconnectDelayMs, maxReconnectDelayMs);
     }
 
     @Override
@@ -115,6 +126,7 @@ public final class ClientConfig {
         return "ClientConfig{serverHost='" + serverHost + '\'' + ", serverPort=" + serverPort
                 + ", clientId='" + clientId + '\'' + ", heartbeatIntervalMs=" + heartbeatIntervalMs
                 + ", heartbeatTimeoutMs=" + heartbeatTimeoutMs
+                + ", metricsIntervalMs=" + metricsIntervalMs
                 + ", initialReconnectDelayMs=" + initialReconnectDelayMs
                 + ", maxReconnectDelayMs=" + maxReconnectDelayMs + '}';
     }
@@ -127,6 +139,7 @@ public final class ClientConfig {
         private String clientId = java.util.UUID.randomUUID().toString(); // tự sinh UUID nếu chưa có
         private long heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
         private long heartbeatTimeoutMs = DEFAULT_HEARTBEAT_TIMEOUT_MS;
+        private long metricsIntervalMs = DEFAULT_METRICS_INTERVAL_MS;
         private long initialReconnectDelayMs = DEFAULT_INITIAL_RECONNECT_DELAY_MS;
         private long maxReconnectDelayMs = DEFAULT_MAX_RECONNECT_DELAY_MS;
 
@@ -164,6 +177,14 @@ public final class ClientConfig {
                 throw new IllegalArgumentException("heartbeatTimeoutMs must be positive, got: " + heartbeatTimeoutMs);
             }
             this.heartbeatTimeoutMs = heartbeatTimeoutMs;
+            return this;
+        }
+
+        public Builder metricsIntervalMs(long metricsIntervalMs) {
+            if (metricsIntervalMs <= 0) {
+                throw new IllegalArgumentException("metricsIntervalMs must be positive, got: " + metricsIntervalMs);
+            }
+            this.metricsIntervalMs = metricsIntervalMs;
             return this;
         }
 

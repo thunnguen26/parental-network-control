@@ -1,9 +1,9 @@
 # CURRENT PROJECT STATE & TASK LOG
 
 ## 1. Project Snapshot
-- **Current Phase:** **Phase 2 HOÀN THÀNH 100%** — sẵn sàng chuyển sang Phase 3.
-- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **68/68 test pass** (18 common + 20 server + 30 client), không còn process treo.
-- **Active Task:** Task 3.1 — Client tích hợp OSHI đo lưu lượng upload/download, gửi gói tin `METRICS_REPORT`.
+- **Current Phase:** Phase 3 (Hardware Metrics & Client Enforcement Engine) — **Task 3.1 HOÀN THÀNH**.
+- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **79/79 test pass** (18 common + 21 server + 40 client).
+- **Active Task:** Task 3.2 — Client can thiệp file `hosts` để chặn danh sách domain từ lệnh `CONFIG_SYNC`.
 
 ## 2. Completed Tasks
 - [x] Tạo file AGENTS.md, PROTOCOL.md, ROADMAP.md.
@@ -24,6 +24,15 @@
     - Test (24): `ClientConfigTest` (10) — defaults/UUID riêng/builder/validation/equals; `DefaultDeviceInfoCollectorTest` (6) — payload đủ 5 trường, deviceType DESKTOP, fallback IP/MAC/hostname, MAC format, idempotent; `TcpClientEngineIntegrationTest` (8) với `FakeTcpServer` (ServerSocket dynamic port 0, trả ACK cho HEARTBEAT, hỗ trợ close/reopen CÙNG port) — handshake hợp lệ đầy đủ thông tin, HEARTBEAT định kỳ + nhận ACK (`lastAckTimestampMs > 0`), **auto-reconnect 2 kịch bản** (server chết đột ngột → mở lại cùng port; server chưa sẵn sàng → retry rồi kết nối được), server đẩy `COMMAND`/`CONFIG_SYNC` → listener nhận đúng payload, `stop()` sạch sẽ < 5s + heartbeat dừng hẳn, start/stop double là no-op/an toàn, listener ném RuntimeException engine vẫn sống. Chống deadlock: mọi chờ có timeout, @Timeout(90), daemon thread, stop() trong @AfterEach.
     - `parental-client/pom.xml`: thêm `slf4j-simple` (test scope) đồng nhất với server.
     - Kết quả: **24/24 PASS** — tổng toàn dự án **51/51 test pass** (`mvn clean test`).
+- [x] **Task 3.1** — Network Traffic Monitoring Engine với OSHI trong `parental-client`:
+    - `com.parental.client.metrics.NetworkMetricsCollector` (interface `@FunctionalInterface`): `collect()` trả `MetricsPayload` — tách interface để test stub được và Phase sau đổi nguồn đo không sửa Engine.
+    - `com.parental.client.metrics.OshiNetworkMetricsCollector`: OSHI `SystemInfo().getHardware()` → `getNetworkIFs(false)`; **bắt buộc `netIF.updateAttributes()` trước mỗi lần đọc** (không thì counters bị cache → delta = 0); lọc NIC: `IfOperStatus.UP`, không `isKnownVmMacAddr()`, `queryNetworkInterface()` không loopback, có ít nhất 1 IP (check `getIPv4addr()`/`getIPv6addr()` + fallback qua `java.net.NetworkInterface`); **Delta Calculation** được tách thành `computeFrom()` (package-private, test được không cần OSHI): lần đo đầu ghi baseline trả 0; delta = current − previous (guard `max(0,...)` chống counter reset); tốc độ = delta / deltaTimeSeconds; tổng tích lũy phiên `downloadBytes`/`uploadBytes`; `sessionDurationSeconds` từ `System.nanoTime()` mốc khởi tạo; `networkStatus` = "ACTIVE" (cờ cắm cho Task 3.3). Thread-safe `synchronized (lock)`; Defensive: mọi lỗi OSHI/SocketException nuốt, trả snapshot cũ — scheduler không bao giờ chết.
+    - **Lưu ý API OSHI 6.6.5** (đã kiểm chứng bằng javap): `NetworkIF` KHÔNG có `isUp()/isLoopback()/isVirtual()` — phải dùng `getIfOperStatus() != IfOperStatus.UP` và `queryNetworkInterface().isLoopback()`; `queryNetworkInterface()` ném checked `SocketException`.
+    - `ClientConfig`: thêm `metricsIntervalMs` (mặc định 5000, builder + validation > 0 + equals/hashCode/toString).
+    - `TcpClientEngine`: constructor mặc định tự tạo `OshiNetworkMetricsCollector`; constructor overload inject collector (test dùng, hoặc `null` để tắt metrics); **`ScheduledExecutorService` RIÊNG** (`parental-client-metrics`) gửi `METRICS_REPORT` mỗi `metricsIntervalMs`, khởi động trong `onConnectionEstablished()`, hủy trong `stop()`/`closeConnectionQuietly()`; ghi socket qua cùng `writeLock` với heartbeat/handshake — không hỏng khung LDJSON, không nghẽn luồng đọc/ghi; collector ném RuntimeException không làm chết scheduler.
+    - Server: `ClientSession` thêm trường `volatile MetricsPayload lastMetrics` (getter/setter); `ClientHandler` khi nhận METRICS_REPORT → cập nhật `session.setLastMetrics(payload)` + log debug nhẹ (đồng thời làm mới heartbeat timestamp theo Task 2.3).
+    - Test mới (11): `OshiNetworkMetricsCollectorTest` (6) — baseline lần đầu, delta tích lũy + tốc độ (10s/6.000B → 600Bps), guard counter reset (delta âm → 0, không giá trị âm), chu kỳ idle speed = 0, sessionDuration tăng, OSHI thật trên máy chạy test không quăng exception + payload hợp lệ; `ClientConfigTest` +2 (metricsIntervalMs default/override/validation); `TcpClientEngineIntegrationTest` +2 — **stub collector** (lambda `NetworkMetricsCollector`) gửi METRICS_REPORT định kỳ ≥ 2 gói, payload giải mã khớp schema Mục 3.2, `networkStatus=ACTIVE`; collector ném exception → engine vẫn sống heartbeat vẫn chạy; `TcpServerEngineIntegrationTest` +1 — client giả gửi 2 gói METRICS_REPORT tăng dần → `session.lastMetrics` cập nhật đúng từng giá trị (10.000B rồi 20.000B).
+    - Kết quả: **40/40 client PASS, 21/21 server PASS** — tổng toàn dự án **79/79 test pass** (`mvn clean test`, chạy 2 lần).
 - [x] **Task 2.3** — Graceful Shutdown & phát hiện Timeout/Ngắt kết nối bất thường (cả Client và Server):
     - `ClientConfig` (client): thêm `heartbeatTimeoutMs` (mặc định 15000ms = 3 chu kỳ nhịp tim 5s, builder + validation `timeout >= interval`, cập nhật equals/hashCode/toString).
     - `TcpClientEngine` (client) — **Watchdog Silent Server Detection**:
@@ -46,11 +55,12 @@
 - Không có.
 
 ## 4. Next Action Items (Dành cho phiên tiếp theo)
-- **Task 3.1** (ROADMAP Phase 3): Client tích hợp OSHI đo lưu lượng upload/download (NetworkInterface stats), gửi gói tin `METRICS_REPORT` định kỳ qua `TcpClientEngine` (schema Mục 3.2 PROTOCOL.md; server hiện chỉ log METRICS_REPORT). Có thể gắn vào heartbeat scheduler hoặc scheduler riêng; lưu ý sampler cần delta giữa 2 lần đo.
+- **Task 3.2** (ROADMAP Phase 3): Client can thiệp file `hosts` (C:\\Windows\\System32\\drivers\\etc\\hosts) để chặn danh sách domain từ `CONFIG_SYNC` (payload `blockedDomains`) — yêu cầu quyền Administrator, phải backup/restore an toàn, idempotent, defensive khi không có quyền. KHÔNG đụng `netsh` (Task 3.3).
 - Lệnh build môi trường này: `JAVA_HOME="/c/Program Files/Java/jdk-17" /c/maven/apache-maven-3.9.6/bin/mvn clean test`.
 
 ## 5. Known Issues / Blockers
 - `mvn` chưa có trong PATH (chỉ có JDK 23 không khớp target): dùng đường dẫn đầy đủ `/c/maven/apache-maven-3.9.6/bin/mvn` và `JAVA_HOME=C:\Program Files\Java\jdk-17`, hoặc cân nhắc thêm vào PATH hệ thống.
 - Bài học Task 2.2 (đã xử lý): sleep trong backoff phải nằm trong try/catch InterruptedException của connectLoop (không phải Error wrapper); assert trạng thái bất đồng bộ (ACK, reconnect) phải dùng await-poll có timeout, không assert tức thời.
 - Bài học Task 2.3 (đã xử lý): watchdog phải đo im lặng từ bản tin inbound cuối (`lastServerActivityMs`), KHÔNG từ thời điểm gửi heartbeat gần nhất (bị reset mỗi chu kỳ → không bao giờ vượt timeout); `awaitTermination` của handler pool phải gọi SAU khi đóng hết session (handler block trong readLine chỉ thoát khi socket đóng); assert callback fire trên thread khác (sweeper/handler) luôn dùng await-poll có timeout.
+- Bài học Task 3.1 (đã xử lý): OSHI 6.6.5 `NetworkIF` không có `isUp()/isLoopback()/isVirtual()` — dùng `getIfOperStatus()` + `queryNetworkInterface()` (ném checked SocketException); `updateAttributes()` bắt buộc trước mỗi lần đọc counters; assert delta 2 lần đo trong test phải cộng dồn đúng chuỗi delta (không so tổng với delta riêng lẻ).
 - Đã cấu hình `forkedProcessTimeoutInSeconds=300` cho surefire (root `pom.xml`) — tự hủy forked JVM treo, phòng ngừa zombie process giữ khóa `target/` trên Windows (đã gặp và xử lý: deadlock ClientSession.close() khi thread handler block trong socket read không interruptible).

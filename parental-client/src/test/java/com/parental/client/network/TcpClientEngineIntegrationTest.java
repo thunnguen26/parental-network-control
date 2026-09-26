@@ -26,8 +26,10 @@ import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.payload.CommandPayload;
+import com.parental.client.metrics.NetworkMetricsCollector;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
+import com.parental.common.protocol.payload.MetricsPayload;
 
 /**
  * Integration Test cho {@link TcpClientEngine}: dùng server ảo
@@ -377,6 +379,64 @@ class TcpClientEngineIntegrationTest {
         engine.stop(); // phải sạch sẽ dù vừa trải qua watchdog + reconnect
         assertFalse(engine.isRunning());
         assertFalse(engine.isConnected());
+    }
+
+    @Test
+    @DisplayName("METRICS_REPORT gửi định kỳ (collector giả lập) và server nhận đủ payload")
+    void metricsReportSentPeriodicallyWithStubCollector() throws Exception {
+        // Collector giả lập: mỗi lần collect() trả traffic tăng dần 1.000B/500B
+        java.util.concurrent.atomic.AtomicInteger sample = new java.util.concurrent.atomic.AtomicInteger();
+        NetworkMetricsCollector stubCollector = () -> new MetricsPayload(
+                sample.incrementAndGet() * 1_000L,
+                sample.get() * 500L,
+                1_000, 500,
+                sample.get(), "ACTIVE");
+
+        engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                new JsonProtocolParser(), recordingHandler,
+                stubCollector);
+        engine.start();
+
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+        assertTrue(server.awaitFirstMetrics(AWAIT_TIMEOUT_MS),
+                "Client phải gửi METRICS_REPORT định kỳ");
+
+        // Chờ thêm ít nhất 1 chu kỳ nữa (metricsIntervalMs = 300ms trong test)
+        awaitCondition("METRICS_REPORT lặp lại định kỳ", AWAIT_TIMEOUT_MS,
+                () -> server.count(MessageType.METRICS_REPORT) >= 2);
+
+        // Giải mã payload từ server — phải khớp schema Mục 3.2
+        MetricsPayload metrics = server.received.stream()
+                .filter(m -> m.getType() == MessageType.METRICS_REPORT)
+                .map(BaseMessage::getPayload)
+                .filter(MetricsPayload.class::isInstance)
+                .map(MetricsPayload.class::cast)
+                .findFirst().orElseThrow();
+        assertEquals("ACTIVE", metrics.networkStatus());
+        assertTrue(metrics.downloadBytes() >= 1_000);
+        assertTrue(metrics.uploadBytes() >= 500);
+        assertTrue(engine.isConnected());
+    }
+
+    @Test
+    @DisplayName("Collector ném RuntimeException -> engine không chết, heartbeat vẫn chạy")
+    void throwingCollectorDoesNotKillEngine() throws Exception {
+        NetworkMetricsCollector throwingCollector = () -> {
+            throw new IllegalStateException("oshî broken");
+        };
+        engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                new JsonProtocolParser(), recordingHandler,
+                throwingCollector);
+        engine.start();
+
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+
+        // Metrics scheduler lỗi liên tục nhưng engine phải vẫn sống và gửi heartbeat
+        Thread.sleep(800);
+        long before = server.count(MessageType.HEARTBEAT);
+        awaitCondition("heartbeat tiếp tục sau collector exception", AWAIT_TIMEOUT_MS,
+                () -> server.count(MessageType.HEARTBEAT) > before);
+        assertTrue(engine.isConnected());
     }
 
     @Test

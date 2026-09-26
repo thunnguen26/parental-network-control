@@ -120,6 +120,20 @@ class ClientConfigTest {
     }
 
     @Test
+    @DisplayName("metricsIntervalMs mặc định 5000 và builder ghi đè được (Task 3.1)")
+    void metricsIntervalDefaultAndOverride() {
+        assertEquals(5_000, ClientConfig.defaults().getMetricsIntervalMs());
+        assertEquals(10_000, ClientConfig.builder().metricsIntervalMs(10_000).build().getMetricsIntervalMs());
+    }
+
+    @Test
+    @DisplayName("metricsIntervalMs <= 0 bị từ chối")
+    void nonPositiveMetricsIntervalRejected() {
+        assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().metricsIntervalMs(0).build());
+        assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().metricsIntervalMs(-1).build());
+    }
+
+    @Test
     @DisplayName("maxReconnectDelayMs < initialReconnectDelayMs bị từ chối khi build")
     void maxDelaySmallerThanInitialRejected() {
         assertThrows(IllegalStateException.class, () -> ClientConfig.builder()
