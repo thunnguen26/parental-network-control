@@ -15,9 +15,9 @@
 - [x] Task 3.2: Client - Can thiệp file `hosts` để chặn danh sách domain từ lệnh `CONFIG_SYNC`. (89/89 test toàn dự án — 50/50 client; `HostsFileManager` marker block + backup/restore + idempotent + atomic write + defensive quyền, tích hợp CONFIG_SYNC + shutdown hook clearBlocks)
 - [x] Task 3.3: Client - Thực thi `PAUSE_NETWORK`/`RESUME_NETWORK` qua firewall rule `netsh` + `ALERT` notifier + ACK commandId. (105/105 test toàn dự án — 66/66 client; `NetworkEnforcer`/`WindowsNetshEnforcer` (block outbound 80,443/TCP giữ LAN) + `AlertNotifier`/`SystemTrayAlertNotifier` + `ActionDispatcher`, PROTOCOL.md Mục 3.5 bổ sung ACK `commandId`, cleanup on exit)
 
-## Phase 4: Server Database & Business Rules Engine
+## Phase 4: Server Database & Business Rules Engine — HOÀN THÀNH 100%
 - [x] Task 4.1: Server - Tích hợp SQLite, tạo Schema (clients, metrics_logs, client_rules, blocked_domains, command_logs). (130/130 test toàn dự án — 46/46 server; `DatabaseManager` (WAL file DB + foreign_keys/busy_timeout per-connection + migration idempotent + anchor connection cho :memory: shared-cache), DAO layer `ClientDao`/`MetricsDao` (getTodayTrafficBytes)/`RuleDao` (+blocked domains)/`CommandLogDao` (SENT→ACKED), tích hợp HANDSHAKE→upsert ONLINE / disconnect→OFFLINE / METRICS_REPORT→insert / ACK→markAcked)
-- [ ] Task 4.2: Server - Background Rule Engine kiểm tra giới hạn giờ dùng và dung lượng, tự phát lệnh `COMMAND`.
+- [x] Task 4.2: Server - Background Rule Engine kiểm tra giới hạn giờ dùng và dung lượng, tự phát lệnh `COMMAND`. (149/149 test toàn dự án — 65/65 server; `RuleEvaluationEngine` scheduler `parental-server-rule-engine` chu kỳ cấu hình được (mặc định 30s), 3 điều kiện vi phạm theo thứ tự ưu tiên khung giờ (HH:mm, hỗ trợ qua đêm + fail-open) → thời gian (sessionDurationSeconds) → dung lượng (getTodayTrafficBytes), enforcement state chống spam + RESUME khi nới lỏng/gỡ rule, pre-warning ALERT ≤ 5 phút đúng 1 lần, offline cleanup, `setRuleScanIntervalSeconds`, start/stop cùng `TcpServerEngine`)
 
 ## Phase 5: Server Management GUI
 - [ ] Task 5.1: Xây dựng Dashboard (Swing/JavaFX) hiển thị danh sách client, tình trạng online/offline, traffic realtime.

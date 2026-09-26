@@ -42,7 +42,7 @@ public class ClientHandler implements Runnable {
     private static final Logger log = LoggerFactory.getLogger(ClientHandler.class);
 
     /** Định danh của Server trong trường clientId khi gửi gói xuống Client. */
-    static final String SERVER_ID = "server";
+    public static final String SERVER_ID = "server";
 
     /** Thời gian tối đa chờ gói HANDSHAKE đầu tiên (chống treo thread). */
     private static final int HANDSHAKE_TIMEOUT_MS = 30_000;

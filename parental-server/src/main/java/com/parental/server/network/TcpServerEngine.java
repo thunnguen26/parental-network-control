@@ -19,6 +19,8 @@ import com.parental.server.db.ClientDao;
 import com.parental.server.db.CommandLogDao;
 import com.parental.server.db.DatabaseManager;
 import com.parental.server.db.MetricsDao;
+import com.parental.server.db.RuleDao;
+import com.parental.server.rules.RuleEvaluationEngine;
 
 /**
  * TCP Server Engine: lắng nghe {@code ServerSocket} trên background thread,
@@ -47,6 +49,13 @@ public class TcpServerEngine {
     private ClientDao clientDao;
     private MetricsDao metricsDao;
     private CommandLogDao commandLogDao;
+    private RuleDao ruleDao;
+
+    /** Rule Engine (Task 4.2) — null khi chạy không database. */
+    private RuleEvaluationEngine ruleEvaluationEngine;
+
+    /** Chu kỳ quét Rule Engine (giây) — cấu hình được qua setter, mặc định 30s. */
+    private volatile long ruleScanIntervalSeconds = 30;
 
     private ServerSocket serverSocket;
     private ExecutorService handlerPool;
@@ -79,6 +88,24 @@ public class TcpServerEngine {
             this.clientDao = new ClientDao(databaseManager);
             this.metricsDao = new MetricsDao(databaseManager);
             this.commandLogDao = new CommandLogDao(databaseManager);
+            this.ruleDao = new RuleDao(databaseManager);
+        }
+    }
+
+    /**
+     * Đặt chu kỳ quét của Rule Engine (giây, mặc định 30s). Gọi TRƯỚC
+     * {@link #start()}; nếu server đang chạy thì Rule Engine được thay thế
+     * bằng engine mới với chu kỳ mới (restart trong suốt).
+     */
+    public synchronized void setRuleScanIntervalSeconds(long scanIntervalSeconds) {
+        this.ruleScanIntervalSeconds = Math.max(1, scanIntervalSeconds);
+        if (ruleEvaluationEngine != null) {
+            ruleEvaluationEngine.stop();
+            ruleEvaluationEngine = new RuleEvaluationEngine(sessionManager,
+                    ruleDao, metricsDao, commandLogDao, ruleScanIntervalSeconds);
+            if (isRunning()) {
+                ruleEvaluationEngine.start();
+            }
         }
     }
 
@@ -109,6 +136,11 @@ public class TcpServerEngine {
                     clientDao.setStatus(clientId, "OFFLINE");
                 }
             });
+            // Task 4.2: Rule Engine tự phát COMMAND khi client vi phạm hạn mức
+            // (khởi tạo muộn ở start() để kịp áp dụng chu kỳ quét từ setter)
+            ruleEvaluationEngine = new RuleEvaluationEngine(sessionManager,
+                    ruleDao, metricsDao, commandLogDao, ruleScanIntervalSeconds);
+            ruleEvaluationEngine.start();
         }
 
         log.info("TcpServerEngine started on port {} (pool size {}, heartbeat timeout {}s)",
@@ -135,6 +167,11 @@ public class TcpServerEngine {
         }
         if (sweeper != null) {
             sweeper.shutdownNow();
+        }
+        // Task 4.2: tắt Rule Engine TRƯỚC khi đóng session — tránh nó gửi
+        // COMMAND xuống phiên đang bị đóng trong graceful shutdown.
+        if (ruleEvaluationEngine != null) {
+            ruleEvaluationEngine.stop();
         }
         // Đóng toàn bộ phiên TRƯỚC để đánh thức handler threads đang block trong readLine().
         sessionManager.closeAll(DisconnectReason.SERVER_SHUTDOWN);
@@ -195,6 +232,16 @@ public class TcpServerEngine {
     /** DAO log lệnh (null nếu engine chạy không DB). */
     public CommandLogDao getCommandLogDao() {
         return commandLogDao;
+    }
+
+    /** DAO cấu hình hạn mức (null nếu engine chạy không DB). */
+    public RuleDao getRuleDao() {
+        return ruleDao;
+    }
+
+    /** Rule Engine tự động thực thi hạn mức (null nếu engine chạy không DB). */
+    public RuleEvaluationEngine getRuleEvaluationEngine() {
+        return ruleEvaluationEngine;
     }
 
     public boolean isRunning() {
