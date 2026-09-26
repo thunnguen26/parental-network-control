@@ -97,5 +97,17 @@ Every packet must contain:
 ```
 
 ### 3.5 HEARTBEAT / ACK
-- Payload hiện tại là object rỗng: `{}`.
-- Schema chi tiết bổ sung (nếu cần) sẽ được định nghĩa ở các Phase sau và bắt buộc cập nhật vào tài liệu này trước khi code.
+- HEARTBEAT: payload là object rỗng: `{}`.
+- ACK: payload có thể rỗng `{}` (phản hồi HEARTBEAT) hoặc chứa trường tùy chọn `commandId` khi ACK là **xác nhận tiếp nhận lệnh COMMAND** (bổ sung Task 3.3):
+
+| Field | Type | Mô tả |
+|---|---|---|
+| `commandId` | String (tùy chọn) | UUID của lệnh COMMAND đã được client tiếp nhận; không có khi ACK heartbeat thường |
+
+```json
+{
+  "commandId": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+- Parser xử lý lenient: ACK payload khớp cả `{}` lẫn `{"commandId": "..."}`.
+- Mọi bổ sung schema khác bắt buộc cập nhật tài liệu này trước khi code.

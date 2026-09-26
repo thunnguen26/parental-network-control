@@ -1,9 +1,9 @@
 # CURRENT PROJECT STATE & TASK LOG
 
 ## 1. Project Snapshot
-- **Current Phase:** Phase 3 (Hardware Metrics & Client Enforcement Engine) — **Task 3.2 HOÀN THÀNH**.
-- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **89/89 test pass** (18 common + 21 server + 50 client).
-- **Active Task:** Task 3.3 — Client thực thi lệnh hệ thống `PAUSE_NETWORK` / `RESUME_NETWORK` qua `netsh`.
+- **Current Phase:** **Phase 3 HOÀN THÀNH 100%** — sẵn sàng chuyển sang Phase 4 (Server Database & Business Rules Engine).
+- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **105/105 test pass** (18 common + 21 server + 66 client).
+- **Active Task:** Task 4.1 — Server tích hợp SQLite, tạo Schema (clients, metrics_log, rules, schedules).
 
 ## 2. Completed Tasks
 - [x] Tạo file AGENTS.md, PROTOCOL.md, ROADMAP.md.
@@ -24,6 +24,17 @@
     - Test (24): `ClientConfigTest` (10) — defaults/UUID riêng/builder/validation/equals; `DefaultDeviceInfoCollectorTest` (6) — payload đủ 5 trường, deviceType DESKTOP, fallback IP/MAC/hostname, MAC format, idempotent; `TcpClientEngineIntegrationTest` (8) với `FakeTcpServer` (ServerSocket dynamic port 0, trả ACK cho HEARTBEAT, hỗ trợ close/reopen CÙNG port) — handshake hợp lệ đầy đủ thông tin, HEARTBEAT định kỳ + nhận ACK (`lastAckTimestampMs > 0`), **auto-reconnect 2 kịch bản** (server chết đột ngột → mở lại cùng port; server chưa sẵn sàng → retry rồi kết nối được), server đẩy `COMMAND`/`CONFIG_SYNC` → listener nhận đúng payload, `stop()` sạch sẽ < 5s + heartbeat dừng hẳn, start/stop double là no-op/an toàn, listener ném RuntimeException engine vẫn sống. Chống deadlock: mọi chờ có timeout, @Timeout(90), daemon thread, stop() trong @AfterEach.
     - `parental-client/pom.xml`: thêm `slf4j-simple` (test scope) đồng nhất với server.
     - Kết quả: **24/24 PASS** — tổng toàn dự án **51/51 test pass** (`mvn clean test`).
+- [x] **Task 3.3** — Network Enforcement Engine & Action Dispatcher trong `parental-client` (Close-out Phase 3):
+    - **PROTOCOL.md Mục 3.5 được cập nhật trước khi code** (đúng quy tắc tài liệu): ACK payload có thể chứa trường tùy chọn `commandId` khi xác nhận lệnh COMMAND; parser lenient chấp nhận cả `{}` lẫn `{"commandId":"..."}` (không cần sửa `JsonProtocolParser` — AckMap vốn nhận mọi object).
+    - `com.parental.client.enforcement.NetworkEnforcer` (interface): `pauseNetwork()` / `resumeNetwork()` / `getNetworkStatus()` ("ACTIVE"/"PAUSED") / `cleanup()`.
+    - `com.parental.client.enforcement.WindowsNetshEnforcer`: **Firewall Rule** thay vì tắt card mạng — máy con giữ LAN tới Server; Block `netsh advfirewall firewall add rule name="ParentalControlBlock" dir=out action=block remoteport=80,443 protocol=TCP`; Unblock `delete rule`; pause idempotent (cờ paused — không add trùng), resume luôn chạy delete (phòng rule sót từ crash); **Defensive**: `waitFor(5s)` + `destroyForcibly` khi treo, kiểm tra `exitCode == 0`, bắt `IOException`/`SecurityException`/`InterruptedException` → log WARN KHÔNG crash; non-Windows là no-op an toàn (không spawn netsh); `execute()` package-private để test override (KHÔNG BAO GIỜ chạy netsh thật trong test).
+    - `com.parental.client.enforcement.AlertNotifier` + `SystemTrayAlertNotifier`: chuỗi fallback SystemTray (`TrayIcon.displayMessage`, icon tạm tự gỡ sau 15s) → `JOptionPane` popup auto-close 15s (Timer, không treo khi không ai bấm) → log WARN; headless trả false; mọi popup chạy trên thread daemon riêng `parental-client-alert` — không nghẽn socket reader; không bao giờ ném exception.
+    - `com.parental.client.enforcement.ActionDispatcher`: điều phối `CommandPayload` — PAUSE_NETWORK → `enforcer.pauseNetwork()` + sync `networkStatus="PAUSED"` vào `NetworkMetricsCollector` (METRICS_REPORT chu kỳ sau phản ánh đúng); RESUME_NETWORK → resume + "ACTIVE"; ALERT → `notifier.notify(reason)`; trả `commandId` khi tiếp nhận thành công (thất bại → null → Engine không ACK, Server có thể retry); payload hỏng → null; không bao giờ ném exception; `cleanup()` ủy quyền enforcer.
+    - `TcpClientEngine` tích hợp: constructor overload inject `ActionDispatcher` (nullable — mặc định null = COMMAND chỉ log + vẫn ACK); `handleCommand()` → `dispatch()` → **gửi ACK kèm `commandId` về Server** (payload `Map.of("commandId", id)` — PROTOCOL.md Mục 3.5); `stop()` và JVM shutdown hook đều gọi `actionDispatcher.cleanup()` — luôn khôi phục mạng khi client tắt, không để máy mất mạng vĩnh viễn.
+    - Server `ClientHandler`: nhận ACK từ client (payload có commandId) → log info "COMMAND ACK received (commandId=...)" — Phase 4 Rule Engine sẽ đối chiếu.
+    - Test mới (16): `ActionDispatcherTest` (12) — pause/resume/alert với `MockNetworkEnforcer` (top-level public, dùng chung package), enforcer thất bại → null không ACK, payload hỏng → null, cleanup ủy quyền; `WindowsNetshEnforcer` override `execute()` — status tracking, pause idempotent (add 1 lần), resume luôn delete (2 lần), thất bại không đổi status, cleanup luôn delete rule, non-Windows no-op; headless notifier fallback. `TcpClientEngineIntegrationTest` +4 — **PAUSE_NETWORK → enforcer pause + status PAUSED + ACK commandId về fake server; RESUME → ACTIVE + ACK; METRICS_REPORT chu kỳ sau có `networkStatus="PAUSED"`; ALERT → notifier nhận reason + ACK; stop() gọi `enforcer.cleanup()`**.
+    - **Fix flaky**: `HostsFileManager.atomicWrite()` thêm retry 3 lần (nghỉ 100ms) khi `Files.move` bị khóa tạm thời trên Windows (AV scanner/process đọc đồng thời) — chống race với test loop đọc file.
+    - Kết quả: **66/66 client PASS** — tổng toàn dự án **105/105 test pass** (`mvn clean test`, chạy 2 lần).
 - [x] **Task 3.2** — Domain Blocking Engine qua file `hosts` trong `parental-client`:
     - `com.parental.client.enforcement.HostsFileManager`:
         * Đường dẫn linh hoạt qua constructor (`Path hostsFilePath` — test dùng temp file, KHÔNG đụng hosts thật); `defaultHostsPath()` suy theo OS: Windows `%SystemRoot%\System32\drivers\etc\hosts` (env `SystemRoot`, fallback `C:\Windows`), Linux/macOS `/etc/hosts`.
@@ -66,7 +77,7 @@
 - Không có.
 
 ## 4. Next Action Items (Dành cho phiên tiếp theo)
-- **Task 3.3** (ROADMAP Phase 3): Client thực thi `PAUSE_NETWORK`/`RESUME_NETWORK` qua `netsh` khi nhận `COMMAND` (ActionType PAUSE_NETWORK/RESUME_NETWORK) — chạy `netsh interface set interface ...` cần quyền Administrator, defensive khi thiếu quyền (bắt exception, log WARN, không crash), cập nhật `networkStatus` trong `MetricsPayload` (cờ cắm đã chuẩn bị ở Task 3.1: "ACTIVE"/"PAUSED"). KHÔNG đụng thêm hosts (Task 3.2 đã xong).
+- **Task 4.1** (ROADMAP Phase 4): Server tích hợp SQLite — tạo Schema `clients`, `metrics_log`, `rules`, `schedules` (dependency `sqlite-jdbc` đã có sẵn trong `parental-server/pom.xml`). Thiết kế DAO layer tách biệt `TcpServerEngine`; lưu lịch sử `METRICS_REPORT` + trạng thái client online/offline.
 - Lệnh build môi trường này: `JAVA_HOME="/c/Program Files/Java/jdk-17" /c/maven/apache-maven-3.9.6/bin/mvn clean test`.
 
 ## 5. Known Issues / Blockers
@@ -75,4 +86,5 @@
 - Bài học Task 2.3 (đã xử lý): watchdog phải đo im lặng từ bản tin inbound cuối (`lastServerActivityMs`), KHÔNG từ thời điểm gửi heartbeat gần nhất (bị reset mỗi chu kỳ → không bao giờ vượt timeout); `awaitTermination` của handler pool phải gọi SAU khi đóng hết session (handler block trong readLine chỉ thoát khi socket đóng); assert callback fire trên thread khác (sweeper/handler) luôn dùng await-poll có timeout.
 - Bài học Task 3.1 (đã xử lý): OSHI 6.6.5 `NetworkIF` không có `isUp()/isLoopback()/isVirtual()` — dùng `getIfOperStatus()` + `queryNetworkInterface()` (ném checked SocketException); `updateAttributes()` bắt buộc trước mỗi lần đọc counters; assert delta 2 lần đo trong test phải cộng dồn đúng chuỗi delta (không so tổng với delta riêng lẻ).
 - Bài học Task 3.2 (đã xử lý): test read-only file trên Windows dùng `dos:readonly` attribute (POSIX permissions chỉ trên Unix — `UnsupportedOperationException` phải fallback); atomic move cần fallback thường khi filesystem không hỗ trợ `ATOMIC_MOVE`; Test cleanup phải xóa cả file `.parental.bak` sinh kèm.
+- Bài học Task 3.3 (đã xử lý): `Files.move` trên Windows có thể bị khóa tạm thời bởi AV scanner → `HostsFileManager.atomicWrite()` retry 3 lần (100ms/lần) chống flaky; nested test class package-private không truy cập được cross-package → mock dùng chung phải là top-level public (`MockNetworkEnforcer`); `ProcessBuilder` không nhận `("netsh", String[])` varargs trực tiếp — phải ghép mảng; Swing `TrayIcon`/`JOptionPane` phải chạy thread riêng + auto-close Timer.
 - Đã cấu hình `forkedProcessTimeoutInSeconds=300` cho surefire (root `pom.xml`) — tự hủy forked JVM treo, phòng ngừa zombie process giữ khóa `target/` trên Windows (đã gặp và xử lý: deadlock ClientSession.close() khi thread handler block trong socket read không interruptible).

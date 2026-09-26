@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Timeout;
 import com.parental.client.config.ClientConfig;
 import com.parental.client.device.DefaultDeviceInfoCollector;
 import com.parental.client.enforcement.HostsFileManager;
+import com.parental.client.enforcement.MockNetworkEnforcer;
 import com.parental.client.device.DeviceInfoCollector;
 import com.parental.common.protocol.ActionType;
 import com.parental.common.protocol.BaseMessage;
@@ -397,7 +398,7 @@ class TcpClientEngineIntegrationTest {
 
         engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
                 new JsonProtocolParser(), recordingHandler,
-                stubCollector, null);
+                stubCollector, null, null);
         engine.start();
 
         assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
@@ -429,7 +430,7 @@ class TcpClientEngineIntegrationTest {
         };
         engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
                 new JsonProtocolParser(), recordingHandler,
-                throwingCollector, null);
+                throwingCollector, null, null);
         engine.start();
 
         assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
@@ -450,10 +451,11 @@ class TcpClientEngineIntegrationTest {
         HostsFileManager hostsManager = new HostsFileManager(tempHosts);
 
         try {
-            engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
-                    new JsonProtocolParser(), recordingHandler,
-                    null, // tắt metrics cho test này
-                    hostsManager);
+        engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                new JsonProtocolParser(), recordingHandler,
+                null, // tắt metrics cho test này
+                hostsManager,
+                null); // không dispatcher trong test hosts
             engine.start();
             assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
 
@@ -489,6 +491,130 @@ class TcpClientEngineIntegrationTest {
             java.nio.file.Files.deleteIfExists(tempHosts);
             java.nio.file.Files.deleteIfExists(tempHosts.resolveSibling(tempHosts.getFileName() + ".parental.bak"));
         }
+    }
+
+    @Test
+    @DisplayName("PAUSE_NETWORK -> enforcer pause, status PAUSED, ACK commandId về Server (Task 3.3)")
+    void pauseCommandTriggersEnforcerAndAck() throws Exception {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        com.parental.client.metrics.StubMetricsCollectorAccess collector =
+                new com.parental.client.metrics.StubMetricsCollectorAccess();
+        com.parental.client.enforcement.ActionDispatcher dispatcher =
+                new com.parental.client.enforcement.ActionDispatcher(enforcer,
+                        msg -> true, collector);
+
+        engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                new JsonProtocolParser(), recordingHandler, collector, null, dispatcher);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+
+        // Server đẩy lệnh PAUSE_NETWORK
+        pushToCurrentClient(BaseMessage.of(MessageType.COMMAND, "fake-server",
+                new CommandPayload("cmd-pause-42", ActionType.PAUSE_NETWORK, "Het gio su dung")));
+
+        // Enforcer được kích hoạt
+        awaitCondition("enforcer pause được gọi", AWAIT_TIMEOUT_MS,
+                () -> enforcer.pauseCount.get() >= 1);
+        assertEquals("PAUSED", enforcer.getNetworkStatus());
+
+        // ACK kèm commandId về tới fake server
+        awaitCondition("Server nhận ACK commandId", AWAIT_TIMEOUT_MS, () -> server.received.stream()
+                .anyMatch(m -> m.getType() == MessageType.ACK
+                        && m.getPayload() instanceof java.util.Map<?, ?> payload
+                        && "cmd-pause-42".equals(payload.get("commandId"))));
+        assertTrue(engine.isConnected());
+    }
+
+    @Test
+    @DisplayName("RESUME_NETWORK sau PAUSE -> enforcer resume, status ACTIVE, ACK (Task 3.3)")
+    void resumeCommandRestoresActiveAndAcks() throws Exception {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        com.parental.client.metrics.StubMetricsCollectorAccess collector =
+                new com.parental.client.metrics.StubMetricsCollectorAccess();
+        com.parental.client.enforcement.ActionDispatcher dispatcher =
+                new com.parental.client.enforcement.ActionDispatcher(enforcer, msg -> true, collector);
+
+        engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                new JsonProtocolParser(), recordingHandler, collector, null, dispatcher);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+
+        pushToCurrentClient(BaseMessage.of(MessageType.COMMAND, "fake-server",
+                new CommandPayload("cmd-p", ActionType.PAUSE_NETWORK, "x")));
+        awaitCondition("paused", AWAIT_TIMEOUT_MS, () -> enforcer.pauseCount.get() >= 1);
+
+        pushToCurrentClient(BaseMessage.of(MessageType.COMMAND, "fake-server",
+                new CommandPayload("cmd-r", ActionType.RESUME_NETWORK, "y")));
+        awaitCondition("enforcer resume được gọi", AWAIT_TIMEOUT_MS,
+                () -> enforcer.resumeCount.get() >= 1);
+        assertEquals("ACTIVE", enforcer.getNetworkStatus());
+        assertEquals("ACTIVE", collector.status);
+
+        awaitCondition("Server nhận ACK resume", AWAIT_TIMEOUT_MS, () -> server.received.stream()
+                .anyMatch(m -> m.getType() == MessageType.ACK
+                        && m.getPayload() instanceof java.util.Map<?, ?> p
+                        && "cmd-r".equals(p.get("commandId"))));
+    }
+
+    @Test
+    @DisplayName("METRICS_REPORT sau PAUSE phản ánh networkStatus=PAUSED (Task 3.3)")
+    void metricsReportReflectsPausedStatus() throws Exception {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        com.parental.client.metrics.StubMetricsCollectorAccess collector =
+                new com.parental.client.metrics.StubMetricsCollectorAccess();
+        collector.downloadBytes = 5_000;
+        com.parental.client.enforcement.ActionDispatcher dispatcher =
+                new com.parental.client.enforcement.ActionDispatcher(enforcer, msg -> true, collector);
+
+        engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                new JsonProtocolParser(), recordingHandler, collector, null, dispatcher);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+
+        pushToCurrentClient(BaseMessage.of(MessageType.COMMAND, "fake-server",
+                new CommandPayload("cmd-p2", ActionType.PAUSE_NETWORK, "x")));
+        awaitCondition("paused", AWAIT_TIMEOUT_MS, () -> enforcer.pauseCount.get() >= 1);
+
+        // Chu kỳ metrics kế tiếp phải gửi status PAUSED
+        awaitCondition("METRICS_REPORT có networkStatus=PAUSED", 10_000, () ->
+                server.received.stream()
+                        .filter(m -> m.getType() == MessageType.METRICS_REPORT)
+                        .map(BaseMessage::getPayload)
+                        .filter(MetricsPayload.class::isInstance)
+                        .map(MetricsPayload.class::cast)
+                        .anyMatch(m -> "PAUSED".equals(m.networkStatus())));
+        assertTrue(engine.isConnected());
+    }
+
+    @Test
+    @DisplayName("ALERT -> notifier nhận message + ACK; stop() gọi enforcer cleanup (Task 3.3)")
+    void alertNotifiesAndStopCleansUpEnforcer() throws Exception {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        List<String> alerts = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.parental.client.enforcement.ActionDispatcher dispatcher =
+                new com.parental.client.enforcement.ActionDispatcher(enforcer,
+                        msg -> {
+                            alerts.add(msg);
+                            return true;
+                        }, null);
+
+        engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
+                new JsonProtocolParser(), recordingHandler, null, null, dispatcher);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+
+        pushToCurrentClient(BaseMessage.of(MessageType.COMMAND, "fake-server",
+                new CommandPayload("cmd-alert-9", ActionType.ALERT, "Canh bao gio hoc")));
+        awaitCondition("notifier nhận message", AWAIT_TIMEOUT_MS, () -> !alerts.isEmpty());
+        assertEquals("Canh bao gio hoc", alerts.get(0));
+        awaitCondition("Server nhận ACK alert", AWAIT_TIMEOUT_MS, () -> server.received.stream()
+                .anyMatch(m -> m.getType() == MessageType.ACK
+                        && m.getPayload() instanceof java.util.Map<?, ?> p
+                        && "cmd-alert-9".equals(p.get("commandId"))));
+
+        // stop() phải kích hoạt cleanup enforcer (xóa firewall rule — không để máy mất mạng vĩnh viễn)
+        engine.stop();
+        assertEquals(1, enforcer.cleanupCount.get(), "stop() phải gọi enforcer.cleanup()");
     }
 
     @Test

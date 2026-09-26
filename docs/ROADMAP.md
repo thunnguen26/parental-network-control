@@ -10,10 +10,10 @@
 - [x] Task 2.2: Client - Kết nối TCP, gửi `HANDSHAKE`, chạy vòng lặp gửi `HEARTBEAT` (5s/lần), Auto-reconnect. (24/24 test qua — tổng 51/51; exponential backoff 1s→30s, `ClientConfig`, `DeviceInfoCollector`, `TcpClientEngine`, `ServerCommandHandler`)
 - [x] Task 2.3: Graceful Shutdown + phát hiện timeout/ngắt kết nối bất thường. (68/68 test toàn dự án — tổng 20/20 server + 30/30 client; Watchdog Silent Server Detection 15s/3 nhịp tim + JVM shutdown hook + close(); server `DisconnectReason` + `ClientConnectionListener` callbacks + sweeper `HEARTBEAT_TIMEOUT` + `closeAll(SERVER_SHUTDOWN)`)
 
-## Phase 3: Hardware Metrics & Client Enforcement Engine
+## Phase 3: Hardware Metrics & Client Enforcement Engine — HOÀN THÀNH 100%
 - [x] Task 3.1: Client - Tích hợp OSHI đo lưu lượng upload/download, gửi gói tin `METRICS_REPORT`. (79/79 test toàn dự án — 40/40 client + 21/21 server; `NetworkMetricsCollector` + `OshiNetworkMetricsCollector` delta calculation, scheduler riêng `metricsIntervalMs=5s`, server lưu `session.lastMetrics`)
 - [x] Task 3.2: Client - Can thiệp file `hosts` để chặn danh sách domain từ lệnh `CONFIG_SYNC`. (89/89 test toàn dự án — 50/50 client; `HostsFileManager` marker block + backup/restore + idempotent + atomic write + defensive quyền, tích hợp CONFIG_SYNC + shutdown hook clearBlocks)
-- [ ] Task 3.3: Client - Thực thi lệnh hệ thống `PAUSE_NETWORK` / `RESUME_NETWORK` qua `netsh`.
+- [x] Task 3.3: Client - Thực thi `PAUSE_NETWORK`/`RESUME_NETWORK` qua firewall rule `netsh` + `ALERT` notifier + ACK commandId. (105/105 test toàn dự án — 66/66 client; `NetworkEnforcer`/`WindowsNetshEnforcer` (block outbound 80,443/TCP giữ LAN) + `AlertNotifier`/`SystemTrayAlertNotifier` + `ActionDispatcher`, PROTOCOL.md Mục 3.5 bổ sung ACK `commandId`, cleanup on exit)
 
 ## Phase 4: Server Database & Business Rules Engine
 - [ ] Task 4.1: Server - Tích hợp SQLite, tạo Schema (clients, metrics_log, rules, schedules).

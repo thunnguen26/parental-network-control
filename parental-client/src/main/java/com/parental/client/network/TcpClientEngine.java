@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.parental.client.config.ClientConfig;
+import com.parental.client.enforcement.ActionDispatcher;
 import com.parental.client.enforcement.HostsFileManager;
 import com.parental.client.device.DeviceInfoCollector;
 import com.parental.client.metrics.NetworkMetricsCollector;
@@ -85,6 +86,8 @@ public class TcpClientEngine implements AutoCloseable {
     private final NetworkMetricsCollector metricsCollector;
     /** Domain Blocking Engine (Task 3.2) — nullable: null = không can thiệp hosts. */
     private final HostsFileManager hostsFileManager;
+    /** Action Dispatcher (Task 3.3) — nullable: null = COMMAND chỉ log, không thực thi. */
+    private final ActionDispatcher actionDispatcher;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
@@ -132,19 +135,22 @@ public class TcpClientEngine implements AutoCloseable {
                            JsonProtocolParser parser, ServerCommandHandler commandHandler) {
         this(config, deviceInfoCollector, parser, commandHandler,
                 new OshiNetworkMetricsCollector(), // mặc định: bật metrics qua OSHI
-                null); // mặc định: không can thiệp hosts (UI/enforcement Phase sau quyết định)
+                null, // mặc định: không can thiệp hosts (UI/enforcement Phase sau quyết định)
+                null); // mặc định: COMMAND chỉ log (enforcement tắt)
     }
 
-    /** Constructor đầy đủ — test có thể inject collector/hosts manager giả lập (hoặc null để tắt). */
+    /** Constructor đầy đủ — test có thể inject collector/hosts/dispatcher giả lập (hoặc null để tắt). */
     public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
                            JsonProtocolParser parser, ServerCommandHandler commandHandler,
-                           NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager) {
+                           NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
+                           ActionDispatcher actionDispatcher) {
         this.config = Objects.requireNonNull(config, "config");
         this.deviceInfoCollector = Objects.requireNonNull(deviceInfoCollector, "deviceInfoCollector");
         this.parser = Objects.requireNonNull(parser, "parser");
         this.commandHandler = Objects.requireNonNull(commandHandler, "commandHandler");
         this.metricsCollector = metricsCollector; // nullable — null = tắt gửi metrics
         this.hostsFileManager = hostsFileManager; // nullable — null = không can thiệp hosts
+        this.actionDispatcher = actionDispatcher; // nullable — null = COMMAND chỉ log
     }
 
     // ------------------------------------------------------------------
@@ -186,6 +192,10 @@ public class TcpClientEngine implements AutoCloseable {
             if (hostsFileManager != null) {
                 hostsFileManager.clearBlocks();
             }
+            // Task 3.3: luôn khôi phục mạng khi tắt — không để máy mất mạng vĩnh viễn.
+            if (actionDispatcher != null) {
+                actionDispatcher.cleanup();
+            }
         }, "parental-client-shutdown-hook");
         shutdownHook = hook;
         try {
@@ -220,6 +230,11 @@ public class TcpClientEngine implements AutoCloseable {
         shutdownMetricsScheduler();
         // Đóng socket ĐẦU TIÊN để đánh thức readLine() đang block trên Windows.
         closeConnectionQuietly();
+        // Task 3.3: luôn khôi phục mạng khi client tắt (xóa firewall rule) —
+        // không để máy con trong trạng thái mất mạng vĩnh viễn.
+        if (actionDispatcher != null) {
+            actionDispatcher.cleanup();
+        }
 
         Thread connector = connectorThread;
         if (connector != null && connector.isAlive() && connector != Thread.currentThread()) {
@@ -659,7 +674,13 @@ public class TcpClientEngine implements AutoCloseable {
         }
     }
 
-    /** Phase 2: chỉ log và gọi listener stub — KHÔNG can thiệp OS (thuộc Phase 3). */
+    /**
+     * Xử lý COMMAND (Task 3.3 + Task 2.2): điều phối qua {@link ActionDispatcher}
+     * (PAUSE/RESUME/ALERT — thực thi enforcer, sync networkStatus, hiện alert)
+     * rồi gửi ACK kèm {@code commandId} về Server (PROTOCOL.md Mục 3.5) để
+     * Server biết lệnh đã được tiếp nhận. Enforcer lỗi → không ACK (Server
+     * có thể retry). Không bao giờ ném exception làm chết luồng đọc socket.
+     */
     private void handleCommand(BaseMessage<?> message) {
         if (!(message.getPayload() instanceof CommandPayload command)) {
             log.warn("COMMAND with unexpected payload: {}", message.getPayload());
@@ -667,10 +688,51 @@ public class TcpClientEngine implements AutoCloseable {
         }
         log.info("COMMAND received: id={}, action={}, reason={}",
                 command.commandId(), command.action(), command.reason());
+
+        String ackedCommandId = null;
+        if (actionDispatcher != null) {
+            try {
+                ackedCommandId = actionDispatcher.dispatch(command);
+            } catch (RuntimeException e) {
+                log.error("ActionDispatcher threw for command {}: {}", command.commandId(), e.getMessage());
+            }
+        }
+        if (ackedCommandId != null) {
+            sendCommandAck(ackedCommandId); // lệnh thực thi thành công → ACK kèm commandId
+        } else if (actionDispatcher == null) {
+            sendCommandAck(command.commandId()); // dispatcher tắt: vẫn ACK để không treo Server
+        }
+
         try {
             commandHandler.onCommand(command);
         } catch (RuntimeException e) {
             log.error("ServerCommandHandler.onCommand threw: {}", e.getMessage());
+        }
+    }
+
+    /** Gửi ACK cho lệnh COMMAND — payload chứa commandId (PROTOCOL.md Mục 3.5). */
+    private void sendCommandAck(String commandId) {
+        String line;
+        try {
+            line = parser.toLine(BaseMessage.of(MessageType.ACK, config.getClientId(),
+                    java.util.Map.of("commandId", String.valueOf(commandId))));
+        } catch (ProtocolParseException e) {
+            log.error("Serialize ACK failed: {}", e.getMessage());
+            return;
+        }
+        try {
+            synchronized (writeLock) {
+                Writer w = writer;
+                Socket s = socket;
+                if (w == null || s == null || s.isClosed()) {
+                    return;
+                }
+                w.write(line);
+                w.flush();
+            }
+            log.info("ACK sent for command {}", commandId);
+        } catch (IOException e) {
+            log.warn("Failed to send ACK for command {}: {}", commandId, e.getMessage());
         }
     }
 

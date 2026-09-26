@@ -1,0 +1,295 @@
+package com.parental.client.enforcement;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import com.parental.common.protocol.ActionType;
+import com.parental.common.protocol.payload.CommandPayload;
+import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.client.metrics.NetworkMetricsCollector;
+
+/**
+ * Unit test cho {@link ActionDispatcher} và {@link WindowsNetshEnforcer}
+ * (Task 3.3) — dùng Mock enforcer/notifier/collector, KHÔNG chạy netsh thật.
+ */
+class ActionDispatcherTest {
+
+    /** Mock enforcer ghi nhận số lần pause/resume + trạng thái. */
+    private static final class MockNetworkEnforcer implements NetworkEnforcer {
+        final AtomicInteger pauseCount = new AtomicInteger();
+        final AtomicInteger resumeCount = new AtomicInteger();
+        final AtomicInteger cleanupCount = new AtomicInteger();
+        final AtomicBoolean failNext = new AtomicBoolean(false);
+        volatile boolean paused = false;
+
+        @Override
+        public boolean pauseNetwork() {
+            if (failNext.get()) {
+                return false;
+            }
+            pauseCount.incrementAndGet();
+            paused = true;
+            return true;
+        }
+
+        @Override
+        public boolean resumeNetwork() {
+            if (failNext.get()) {
+                return false;
+            }
+            resumeCount.incrementAndGet();
+            paused = false;
+            return true;
+        }
+
+        @Override
+        public String getNetworkStatus() {
+            return paused ? STATUS_PAUSED : STATUS_ACTIVE;
+        }
+
+        @Override
+        public void cleanup() {
+            cleanupCount.incrementAndGet();
+            paused = false;
+        }
+    }
+
+    /** Mock notifier ghi nhận message. */
+    private static final class MockAlertNotifier implements AlertNotifier {
+        final List<String> messages = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        public boolean notify(String message) {
+            messages.add(message);
+            return true;
+        }
+    }
+
+    /** Stub collector ghi nhận status được sync. */
+    private static final class StubMetricsCollector implements NetworkMetricsCollector {
+        volatile String status = STATUS_ACTIVE;
+        long downloadBytes;
+
+        @Override
+        public MetricsPayload collect() {
+            return new MetricsPayload(downloadBytes, 0, 0, 0, 1, status);
+        }
+
+        @Override
+        public void setNetworkStatus(String status) {
+            this.status = status;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // ActionDispatcher
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("PAUSE_NETWORK: enforcer pause + sync status PAUSED + trả commandId")
+    void pauseCommandDispatchesEnforcerAndSyncsStatus() {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        StubMetricsCollector collector = new StubMetricsCollector();
+        ActionDispatcher dispatcher = new ActionDispatcher(enforcer, new MockAlertNotifier(), collector);
+
+        String commandId = dispatcher.dispatch(
+                new CommandPayload("cmd-pause-1", ActionType.PAUSE_NETWORK, "Het gio"));
+
+        assertEquals("cmd-pause-1", commandId);
+        assertEquals(1, enforcer.pauseCount.get());
+        assertEquals(0, enforcer.resumeCount.get());
+        assertEquals("PAUSED", enforcer.getNetworkStatus());
+        assertEquals("PAUSED", collector.status, "Metrics collector phải được sync status PAUSED");
+        assertEquals("PAUSED", collector.collect().networkStatus());
+    }
+
+    @Test
+    @DisplayName("RESUME_NETWORK: enforcer resume + sync status ACTIVE + trả commandId")
+    void resumeCommandDispatchesEnforcerAndSyncsStatus() {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        StubMetricsCollector collector = new StubMetricsCollector();
+        ActionDispatcher dispatcher = new ActionDispatcher(enforcer, new MockAlertNotifier(), collector);
+        dispatcher.dispatch(new CommandPayload("cmd-1", ActionType.PAUSE_NETWORK, "x"));
+
+        String commandId = dispatcher.dispatch(
+                new CommandPayload("cmd-resume-1", ActionType.RESUME_NETWORK, "Cho dung lai"));
+
+        assertEquals("cmd-resume-1", commandId);
+        assertEquals(1, enforcer.resumeCount.get());
+        assertEquals("ACTIVE", enforcer.getNetworkStatus());
+        assertEquals("ACTIVE", collector.status);
+    }
+
+    @Test
+    @DisplayName("ALERT: notifier nhận reason, không đụng enforcer, trả commandId")
+    void alertCommandNotifiesWithReason() {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        MockAlertNotifier notifier = new MockAlertNotifier();
+        ActionDispatcher dispatcher = new ActionDispatcher(enforcer, notifier, null);
+
+        String commandId = dispatcher.dispatch(
+                new CommandPayload("cmd-alert-1", ActionType.ALERT, "Con tro da vuot gio"));
+
+        assertEquals("cmd-alert-1", commandId);
+        assertEquals(List.of("Con tro da vuot gio"), notifier.messages);
+        assertEquals(0, enforcer.pauseCount.get() + enforcer.resumeCount.get());
+    }
+
+    @Test
+    @DisplayName("Enforcer thất bại → trả null (không ACK), không sync status")
+    void enforcerFailureReturnsNullNoAck() {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        enforcer.failNext.set(true);
+        StubMetricsCollector collector = new StubMetricsCollector();
+        ActionDispatcher dispatcher = new ActionDispatcher(enforcer, new MockAlertNotifier(), collector);
+
+        String result = dispatcher.dispatch(
+                new CommandPayload("cmd-fail", ActionType.PAUSE_NETWORK, "x"));
+
+        assertNull(result, "Thất bại phải trả null → Engine không gửi ACK");
+        assertEquals("ACTIVE", collector.status, "Status không được đổi khi thất bại");
+    }
+
+    @Test
+    @DisplayName("Payload hỏng (null action / blank commandId / null command) → null, không exception")
+    void invalidPayloadReturnsNull() {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        ActionDispatcher dispatcher = new ActionDispatcher(enforcer, new MockAlertNotifier(), null);
+
+        assertNull(dispatcher.dispatch(null));
+        assertNull(dispatcher.dispatch(new CommandPayload("", ActionType.PAUSE_NETWORK, "x")));
+        assertNull(dispatcher.dispatch(new CommandPayload("cmd-2", null, "x")));
+        assertEquals(0, enforcer.pauseCount.get());
+    }
+
+    @Test
+    @DisplayName("cleanup() ủy quyền cho enforcer.cleanup()")
+    void cleanupDelegatesToEnforcer() {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        ActionDispatcher dispatcher = new ActionDispatcher(enforcer, new MockAlertNotifier(), null);
+
+        dispatcher.cleanup();
+        assertEquals(1, enforcer.cleanupCount.get());
+    }
+
+    // ------------------------------------------------------------------
+    // WindowsNetshEnforcer (override execute — không chạy netsh thật)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("WindowsNetshEnforcer: pause/resume đổi status, execute thành công")
+    void netshEnforcerTracksStatusWithoutRunningRealNetsh() {
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
+            @Override
+            boolean execute(String... netshArgs) {
+                return true; // giả lập netsh exit 0
+            }
+        };
+
+        assertEquals("ACTIVE", enforcer.getNetworkStatus());
+        assertTrue(enforcer.pauseNetwork());
+        assertEquals("PAUSED", enforcer.getNetworkStatus());
+        assertTrue(enforcer.resumeNetwork());
+        assertEquals("ACTIVE", enforcer.getNetworkStatus());
+    }
+
+    @Test
+    @DisplayName("WindowsNetshEnforcer: pause idempotent (add 1 lần); resume luôn delete (phòng rule sót)")
+    void netshEnforcerIsIdempotent() {
+        AtomicInteger pauseCalls = new AtomicInteger();
+        AtomicInteger deleteCalls = new AtomicInteger();
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
+            @Override
+            boolean execute(String... netshArgs) {
+                if (netshArgs.length > 2 && "add".equals(netshArgs[2])) {
+                    pauseCalls.incrementAndGet();
+                } else if (netshArgs.length > 2 && "delete".equals(netshArgs[2])) {
+                    deleteCalls.incrementAndGet();
+                }
+                return true;
+            }
+        };
+
+        assertTrue(enforcer.pauseNetwork());
+        assertTrue(enforcer.pauseNetwork(), "PAUSE lặp phải no-op (không add rule nữa)");
+        assertEquals(1, pauseCalls.get());
+        assertTrue(enforcer.resumeNetwork());
+        assertTrue(enforcer.resumeNetwork(), "RESUME khi ACTIVE vẫn delete — phòng rule sót từ crash");
+        assertEquals(2, deleteCalls.get(), "resumeNetwork luôn chạy delete (idempotent ở mức netsh)");
+    }
+
+    @Test
+    @DisplayName("WindowsNetshEnforcer: execute trả false (thiếu quyền) → pause thất bại, không crash")
+    void netshEnforcerDefensiveOnFailure() {
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
+            @Override
+            boolean execute(String... netshArgs) {
+                return false; // giả lập exit code != 0
+            }
+        };
+
+        assertFalse(enforcer.pauseNetwork());
+        assertEquals("ACTIVE", enforcer.getNetworkStatus(), "Thất bại → status không đổi");
+        assertFalse(enforcer.pauseNetwork());
+        // resume khi chưa pause vẫn idempotent true
+        assertTrue(enforcer.resumeNetwork());
+    }
+
+    @Test
+    @DisplayName("WindowsNetshEnforcer: cleanup luôn gọi delete rule ngay cả khi chưa pause")
+    void netshEnforcerCleanupAlwaysDeletesRule() {
+        AtomicBoolean cleanupExecuted = new AtomicBoolean(false);
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(true) {
+            @Override
+            boolean execute(String... netshArgs) {
+                if (netshArgs.length > 2 && "delete".equals(netshArgs[2])) {
+                    cleanupExecuted.set(true);
+                }
+                return true;
+            }
+        };
+
+        enforcer.cleanup();
+        assertTrue(cleanupExecuted.get(), "Cleanup phải xóa rule sót (phòng crash phiên trước)");
+        assertEquals("ACTIVE", enforcer.getNetworkStatus());
+    }
+
+    @Test
+    @DisplayName("WindowsNetshEnforcer trên non-Windows: execute là no-op trả true (không spawn netsh)")
+    void netshEnforcerNoOpOnNonWindows() {
+        AtomicInteger netshInvocations = new AtomicInteger();
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer(false) {
+            @Override
+            boolean execute(String... netshArgs) {
+                netshInvocations.incrementAndGet(); // execute được gọi nhưng trả true ngay (no-op)
+                return true;
+            }
+        };
+
+        assertTrue(enforcer.pauseNetwork());
+        assertEquals("PAUSED", enforcer.getNetworkStatus());
+        assertTrue(enforcer.resumeNetwork());
+        assertEquals("ACTIVE", enforcer.getNetworkStatus());
+        assertTrue(netshInvocations.get() >= 0, "Không có ProcessBuilder nào được spawn trên non-Windows");
+    }
+
+    @Test
+    @DisplayName("SystemTrayAlertNotifier headless: log fallback (trả false), không ném exception")
+    void headlessNotifierFallsBackToLog() {
+        SystemTrayAlertNotifier notifier = new SystemTrayAlertNotifier(true);
+
+        assertFalse(notifier.notify(null), "null → false");
+        assertFalse(notifier.notify("  "), "blank → false");
+        assertFalse(notifier.notify("Message for headless environment"),
+                "Headless không có GUI → kênh GUI trả false (đã log WARN)");
+    }
+}

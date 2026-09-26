@@ -51,6 +51,8 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
     private long previousTimestampNanos = -1;
     private long accumulatedDownloadBytes = 0;
     private long accumulatedUploadBytes = 0;
+    /** Trạng thái mạng hiện hành — ActionDispatcher cập nhật qua setNetworkStatus (Task 3.3). */
+    private String networkStatus = MetricsPayloadDefaults.NETWORK_STATUS_ACTIVE;
     private MetricsPayload lastMetrics =
             new MetricsPayload(0, 0, 0, 0, 0, MetricsPayloadDefaults.NETWORK_STATUS_ACTIVE);
 
@@ -68,6 +70,14 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
     OshiNetworkMetricsCollector(HardwareAbstractionLayer hal) {
         this.hal = hal;
         this.sessionStartNanos = System.nanoTime();
+    }
+
+    /** Task 3.3: trạng thái mạng cho lần collect() kế tiếp ("ACTIVE"/"PAUSED"). */
+    @Override
+    public void setNetworkStatus(String status) {
+        if (status != null && !status.isBlank()) {
+            this.networkStatus = status;
+        }
     }
 
     @Override
@@ -103,8 +113,7 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
             previousRecvBytes = currentRecvBytes;
             previousSentBytes = currentSentBytes;
             previousTimestampNanos = nowNanos;
-            lastMetrics = new MetricsPayload(0, 0, 0, 0, sessionDurationSeconds,
-                    MetricsPayloadDefaults.NETWORK_STATUS_ACTIVE);
+            lastMetrics = new MetricsPayload(0, 0, 0, 0, sessionDurationSeconds, networkStatus);
             return lastMetrics;
         }
 
@@ -130,7 +139,7 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
                 downloadSpeedBps,
                 uploadSpeedBps,
                 sessionDurationSeconds,
-                MetricsPayloadDefaults.NETWORK_STATUS_ACTIVE);
+                networkStatus);
         return lastMetrics;
     }
 

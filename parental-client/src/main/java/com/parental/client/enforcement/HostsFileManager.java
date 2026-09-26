@@ -48,6 +48,11 @@ public class HostsFileManager {
 
     private static final Logger log = LoggerFactory.getLogger(HostsFileManager.class);
 
+    /** Số lần retry khi move bị khóa tạm thời trên Windows (AV/process đọc đồng thời). */
+    private static final int MOVE_RETRY_ATTEMPTS = 3;
+    /** Khoảng nghỉ giữa các lần retry (ms). */
+    private static final long MOVE_RETRY_DELAY_MS = 100;
+
     private final Path hostsFilePath;
     private final Path backupFilePath;
 
@@ -273,6 +278,10 @@ public class HostsFileManager {
     /**
      * Ghi an toàn: ghi vào temp file cùng thư mục rồi atomic move đè file
      * hosts — tránh trạng thái nửa vời khi crash giữa chừng.
+     *
+     * <p>Trên Windows, file hosts có thể bị khóa tạm thời (trình quét virus,
+     * process đọc đồng thời) — {@code move} thất bại được retry tới
+     * {@value MOVE_RETRY_ATTEMPTS} lần với khoảng nghỉ ngắn trước khi bỏ.</p>
      */
     private void atomicWrite(String content) throws IOException {
         if (!Files.exists(hostsFilePath) && hostsFilePath.getParent() != null) {
@@ -280,17 +289,33 @@ public class HostsFileManager {
         }
         Path temp = Files.createTempFile(hostsFilePath.getParent(), "parental-hosts-", ".tmp");
         Files.writeString(temp, content, StandardCharsets.UTF_8);
+        IOException lastError = null;
         try {
-            try {
-                Files.move(temp, hostsFilePath,
-                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                // Một số filesystem (tmpfs/FAT) không hỗ trợ atomic move — fallback
-                Files.move(temp, hostsFilePath, StandardCopyOption.REPLACE_EXISTING);
+            for (int attempt = 1; attempt <= MOVE_RETRY_ATTEMPTS; attempt++) {
+                try {
+                    try {
+                        Files.move(temp, hostsFilePath,
+                                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                    } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                        // Một số filesystem (tmpfs/FAT) không hỗ trợ atomic move — fallback
+                        Files.move(temp, hostsFilePath, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    return; // thành công
+                } catch (IOException e) {
+                    lastError = e;
+                    log.debug("Hosts write attempt {}/{} failed: {}",
+                            attempt, MOVE_RETRY_ATTEMPTS, e.getMessage());
+                    try {
+                        Thread.sleep(MOVE_RETRY_DELAY_MS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
-        } catch (IOException e) {
-            Files.deleteIfExists(temp);
-            throw e;
+            throw lastError != null ? lastError : new IOException("Unknown move failure");
+        } finally {
+            Files.deleteIfExists(temp); // temp còn lại nếu mọi lần move đều thất bại
         }
     }
 

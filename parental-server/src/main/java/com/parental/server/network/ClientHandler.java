@@ -136,6 +136,16 @@ public class ClientHandler implements Runnable {
                     session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
                     session.send(BaseMessage.of(MessageType.ACK, SERVER_ID, Map.of()));
                 }
+                case ACK -> {
+                    // Task 3.3: client ACK lệnh COMMAND (payload chứa commandId) —
+                    // Phase 4 (Rule Engine) sẽ đối chiếu commandId và ghi CSDL.
+                    session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
+                    if (message.getPayload() instanceof Map<?, ?> payload
+                            && payload.get("commandId") != null) {
+                        log.info("[{}] COMMAND ACK received (commandId={})",
+                                session.getClientId(), payload.get("commandId"));
+                    }
+                }
                 case METRICS_REPORT -> {
                     // Task 2.3: MỌI dữ liệu inbound (không chỉ HEARTBEAT) là dấu hiệu
                     // client còn sống — làm mới timestamp để sweeper không gỡ nhầm.
