@@ -90,6 +90,7 @@ class TcpClientEngineIntegrationTest {
                 .serverHost("127.0.0.1")
                 .serverPort(server.getPort())
                 .heartbeatIntervalMs(300)
+                .heartbeatTimeoutMs(1_500) // watchdog quét mỗi 375ms (Task 2.3)
                 .initialReconnectDelayMs(100)
                 .maxReconnectDelayMs(1_000)
                 .build();
@@ -214,7 +215,8 @@ class TcpClientEngineIntegrationTest {
         // Mở server trên cùng port
         server.reopen();
         assertTrue(server.awaitHandshake(30_000), "Client phải kết nối được khi server xuất hiện");
-        assertTrue(engine.isConnected());
+        // Latch handshake mở trước khi connector set connected=true — chờ có timeout (chống race).
+        awaitCondition("client connected sau khi server xuất hiện", 10_000, engine::isConnected);
     }
 
     @Test
@@ -287,6 +289,94 @@ class TcpClientEngineIntegrationTest {
         engine.stop();
         engine.stop(); // lần 2 an toàn
         assertFalse(engine.isRunning());
+    }
+
+    @Test
+    @DisplayName("Watchdog: server nhận heartbeat nhưng im lặng không ACK -> client phát hiện, đóng zombie, reconnect")
+    void watchdogDetectsSilentServerAndReconnects() throws Exception {
+        engine = newEngine(recordingHandler);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+        assertTrue(server.awaitFirstHeartbeat(AWAIT_TIMEOUT_MS));
+        awaitCondition("nhận ACK đầu tiên", AWAIT_TIMEOUT_MS, () -> engine.getLastAckTimestampMs() > 0);
+        assertEquals(0, engine.getWatchdogTimeoutCount(), "Watchdog chưa được kích hoạt");
+
+        // Server zombie: vẫn nhận gói tin (kết nối không đứt) nhưng không trả ACK nữa.
+        server.setSilentMode(true);
+        long ackBefore = engine.getLastAckTimestampMs();
+
+        // Watchdog (timeout 1.5s, quét mỗi 375ms) phải phát hiện và đóng zombie connection.
+        awaitCondition("watchdog phát hiện server im lặng", 10_000,
+                () -> engine.getWatchdogTimeoutCount() >= 1);
+        awaitCondition("client ngắt trạng thái connected sau watchdog", AWAIT_TIMEOUT_MS,
+                () -> !engine.isConnected());
+
+        // Client phải tự reconnect và handshake lại với server (cùng port).
+        awaitCondition("client handshake lại sau watchdog", 30_000,
+                () -> server.count(MessageType.HANDSHAKE) >= 2);
+        awaitCondition("client connected trở lại", AWAIT_TIMEOUT_MS, engine::isConnected);
+
+        // Server vẫn im lặng → không có ACK mới nào sau khi reconnect.
+        assertTrue(engine.getLastAckTimestampMs() == ackBefore
+                        || server.count(MessageType.HEARTBEAT) > 1,
+                "Client vẫn hoạt động bình thường sau reconnect");
+    }
+
+    @Test
+    @DisplayName("Watchdog KHÔNG kích hoạt khi server phản hồi ACK bình thường")
+    void watchdogDoesNotFireWhenServerResponsive() throws Exception {
+        engine = newEngine(recordingHandler);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+        assertTrue(server.awaitFirstHeartbeat(AWAIT_TIMEOUT_MS));
+        awaitCondition("nhận ACK", AWAIT_TIMEOUT_MS, () -> engine.getLastAckTimestampMs() > 0);
+
+        // Chạy qua nhiều chu kỳ heartbeat (300ms) — watchdog timeout 1.5s không được fire.
+        Thread.sleep(2_500);
+        assertEquals(0, engine.getWatchdogTimeoutCount(),
+                "Server responsive → watchdog không được kích hoạt");
+        assertTrue(engine.isConnected());
+        assertTrue(server.count(MessageType.HEARTBEAT) >= 3,
+                "Client phải gửi được nhiều heartbeat trong thời gian quan sát");
+    }
+
+    @Test
+    @DisplayName("Server tắt đột ngột -> client phát hiện mất kết nối và chuyển sang reconnecting")
+    void serverShutdownTriggersReconnectingState() throws Exception {
+        engine = newEngine(recordingHandler);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+        assertTrue(engine.isConnected());
+
+        // Server tắt đột ngột (không graceful)
+        server.close();
+
+        // Client phải phát hiện NGAY LẬP TỨC (EOF/lỗi đọc, không cần chờ watchdog)
+        awaitCondition("client phát hiện mất kết nối", 5_000, () -> !engine.isConnected());
+        assertTrue(engine.isRunning(), "Engine vẫn running — đang ở trạng thái reconnecting");
+
+        // Server phục hồi → client tự kết nối lại (exponential backoff)
+        server.reopen();
+        awaitCondition("client handshake lại sau server phục hồi", 30_000,
+                () -> server.count(MessageType.HANDSHAKE) >= 2);
+        awaitCondition("client connected trở lại", 10_000, engine::isConnected);
+    }
+
+    @Test
+    @DisplayName("stop() đóng socket, không rò rỉ: gọi sau watchdog reconnect vẫn sạch sẽ")
+    void stopAfterWatchdogReconnectCleansUp() throws Exception {
+        engine = newEngine(recordingHandler);
+        engine.start();
+        assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
+
+        server.setSilentMode(true);
+        awaitCondition("watchdog fire", 10_000, () -> engine.getWatchdogTimeoutCount() >= 1);
+        awaitCondition("client handshake lại", 30_000,
+                () -> server.count(MessageType.HANDSHAKE) >= 2);
+
+        engine.stop(); // phải sạch sẽ dù vừa trải qua watchdog + reconnect
+        assertFalse(engine.isRunning());
+        assertFalse(engine.isConnected());
     }
 
     @Test

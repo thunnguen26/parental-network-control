@@ -1,9 +1,9 @@
 # CURRENT PROJECT STATE & TASK LOG
 
 ## 1. Project Snapshot
-- **Current Phase:** Phase 2 (Core Server & Client TCP Networking) — Task 2.2 HOÀN THÀNH.
-- **Current Status:** `mvn clean test` BUILD SUCCESS — 51/51 test pass (18 common + 9 server + 24 client), không còn process treo.
-- **Active Task:** Task 2.3 — Xử lý đóng kết nối an toàn (Graceful Shutdown) và phát hiện timeout/ngắt kết nối bất thường.
+- **Current Phase:** **Phase 2 HOÀN THÀNH 100%** — sẵn sàng chuyển sang Phase 3.
+- **Current Status:** `mvn clean test` BUILD SUCCESS (chạy 2 lần liên tiếp, không flaky) — **68/68 test pass** (18 common + 20 server + 30 client), không còn process treo.
+- **Active Task:** Task 3.1 — Client tích hợp OSHI đo lưu lượng upload/download, gửi gói tin `METRICS_REPORT`.
 
 ## 2. Completed Tasks
 - [x] Tạo file AGENTS.md, PROTOCOL.md, ROADMAP.md.
@@ -24,7 +24,20 @@
     - Test (24): `ClientConfigTest` (10) — defaults/UUID riêng/builder/validation/equals; `DefaultDeviceInfoCollectorTest` (6) — payload đủ 5 trường, deviceType DESKTOP, fallback IP/MAC/hostname, MAC format, idempotent; `TcpClientEngineIntegrationTest` (8) với `FakeTcpServer` (ServerSocket dynamic port 0, trả ACK cho HEARTBEAT, hỗ trợ close/reopen CÙNG port) — handshake hợp lệ đầy đủ thông tin, HEARTBEAT định kỳ + nhận ACK (`lastAckTimestampMs > 0`), **auto-reconnect 2 kịch bản** (server chết đột ngột → mở lại cùng port; server chưa sẵn sàng → retry rồi kết nối được), server đẩy `COMMAND`/`CONFIG_SYNC` → listener nhận đúng payload, `stop()` sạch sẽ < 5s + heartbeat dừng hẳn, start/stop double là no-op/an toàn, listener ném RuntimeException engine vẫn sống. Chống deadlock: mọi chờ có timeout, @Timeout(90), daemon thread, stop() trong @AfterEach.
     - `parental-client/pom.xml`: thêm `slf4j-simple` (test scope) đồng nhất với server.
     - Kết quả: **24/24 PASS** — tổng toàn dự án **51/51 test pass** (`mvn clean test`).
-- [x] **Task 1.3** — Protocol Engine trong `parental-common` (package `com.parental.common.protocol`):
+- [x] **Task 2.3** — Graceful Shutdown & phát hiện Timeout/Ngắt kết nối bất thường (cả Client và Server):
+    - `ClientConfig` (client): thêm `heartbeatTimeoutMs` (mặc định 15000ms = 3 chu kỳ nhịp tim 5s, builder + validation `timeout >= interval`, cập nhật equals/hashCode/toString).
+    - `TcpClientEngine` (client) — **Watchdog Silent Server Detection**:
+        * Cùng heartbeat scheduler chạy task quét im lặng mỗi `heartbeatTimeoutMs/4`; đo khoảng im lặng từ `lastServerActivityMs` (mọi bản tin inbound — ACK/COMMAND/CONFIG_SYNC — đều làm mới mốc qua Inbound Reader). Quá hạn → coi là half-open socket/zombie connection: chủ động `socket.close()` (chỉ socket hiện tại, không đụng kết nối mới) → connectLoop tự reconnect exponential backoff. Đếm qua `getWatchdogTimeoutCount()`.
+        * **Bug đã sửa:** phiên bản đầu đo từ `lastHeartbeatSentMs` — mốc bị reset mỗi chu kỳ gửi nên khoảng im lặng không bao giờ vượt timeout; chuyển sang đo từ `lastServerActivityMs` + reset mốc ngay khi handshake thành công (tránh false positive từ phiên cũ).
+        * JVM `Runtime.addShutdownHook` đăng ký khi `start()`, gỡ khi `stop()` — SIGINT/SIGTERM dọn dẹp sạch, không rò rỉ socket; thêm phương thức `close()` rõ ràng (implements `AutoCloseable`, tương đương `stop()`).
+    - `DisconnectReason` (server, enum mới): `CLIENT_DISCONNECTED`, `HEARTBEAT_TIMEOUT`, `IO_ERROR`, `REPLACED`, `SERVER_SHUTDOWN`, `UNKNOWN`.
+    - `ClientConnectionListener` (server, interface mới): `onClientConnected(ClientSession)` + `onClientDisconnected(String clientId, DisconnectReason)` — chuẩn bị cho GUI/CSDL Phase sau; callback nuốt RuntimeException để listener hỏng không làm chết mạng.
+    - `ClientSessionManager` (server): `addConnectionListener`/`removeConnectionListener`; mọi đường gỡ session đều fire callback kèm reason — sweep → `HEARTBEAT_TIMEOUT`, register đè → `REPLACED` (phiên cũ), `closeAll` → `SERVER_SHUTDOWN`, broadcast lỗi → `IO_ERROR`; thêm `closeAll(reason)` cho graceful shutdown.
+    - `ClientHandler` (server): METRICS_REPORT (mọi dữ liệu inbound) cũng làm mới `lastHeartbeatTimestamp` — sweeper không gỡ nhầm client đang hoạt động.
+    - `TcpServerEngine.stop()` (server): sửa thứ tự graceful shutdown — **đóng toàn bộ session TRƯỚC** `awaitTermination` (handler threads block trong `readLine()` chỉ thoát được khi socket đóng, tránh chờ đủ 5s vô ích) → `shutdownNow` khi vượt hạn, log rõ ràng.
+    - Test mới (17): `ClientSessionManagerTest` (9) — callback connected/disconnected với đủ các reason, remove không tồn tại không fire, phiên stale không fire, listener ném lỗi không chặn listener khác, remove listener; `TcpServerEngineIntegrationTest` +3 — sweeper định kỳ tự gỡ client im lặng kèm callback `HEARTBEAT_TIMEOUT`, stop() fire callback `SERVER_SHUTDOWN`, callback `onClientConnected` khi handshake; `ClientConfigTest` +2 — `heartbeatTimeoutMs` default/override/validation; `TcpClientEngineIntegrationTest` +4 — **watchdog phát hiện server im lặng (silent mode: nhận heartbeat nhưng không ACK) → đóng zombie → reconnect thành công**, watchdog KHÔNG fire khi server responsive, server tắt đột ngột → client phát hiện ngay + chuyển trạng thái reconnecting + kết nối lại, stop() sạch sẽ sau watchdog/reconnect. `FakeTcpServer` thêm `setSilentMode(boolean)`.
+    - Kết quả: **30/30 client PASS, 20/20 server PASS** — tổng toàn dự án **68/68 test pass** (`mvn clean test`, chạy 2 lần).
+- [x] **Task 2.2** — Client TCP Networking Engine trong `parental-client`:
     - `JsonProtocolParser`: ObjectMapper an toàn (`FAIL_ON_UNKNOWN_PROPERTIES = false`); `toLine(BaseMessage<?>)` serialize + đảm bảo kết thúc `\n` (Framing Rule LDJSON); `fromLine(String)` tách frame `\n`/`\r\n`, kiểm tra 4 field bắt buộc `type`/`clientId`/`timestamp`/`payload` (Mục 2), parse payload polymorphic: HANDSHAKE→`HandshakePayload`, METRICS_REPORT→`MetricsPayload`, COMMAND→`CommandPayload`, CONFIG_SYNC→`ConfigSyncPayload`, HEARTBEAT/ACK→`Map` rỗng; field DTO thiếu nhận default lenient.
     - `ProtocolParseException`: bọc `JsonProcessingException`, không để exception thô của Jackson văng ra ngoài.
     - Unit test JUnit 5 (`JsonProtocolParserTest`): 18 test / 3 nhóm — Round-trip 4 payload chính + HEARTBEAT/ACK; Framing Rule (kết thúc đúng 1 `\n`, dòng có/không `\n`, ranh giới gói tin khi stream nhiều dòng); Error handling (JSON hỏng, thiếu type/clientId/timestamp/payload, type lạ, payload sai schema, dòng rỗng, unknown field bị bỏ qua). Kết quả: **18/18 PASS** (`mvn clean test`).
@@ -33,10 +46,11 @@
 - Không có.
 
 ## 4. Next Action Items (Dành cho phiên tiếp theo)
-- **Task 2.3** (ROADMAP Phase 2): Hoàn thiện graceful shutdown phía client + phát hiện timeout/ngắt kết nối bất thường (vd: server im lặng quá `soTimeout` mà không EOF → chủ động đóng + reconnect; phân biệt lỗi tạm thời/vĩnh viễn; bổ sung watchdog cho heartbeat). KHÔNG can thiệp OS (thuộc Phase 3), KHÔNG sửa protocol (PROTOCOL.md Mục 3.5 chỉ mở rộng khi có schema chuẩn).
+- **Task 3.1** (ROADMAP Phase 3): Client tích hợp OSHI đo lưu lượng upload/download (NetworkInterface stats), gửi gói tin `METRICS_REPORT` định kỳ qua `TcpClientEngine` (schema Mục 3.2 PROTOCOL.md; server hiện chỉ log METRICS_REPORT). Có thể gắn vào heartbeat scheduler hoặc scheduler riêng; lưu ý sampler cần delta giữa 2 lần đo.
 - Lệnh build môi trường này: `JAVA_HOME="/c/Program Files/Java/jdk-17" /c/maven/apache-maven-3.9.6/bin/mvn clean test`.
 
 ## 5. Known Issues / Blockers
 - `mvn` chưa có trong PATH (chỉ có JDK 23 không khớp target): dùng đường dẫn đầy đủ `/c/maven/apache-maven-3.9.6/bin/mvn` và `JAVA_HOME=C:\Program Files\Java\jdk-17`, hoặc cân nhắc thêm vào PATH hệ thống.
 - Bài học Task 2.2 (đã xử lý): sleep trong backoff phải nằm trong try/catch InterruptedException của connectLoop (không phải Error wrapper); assert trạng thái bất đồng bộ (ACK, reconnect) phải dùng await-poll có timeout, không assert tức thời.
+- Bài học Task 2.3 (đã xử lý): watchdog phải đo im lặng từ bản tin inbound cuối (`lastServerActivityMs`), KHÔNG từ thời điểm gửi heartbeat gần nhất (bị reset mỗi chu kỳ → không bao giờ vượt timeout); `awaitTermination` của handler pool phải gọi SAU khi đóng hết session (handler block trong readLine chỉ thoát khi socket đóng); assert callback fire trên thread khác (sweeper/handler) luôn dùng await-poll có timeout.
 - Đã cấu hình `forkedProcessTimeoutInSeconds=300` cho surefire (root `pom.xml`) — tự hủy forked JVM treo, phòng ngừa zombie process giữ khóa `target/` trên Windows (đã gặp và xử lý: deadlock ClientSession.close() khi thread handler block trong socket read không interruptible).

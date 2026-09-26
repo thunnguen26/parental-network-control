@@ -245,8 +245,18 @@ class TcpServerEngineIntegrationTest {
     }
 
     @Test
-    @DisplayName("stop() graceful shutdown: server ngừng chạy và đóng sạch session")
+    @DisplayName("stop() graceful shutdown: server ngừng chạy, đóng sạch session và fire callback SERVER_SHUTDOWN")
     void stopShutsDownCleanly() throws Exception {
+        List<String> disconnected = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<DisconnectReason> reasons = new java.util.concurrent.CopyOnWriteArrayList<>();
+        engine.getSessionManager().addConnectionListener(new ClientConnectionListener() {
+            @Override
+            public void onClientDisconnected(String clientId, DisconnectReason reason) {
+                disconnected.add(clientId);
+                reasons.add(reason);
+            }
+        });
+
         FakeClient client = connectAndHandshake("client-x", "Laptop-ConTrai");
         awaitCondition("session sẵn sàng", Duration.ofSeconds(10),
                 () -> engine.getSessionManager().get("client-x") != null);
@@ -256,6 +266,72 @@ class TcpServerEngineIntegrationTest {
         assertFalse(engine.isRunning());
         assertEquals(0, engine.getSessionManager().count());
         assertTrue(engine.getSessionManager().get("client-x") == null);
+
+        // Task 2.3: stop() phải fire onClientDisconnected với reason SERVER_SHUTDOWN
+        awaitCondition("callback SERVER_SHUTDOWN", Duration.ofSeconds(5),
+                () -> !disconnected.isEmpty());
+        assertTrue(disconnected.contains("client-x"));
+        assertTrue(reasons.stream().anyMatch(r -> r == DisconnectReason.SERVER_SHUTDOWN));
+        client.socket().close();
+    }
+
+    @Test
+    @DisplayName("Sweeper định kỳ: client im lặng quá hạn -> tự động bị gỡ kèm callback HEARTBEAT_TIMEOUT")
+    void periodicSweeperRemovesSilentClientWithCallback() throws Exception {
+        // Engine sweep mỗi 1s với timeout 2s (constructor overload: port, pool, timeoutSeconds)
+        TcpServerEngine shortEngine = new TcpServerEngine(0, 8, 2);
+        List<String> disconnected = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<DisconnectReason> reasons = new java.util.concurrent.CopyOnWriteArrayList<>();
+        shortEngine.getSessionManager().addConnectionListener(new ClientConnectionListener() {
+            @Override
+            public void onClientDisconnected(String clientId, DisconnectReason reason) {
+                disconnected.add(clientId);
+                reasons.add(reason);
+            }
+        });
+        shortEngine.start();
+        try {
+            Socket socket = new Socket("127.0.0.1", shortEngine.getPort());
+            socket.setTcpNoDelay(true);
+            BufferedWriter writer = new BufferedWriter(
+                    new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
+            writer.write(parser.toLine(BaseMessage.of(MessageType.HANDSHAKE, "silent-client",
+                    new HandshakePayload("PC-Im-Lang", "DESKTOP", "Windows 11", "127.0.0.1", "AA-BB-CC-DD-EE-99"))));
+            writer.flush();
+
+            awaitCondition("session sẵn sàng", Duration.ofSeconds(10),
+                    () -> shortEngine.getSessionManager().get("silent-client") != null);
+            assertEquals(1, shortEngine.getSessionManager().count());
+
+            // Client im lặng hoàn toàn (không gửi gì nữa) — sweeper (timeout 2s) phải gỡ.
+            awaitCondition("sweeper tự gỡ client im lặng", Duration.ofSeconds(15),
+                    () -> shortEngine.getSessionManager().count() == 0);
+
+            // Callback fire trên sweeper thread — chờ có timeout, không assert tức thời (race).
+            awaitCondition("Sweeper phải fire onClientDisconnected", Duration.ofSeconds(5),
+                    () -> disconnected.contains("silent-client"));
+            awaitCondition("Reason phải là HEARTBEAT_TIMEOUT", Duration.ofSeconds(5),
+                    () -> reasons.stream().anyMatch(r -> r == DisconnectReason.HEARTBEAT_TIMEOUT));
+            socket.close();
+        } finally {
+            shortEngine.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("Listener nhận onClientConnected khi client handshake thành công")
+    void connectedListenerFiresOnHandshake() throws Exception {
+        List<String> connected = new java.util.concurrent.CopyOnWriteArrayList<>();
+        engine.getSessionManager().addConnectionListener(new ClientConnectionListener() {
+            @Override
+            public void onClientConnected(ClientSession session) {
+                connected.add(session.getClientId());
+            }
+        });
+
+        FakeClient client = connectAndHandshake("client-cb", "Laptop-ConTrai");
+        awaitCondition("callback connected", Duration.ofSeconds(10), () -> !connected.isEmpty());
+        assertTrue(connected.contains("client-cb"));
         client.socket().close();
     }
 }

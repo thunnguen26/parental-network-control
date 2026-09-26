@@ -22,6 +22,8 @@ public final class ClientConfig {
     public static final String DEFAULT_SERVER_HOST = "127.0.0.1";
     public static final int DEFAULT_SERVER_PORT = 8888;
     public static final long DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
+    /** Mặc định 15s = 3 chu kỳ nhịp tim 5s (Task 2.3 — Silent Server Detection). */
+    public static final long DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
     public static final long DEFAULT_INITIAL_RECONNECT_DELAY_MS = 1_000;
     public static final long DEFAULT_MAX_RECONNECT_DELAY_MS = 30_000;
 
@@ -29,6 +31,7 @@ public final class ClientConfig {
     private final int serverPort;
     private final String clientId;
     private final long heartbeatIntervalMs;
+    private final long heartbeatTimeoutMs;
     private final long initialReconnectDelayMs;
     private final long maxReconnectDelayMs;
 
@@ -37,6 +40,7 @@ public final class ClientConfig {
         this.serverPort = builder.serverPort;
         this.clientId = builder.clientId;
         this.heartbeatIntervalMs = builder.heartbeatIntervalMs;
+        this.heartbeatTimeoutMs = builder.heartbeatTimeoutMs;
         this.initialReconnectDelayMs = builder.initialReconnectDelayMs;
         this.maxReconnectDelayMs = builder.maxReconnectDelayMs;
     }
@@ -66,6 +70,15 @@ public final class ClientConfig {
         return heartbeatIntervalMs;
     }
 
+    /**
+     * Ngưỡng coi server là "im lặng" (half-open socket / zombie connection):
+     * đã gửi HEARTBEAT nhưng không nhận ACK/bản tin nào trong khoảng này
+     * (mặc định {@value #DEFAULT_HEARTBEAT_TIMEOUT_MS} ms ≈ 3 nhịp tim).
+     */
+    public long getHeartbeatTimeoutMs() {
+        return heartbeatTimeoutMs;
+    }
+
     public long getInitialReconnectDelayMs() {
         return initialReconnectDelayMs;
     }
@@ -84,6 +97,7 @@ public final class ClientConfig {
         }
         return serverPort == other.serverPort
                 && heartbeatIntervalMs == other.heartbeatIntervalMs
+                && heartbeatTimeoutMs == other.heartbeatTimeoutMs
                 && initialReconnectDelayMs == other.initialReconnectDelayMs
                 && maxReconnectDelayMs == other.maxReconnectDelayMs
                 && Objects.equals(serverHost, other.serverHost)
@@ -93,13 +107,14 @@ public final class ClientConfig {
     @Override
     public int hashCode() {
         return Objects.hash(serverHost, serverPort, clientId,
-                heartbeatIntervalMs, initialReconnectDelayMs, maxReconnectDelayMs);
+                heartbeatIntervalMs, heartbeatTimeoutMs, initialReconnectDelayMs, maxReconnectDelayMs);
     }
 
     @Override
     public String toString() {
         return "ClientConfig{serverHost='" + serverHost + '\'' + ", serverPort=" + serverPort
                 + ", clientId='" + clientId + '\'' + ", heartbeatIntervalMs=" + heartbeatIntervalMs
+                + ", heartbeatTimeoutMs=" + heartbeatTimeoutMs
                 + ", initialReconnectDelayMs=" + initialReconnectDelayMs
                 + ", maxReconnectDelayMs=" + maxReconnectDelayMs + '}';
     }
@@ -111,6 +126,7 @@ public final class ClientConfig {
         private int serverPort = DEFAULT_SERVER_PORT;
         private String clientId = java.util.UUID.randomUUID().toString(); // tự sinh UUID nếu chưa có
         private long heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
+        private long heartbeatTimeoutMs = DEFAULT_HEARTBEAT_TIMEOUT_MS;
         private long initialReconnectDelayMs = DEFAULT_INITIAL_RECONNECT_DELAY_MS;
         private long maxReconnectDelayMs = DEFAULT_MAX_RECONNECT_DELAY_MS;
 
@@ -143,6 +159,14 @@ public final class ClientConfig {
             return this;
         }
 
+        public Builder heartbeatTimeoutMs(long heartbeatTimeoutMs) {
+            if (heartbeatTimeoutMs <= 0) {
+                throw new IllegalArgumentException("heartbeatTimeoutMs must be positive, got: " + heartbeatTimeoutMs);
+            }
+            this.heartbeatTimeoutMs = heartbeatTimeoutMs;
+            return this;
+        }
+
         public Builder initialReconnectDelayMs(long initialReconnectDelayMs) {
             if (initialReconnectDelayMs <= 0) {
                 throw new IllegalArgumentException("initialReconnectDelayMs must be positive, got: "
@@ -166,6 +190,10 @@ public final class ClientConfig {
             if (maxReconnectDelayMs < initialReconnectDelayMs) {
                 throw new IllegalStateException("maxReconnectDelayMs (" + maxReconnectDelayMs
                         + ") must be >= initialReconnectDelayMs (" + initialReconnectDelayMs + ")");
+            }
+            if (heartbeatTimeoutMs < heartbeatIntervalMs) {
+                throw new IllegalStateException("heartbeatTimeoutMs (" + heartbeatTimeoutMs
+                        + ") must be >= heartbeatIntervalMs (" + heartbeatIntervalMs + ")");
             }
             return new ClientConfig(this);
         }

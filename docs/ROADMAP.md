@@ -5,10 +5,10 @@
 - [x] Task 1.2: Định nghĩa Models, Enums, DTOs theo `PROTOCOL.md` trong `parental-common`.
 - [x] Task 1.3: Viết `JsonProtocolParser` mã hóa/giải mã LDJSON với Jackson/Gson. Unit test 100% qua (18/18 test).
 
-## Phase 2: Core Server & Client TCP Networking
+## Phase 2: Core Server & Client TCP Networking — HOÀN THÀNH 100%
 - [x] Task 2.1: Server - `ServerSocket` Engine với `ExecutorService` (Thread pool) và `ClientSessionManager`. (Integration test 9/9 qua)
 - [x] Task 2.2: Client - Kết nối TCP, gửi `HANDSHAKE`, chạy vòng lặp gửi `HEARTBEAT` (5s/lần), Auto-reconnect. (24/24 test qua — tổng 51/51; exponential backoff 1s→30s, `ClientConfig`, `DeviceInfoCollector`, `TcpClientEngine`, `ServerCommandHandler`)
-- [ ] Task 2.3: Xử lý đóng kết nối an toàn (Graceful Shutdown) và phát hiện timeout/ngắt kết nối bất thường.
+- [x] Task 2.3: Graceful Shutdown + phát hiện timeout/ngắt kết nối bất thường. (68/68 test toàn dự án — tổng 20/20 server + 30/30 client; Watchdog Silent Server Detection 15s/3 nhịp tim + JVM shutdown hook + close(); server `DisconnectReason` + `ClientConnectionListener` callbacks + sweeper `HEARTBEAT_TIMEOUT` + `closeAll(SERVER_SHUTDOWN)`)
 
 ## Phase 3: Hardware Metrics & Client Enforcement Engine
 - [ ] Task 3.1: Client - Tích hợp OSHI đo lưu lượng upload/download, gửi gói tin `METRICS_REPORT`.

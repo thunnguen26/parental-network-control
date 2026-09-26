@@ -87,11 +87,15 @@ public class ClientSession {
      * Đóng phiên: ĐÓNG SOCKET TRƯỚC để đánh thức thread đang block trong
      * {@code readLine()} (socket read không phản ứng với interrupt), sau đó
      * mới đóng stream — tránh deadlock monitor khi gọi từ thread khác.
-     * Không quăng lỗi unhandled.
+     * Không quăng lỗi unhandled. Chống NPE khi socket/stream null (session
+     * giả lập trong unit test).
      */
     public void close() {
         if (!closed.compareAndSet(false, true)) {
             return; // đã đóng rồi
+        }
+        if (socket == null) {
+            return; // session không gắn socket thật (unit test) — không cần dọn
         }
         try {
             socket.close(); // đánh thức readLine() đang block + giải phóng socket

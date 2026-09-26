@@ -89,8 +89,34 @@ class ClientConfigTest {
     void nonPositiveTimingsRejected() {
         assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().heartbeatIntervalMs(0).build());
         assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().heartbeatIntervalMs(-5).build());
+        assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().heartbeatTimeoutMs(0).build());
+        assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().heartbeatTimeoutMs(-1).build());
         assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().initialReconnectDelayMs(0).build());
         assertThrows(IllegalArgumentException.class, () -> ClientConfig.builder().maxReconnectDelayMs(0).build());
+    }
+
+    @Test
+    @DisplayName("heartbeatTimeoutMs mặc định 15000 (3 nhịp tim) và builder ghi đè được")
+    void heartbeatTimeoutDefaultAndOverride() {
+        ClientConfig config = ClientConfig.defaults();
+        assertEquals(15_000, config.getHeartbeatTimeoutMs(), "Mặc định 15s = 3 chu kỳ nhịp tim 5s");
+
+        // Override hợp lệ: timeout >= interval
+        ClientConfig custom = ClientConfig.builder()
+                .heartbeatIntervalMs(500)
+                .heartbeatTimeoutMs(2_000)
+                .build();
+        assertEquals(2_000, custom.getHeartbeatTimeoutMs());
+        assertEquals(500, custom.getHeartbeatIntervalMs());
+    }
+
+    @Test
+    @DisplayName("heartbeatTimeoutMs < heartbeatIntervalMs bị từ chối khi build")
+    void timeoutSmallerThanIntervalRejected() {
+        assertThrows(IllegalStateException.class, () -> ClientConfig.builder()
+                .heartbeatIntervalMs(2_000)
+                .heartbeatTimeoutMs(1_000)
+                .build());
     }
 
     @Test

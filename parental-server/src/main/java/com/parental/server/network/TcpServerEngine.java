@@ -78,7 +78,15 @@ public class TcpServerEngine {
                 getPort(), poolSize, heartbeatTimeoutSeconds);
     }
 
-    /** Graceful shutdown: đóng listener, chờ pool kết thúc, đóng mọi phiên. */
+    /**
+     * Graceful shutdown (Task 2.3): đóng listener → dừng sweeper → chủ động
+     * đóng TOÀN BỘ client socket (reason SERVER_SHUTDOWN, fire callback
+     * {@code onClientDisconnected}) → shutdown executor với
+     * {@code awaitTermination} có timeout → shutdownNow khi vượt hạn. Thứ tự
+     * đóng session TRƯỚC khi await pool là bắt buộc: handler threads đang
+     * block trong {@code readLine()} chỉ thoát được khi socket của chúng bị
+     * đóng — await trước đó sẽ luôn chờ đủ 5s.
+     */
     public synchronized void stop() {
         if (!running.compareAndSet(true, false)) {
             return;
@@ -91,19 +99,19 @@ public class TcpServerEngine {
         if (sweeper != null) {
             sweeper.shutdownNow();
         }
+        // Đóng toàn bộ phiên TRƯỚC để đánh thức handler threads đang block trong readLine().
+        sessionManager.closeAll(DisconnectReason.SERVER_SHUTDOWN);
         if (handlerPool != null) {
             handlerPool.shutdown();
             try {
                 if (!handlerPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                    log.warn("Handler pool did not terminate in 5s — forcing shutdownNow");
                     handlerPool.shutdownNow();
                 }
             } catch (InterruptedException e) {
                 handlerPool.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-        }
-        for (ClientSession session : sessionManager.getAllSessions()) {
-            sessionManager.remove(session.getClientId());
         }
         log.info("TcpServerEngine stopped");
     }

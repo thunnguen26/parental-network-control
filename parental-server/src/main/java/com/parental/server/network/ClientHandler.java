@@ -135,8 +135,12 @@ public class ClientHandler implements Runnable {
                     session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
                     session.send(BaseMessage.of(MessageType.ACK, SERVER_ID, Map.of()));
                 }
-                case METRICS_REPORT ->
-                        log.debug("[{}] METRICS_REPORT: {}", session.getClientId(), message.getPayload());
+                case METRICS_REPORT -> {
+                    // Task 2.3: MỌI dữ liệu inbound (không chỉ HEARTBEAT) là dấu hiệu
+                    // client còn sống — làm mới timestamp để sweeper không gỡ nhầm.
+                    session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
+                    log.debug("[{}] METRICS_REPORT: {}", session.getClientId(), message.getPayload());
+                }
                 case HANDSHAKE ->
                         log.warn("[{}] Redundant HANDSHAKE ignored", session.getClientId());
                 default ->

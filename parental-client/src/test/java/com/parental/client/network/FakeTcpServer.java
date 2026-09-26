@@ -37,6 +37,7 @@ final class FakeTcpServer implements AutoCloseable {
     private ServerSocket serverSocket;
     private final int boundPort;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean silentMode = new AtomicBoolean(false);
     private final AtomicInteger connectionsAccepted = new AtomicInteger(0);
     private volatile Socket currentClientSocket;
     /** Writer của phiên hiện hành — cho test đẩy gói tin chủ động xuống client. */
@@ -111,12 +112,15 @@ final class FakeTcpServer implements AutoCloseable {
                 }
                 if (message.getType() == MessageType.HEARTBEAT) {
                     firstHeartbeatLatch.countDown();
-                    // Trả ACK giống ClientHandler thật của server
-                    try {
-                        writer.write(parser.toLine(BaseMessage.of(MessageType.ACK, "fake-server", Map.of())));
-                        writer.flush();
-                    } catch (ProtocolParseException e) {
-                        // không thể xảy ra với payload rỗng — bỏ qua
+                    // Chế độ "silent": giả lập server zombie — nhận heartbeat
+                    // nhưng CỐ TÌNH không trả ACK để client watchdog phát hiện.
+                    if (!silentMode.get()) {
+                        try {
+                            writer.write(parser.toLine(BaseMessage.of(MessageType.ACK, "fake-server", Map.of())));
+                            writer.flush();
+                        } catch (ProtocolParseException e) {
+                            // không thể xảy ra với payload rỗng — bỏ qua
+                        }
                     }
                 }
             }
@@ -143,6 +147,15 @@ final class FakeTcpServer implements AutoCloseable {
         } catch (IOException e) {
             return false;
         }
+    }
+
+    /**
+     * Bật/tắt chế độ "silent": server vẫn nhận gói tin bình thường (không
+     * đứt kết nối) nhưng KHÔNG trả ACK cho HEARTBEAT — dùng để test watchdog
+     * Silent Server Detection phía client (Task 2.3).
+     */
+    void setSilentMode(boolean silent) {
+        silentMode.set(silent);
     }
 
     /** Đóng server đột ngột (mô phỏng server chết) — idempotent, không quăng exception. */

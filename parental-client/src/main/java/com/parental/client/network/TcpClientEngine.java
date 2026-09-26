@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -46,9 +47,16 @@ import com.parental.common.protocol.payload.HandshakePayload;
  *       ({@code heartbeatIntervalMs}, mặc định 5s), và luồng Inbound Reader
  *       đọc LDJSON liên tục: ACK → cập nhật thời gian phản hồi cuối;
  *       COMMAND/CONFIG_SYNC → gọi {@link ServerCommandHandler}.</li>
- *   <li>{@link #stop()} clean shutdown: hủy scheduler, đóng socket (đánh thức
- *       {@code readLine()} đang block), chờ thread kết thúc — không quăng
- *       uncaught exception, không treo tiến trình (toàn bộ thread là daemon).</li>
+ *   <li><b>Watchdog — Silent Server Detection</b> (Task 2.3): cùng scheduler
+ *       heartbeat kiểm tra {@code lastServerActivityMs}; nếu quá
+ *       {@code heartbeatTimeoutMs} (mặc định 15s = 3 nhịp tim) không nhận
+ *       ACK/bản tin nào từ server → coi là half-open socket / zombie
+ *       connection: chủ động đóng socket → connectLoop tự reconnect với
+ *       exponential backoff.</li>
+ *   <li>{@link #stop()} / {@link #close()} clean shutdown: hủy scheduler,
+ *       đóng socket (đánh thức {@code readLine()} đang block), chờ thread kết
+ *       thúc — không quăng uncaught exception, không treo tiến trình. JVM
+ *       shutdown hook đảm bảo dọn dẹp cả khi tiến trình bị SIGINT/SIGTERM.</li>
  * </ul></p>
  *
  * <p>Chống deadlock trên Windows (bài học từ Task 2.1): socket read không phản
@@ -56,7 +64,7 @@ import com.parental.common.protocol.payload.HandshakePayload;
  * {@code readLine()}; ngoài ra {@code soTimeout} 30s đảm bảo reader luôn thức
  * dậy ngay cả khi close bị trì hoãn; mọi thao tác close đều nuốt exception.</p>
  */
-public class TcpClientEngine {
+public class TcpClientEngine implements AutoCloseable {
 
     /** Timeout kết nối TCP (ms). */
     public static final int CONNECT_TIMEOUT_MS = 5_000;
@@ -77,6 +85,12 @@ public class TcpClientEngine {
     private final AtomicLong lastAckTimestampMs = new AtomicLong(0);
     /** Epoch millis của HANDSHAKE gửi thành công gần nhất — 0 nếu chưa gửi. */
     private final AtomicLong lastHandshakeTimestampMs = new AtomicLong(0);
+    /** Epoch millis của HOẠT ĐỘNG INBOUND gần nhất từ server (ACK/COMMAND/...). */
+    private final AtomicLong lastServerActivityMs = new AtomicLong(0);
+    /** Epoch millis của HEARTBEAT gửi thành công gần nhất — phục vụ watchdog. */
+    private final AtomicLong lastHeartbeatSentMs = new AtomicLong(0);
+    /** Số lần watchdog phát hiện server im lặng và chủ động đóng kết nối. */
+    private final AtomicLong watchdogTimeoutCount = new AtomicLong(0);
 
     private volatile Socket socket;
     private volatile Writer writer;
@@ -86,8 +100,11 @@ public class TcpClientEngine {
     private final Object writeLock = new Object();
 
     private volatile ScheduledExecutorService heartbeatScheduler;
+    private volatile ScheduledFuture<?> heartbeatTask;
     private volatile Thread connectorThread;
     private volatile Thread readerThread;
+    /** JVM shutdown hook — đăng ký khi start(), hủy khi stop() để không rò rỉ. */
+    private volatile Thread shutdownHook;
 
     /** Số lần reconnect liên tiếp kể từ lần kết nối thành công gần nhất. */
     private volatile int reconnectAttempt = 0;
@@ -124,6 +141,8 @@ public class TcpClientEngine {
         }
         connected.set(false);
         reconnectAttempt = 0;
+        watchdogTimeoutCount.set(0);
+        registerShutdownHook();
         Thread thread = new Thread(this::connectLoop, "parental-client-connector-1");
         thread.setDaemon(true);
         connectorThread = thread;
@@ -133,10 +152,36 @@ public class TcpClientEngine {
     }
 
     /**
+     * Đăng ký JVM shutdown hook: khi tiến trình bị tắt (SIGINT/SIGTERM hoặc
+     * System.exit), hook gọi {@link #stop()} để đóng socket/scheduler sạch
+     * sẽ, không rò rỉ tài nguyên. Hook là no-op nếu client đã stop.
+     */
+    private void registerShutdownHook() {
+        Thread hook = new Thread(() -> {
+            log.info("JVM shutdown detected — cleaning up client (clientId={})", config.getClientId());
+            stop();
+        }, "parental-client-shutdown-hook");
+        shutdownHook = hook;
+        try {
+            Runtime.getRuntime().addShutdownHook(hook);
+        } catch (IllegalStateException | SecurityException e) {
+            // JVM đang shutdown hoặc không có quyền — bỏ qua, các thread là daemon.
+            log.debug("Shutdown hook not registered: {}", e.getMessage());
+            shutdownHook = null;
+        }
+    }
+
+    /**
      * Clean shutdown: hủy heartbeat scheduler, đóng socket (đánh thức
      * {@code readLine()} đang block), interrupt connector nếu đang ngủ backoff,
      * chờ thread kết thúc (có giới hạn). An toàn khi gọi nhiều lần, không quăng
      * exception, không treo tiến trình.
+     */
+    /**
+     * Clean shutdown (Task 2.3): hủy heartbeat scheduler + watchdog, đóng
+     * socket (đánh thức {@code readLine()} đang block), interrupt connector,
+     * gỡ JVM shutdown hook, chờ thread kết thúc (có giới hạn). An toàn khi
+     * gọi nhiều lần, không quăng exception, không treo tiến trình.
      */
     public void stop() {
         if (!running.compareAndSet(true, false)) {
@@ -144,6 +189,7 @@ public class TcpClientEngine {
         }
         log.info("TcpClientEngine stopping (clientId={})", config.getClientId());
 
+        unregisterShutdownHook();
         shutdownHeartbeatScheduler();
         // Đóng socket ĐẦU TIÊN để đánh thức readLine() đang block trên Windows.
         closeConnectionQuietly();
@@ -168,6 +214,28 @@ public class TcpClientEngine {
         log.info("TcpClientEngine stopped (clientId={})", config.getClientId());
     }
 
+    /**
+     * Gỡ JVM shutdown hook (khi stop() chủ động) — nếu JVM đang shutdown,
+     * remove là no-op/haky an toàn vì hook chỉ gọi stop() vốn idempotent.
+     */
+    private void unregisterShutdownHook() {
+        Thread hook = shutdownHook;
+        shutdownHook = null;
+        if (hook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(hook);
+            } catch (IllegalStateException | SecurityException e) {
+                // JVM đang shutdown — bỏ qua.
+            }
+        }
+    }
+
+    /** Phương thức {@code close()} rõ ràng theo yêu cầu Task 2.3 — tương đương {@link #stop()}. */
+    @Override
+    public void close() {
+        stop();
+    }
+
     public boolean isRunning() {
         return running.get();
     }
@@ -189,6 +257,11 @@ public class TcpClientEngine {
     /** Số lần reconnect liên tiếp kể từ lần kết nối thành công gần nhất. */
     public int getReconnectAttempt() {
         return reconnectAttempt;
+    }
+
+    /** Số lần watchdog phát hiện server im lặng và chủ động đóng kết nối. */
+    public long getWatchdogTimeoutCount() {
+        return watchdogTimeoutCount.get();
     }
 
     public ClientConfig getConfig() {
@@ -263,6 +336,9 @@ public class TcpClientEngine {
     private void onConnectionEstablished() {
         connected.set(true);
         reconnectAttempt = 0;
+        // Reset mốc hoạt động inbound: heartbeat cũ của phiên trước (stale,
+        // nhỏ hơn mốc này) sẽ không bao giờ kích hoạt watchdog nhầm lẫn.
+        lastServerActivityMs.set(System.currentTimeMillis());
     }
 
     // ------------------------------------------------------------------
@@ -324,20 +400,64 @@ public class TcpClientEngine {
     // Heartbeat scheduler (ScheduledExecutorService, định kỳ heartbeatIntervalMs)
     // ------------------------------------------------------------------
 
+    /**
+     * Khởi động scheduler dùng chung: (1) gửi HEARTBEAT định kỳ
+     * {@code heartbeatIntervalMs} và (2) Watchdog quét server im lặng mỗi
+     * {@code heartbeatTimeoutMs / 4} — phát hiện half-open socket/zombie
+     * connection khi đã gửi HEARTBEAT mà không nhận phản hồi nào quá
+     * {@code heartbeatTimeoutMs}.
+     */
     private void startHeartbeatScheduler() {
         ScheduledExecutorService scheduler =
                 Executors.newSingleThreadScheduledExecutor(namedDaemonFactory("parental-client-heartbeat"));
         heartbeatScheduler = scheduler;
         long period = config.getHeartbeatIntervalMs();
-        scheduler.scheduleAtFixedRate(this::sendHeartbeat, period, period, TimeUnit.MILLISECONDS);
+        heartbeatTask = scheduler.scheduleAtFixedRate(this::sendHeartbeat, period, period, TimeUnit.MILLISECONDS);
+        long watchdogPeriod = Math.max(1, config.getHeartbeatTimeoutMs() / 4);
+        scheduler.scheduleAtFixedRate(this::checkServerSilence, watchdogPeriod, watchdogPeriod, TimeUnit.MILLISECONDS);
         if (!running.get()) { // race với stop(): dọn ngay, không để scheduler sống sót
             shutdownHeartbeatScheduler();
+        }
+    }
+
+    /**
+     * <b>Watchdog — Silent Server Detection</b> (Task 2.3): đo khoảng im lặng
+     * TỪ BẢN TIN INBOUND CUỐI CÙNG của server ({@code lastServerActivityMs} —
+     * mọi byte nhận được đều làm mới mốc này). Khi server ngừng phản hồi
+     * (half-open socket / zombie connection) trong khoảng
+     * {@code heartbeatTimeoutMs} dù client vẫn gửi HEARTBEAT bình thường →
+     * chủ động đóng socket để connectLoop lập tức reconnect theo exponential
+     * backoff.
+     *
+     * <p>Lưu ý: KHÔNG đo từ {@code lastHeartbeatSentMs} — mốc này được reset
+     * mỗi chu kỳ gửi (300ms/5s) nên khoảng im lặng không bao giờ vượt timeout
+     * nếu đo từ đó (bug đã gặp và sửa trong Task 2.3). Mốc activity được
+     * reset về thời điểm hiện tại ngay khi kết nối/handshake thành công nên
+     * không có false positive ở đầu phiên.</p>
+     */
+    private void checkServerSilence() {
+        if (!running.get() || !connected.get()) {
+            return;
+        }
+        long lastActivity = lastServerActivityMs.get();
+        long silence = System.currentTimeMillis() - lastActivity;
+        if (silence <= config.getHeartbeatTimeoutMs()) {
+            return;
+        }
+        watchdogTimeoutCount.incrementAndGet();
+        log.warn("Silent server detected (clientId={}): no inbound message for {} ms > {} ms "
+                        + "— closing zombie connection to trigger reconnect",
+                config.getClientId(), silence, config.getHeartbeatTimeoutMs());
+        Socket s = socket; // chỉ đóng socket HIỆN TẠI — không đụng kết nối mới sau reconnect
+        if (s != null && !s.isClosed()) {
+            closeSocketQuietly(s);
         }
     }
 
     private void shutdownHeartbeatScheduler() {
         ScheduledExecutorService scheduler = heartbeatScheduler;
         heartbeatScheduler = null;
+        heartbeatTask = null;
         if (scheduler != null) {
             scheduler.shutdownNow();
         }
@@ -363,6 +483,7 @@ public class TcpClientEngine {
                 }
                 w.write(line);
                 w.flush();
+                lastHeartbeatSentMs.set(System.currentTimeMillis());
             }
         } catch (IOException e) {
             log.warn("HEARTBEAT write failed (clientId={}): {} — closing socket to trigger reconnect",
@@ -397,6 +518,8 @@ public class TcpClientEngine {
         try {
             String line;
             while (running.get() && (line = localReader.readLine()) != null) {
+                // Mọi byte từ server (kể cả dòng lỗi) đều là dấu hiệu đường truyền sống.
+                lastServerActivityMs.set(System.currentTimeMillis());
                 if (!line.isBlank()) {
                     dispatchInbound(line);
                 }
