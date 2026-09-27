@@ -105,7 +105,12 @@ public class DatabaseManager {
         }
     }
 
-    /** Tạo 5 bảng theo schema Task 4.1 — idempotent (IF NOT EXISTS). */
+    /**
+     * Tạo schema theo Task 4.1 + Device Pairing (Identity Persistence) —
+     * idempotent (IF NOT EXISTS). Migration cột mới trên DB cũ dùng
+     * ALTER TABLE ... ADD COLUMN được bọc riêng vì SQLite không hỗ trợ
+     * "ADD COLUMN IF NOT EXISTS" (cột tồn tại → báo lỗi, được nuốt an toàn).
+     */
     private void createSchema(Connection connection) throws SQLException {
         try (Statement statement = connection.createStatement()) {
             statement.execute("""
@@ -117,8 +122,24 @@ public class DatabaseManager {
                         ip_address    VARCHAR,
                         mac_address   VARCHAR,
                         status        VARCHAR NOT NULL DEFAULT 'OFFLINE',
+                        device_token  VARCHAR,
+                        is_paired     BOOLEAN NOT NULL DEFAULT 0,
                         created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         last_seen_at  TIMESTAMP
+                    )
+                    """);
+
+            // Migration cho DB tạo từ Task 4.1 (chưa có cột token/paired).
+            addColumnIfMissing(connection, "clients", "device_token", "VARCHAR");
+            addColumnIfMissing(connection, "clients", "is_paired",
+                    "BOOLEAN NOT NULL DEFAULT 0");
+
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS pairing_sessions (
+                        pin         VARCHAR(6) PRIMARY KEY,
+                        created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        expires_at  TIMESTAMP NOT NULL,
+                        is_used     BOOLEAN NOT NULL DEFAULT 0
                     )
                     """);
 
@@ -188,6 +209,25 @@ public class DatabaseManager {
                 } catch (Exception e) {
                     log.debug("Resource close ignored: {}", e.getMessage());
                 }
+            }
+        }
+    }
+
+    /**
+     * SQLite không có {@code ADD COLUMN IF NOT EXISTS} — thử ALTER TABLE
+     * rồi nuốt trầm cảm lỗi "duplicate column" (cột đã tồn tại từ lần migrate
+     * trước). Idempotent trên cả DB cũ lẫn DB mới.
+     */
+    private static void addColumnIfMissing(Connection connection, String table,
+                                           String column, String definition) {
+        String sql = "ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition;
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(sql);
+            log.info("Migrated {} : added column {}", table, column);
+        } catch (SQLException e) {
+            String message = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
+            if (!message.contains("duplicate") && !message.contains("exists")) {
+                log.warn("Migration {} on {} ignored: {}", column, table, e.getMessage());
             }
         }
     }

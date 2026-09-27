@@ -1,7 +1,10 @@
 package com.parental.server.db;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.BufferedReader;
@@ -73,6 +76,16 @@ class ServerDatabaseIntegrationTest {
     }
 
     private void connectClient(String clientId, String deviceName) throws IOException {
+        connectClient(clientId, deviceName, "default-token");
+    }
+
+    /**
+     * Kết nối và handshake kèm {@code deviceToken} — từ khi có Device Pairing,
+     * handshake vào server CÓ database bắt buộc token khớp DB (is_paired=1).
+     * Mỗi test setUp DB mới → token phải được cấp phát trước qua
+     * {@code engine.getClientDao().saveDeviceToken(clientId, token)}.
+     */
+    private void connectClient(String clientId, String deviceName, String deviceToken) throws IOException {
         clientSocket = new Socket("127.0.0.1", engine.getPort());
         clientSocket.setTcpNoDelay(true);
         clientSocket.setSoTimeout(15_000);
@@ -81,7 +94,7 @@ class ServerDatabaseIntegrationTest {
         clientWriter = new BufferedWriter(
                 new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8));
         writeAndFlush(BaseMessage.of(MessageType.HANDSHAKE, clientId, new HandshakePayload(
-                deviceName, "DESKTOP", "Windows 11", "127.0.0.1", clientId)));
+                deviceName, "DESKTOP", "Windows 11", "127.0.0.1", clientId, deviceToken)));
     }
 
     private void writeAndFlush(BaseMessage<?> message) throws IOException {
@@ -128,10 +141,15 @@ class ServerDatabaseIntegrationTest {
     @Test
     @DisplayName("HANDSHAKE → client được upsert vào DB với đủ thông tin + ONLINE")
     void handshakeUpsertsClientIntoDatabase() throws Exception {
-        connectClient("db-client-01", "Laptop-DB");
+        // Device Pairing: server có DB xác thực token — cấp token trước khi handshake
+        engine.getClientDao().saveDeviceToken("db-client-01", "token-1");
+        connectClient("db-client-01", "Laptop-DB", "token-1");
 
-        awaitCondition("client ghi vào DB", Duration.ofSeconds(10), () ->
-                engine.getClientDao().exists("db-client-01"));
+        // saveDeviceToken đã tạo dòng sẵn — chờ handshake xử lý xong (đủ tên máy)
+        awaitCondition("handshake upsert đủ thông tin", Duration.ofSeconds(10), () -> {
+            ClientRecord record = engine.getClientDao().get("db-client-01");
+            return record != null && "Laptop-DB".equals(record.deviceName());
+        });
 
         ClientRecord record = engine.getClientDao().get("db-client-01");
         assertNotNull(record);
@@ -146,7 +164,8 @@ class ServerDatabaseIntegrationTest {
     @Test
     @DisplayName("METRICS_REPORT → bản ghi metrics ghi vào DB, getTodayTrafficBytes đúng")
     void metricsReportPersistsToDatabase() throws Exception {
-        connectClient("db-client-02", "PC-DB");
+        engine.getClientDao().saveDeviceToken("db-client-02", "token-2");
+        connectClient("db-client-02", "PC-DB", "token-2");
         awaitCondition("client sẵn sàng", Duration.ofSeconds(10), () ->
                 engine.getClientDao().exists("db-client-02"));
 
@@ -166,7 +185,8 @@ class ServerDatabaseIntegrationTest {
     @Test
     @DisplayName("Server gửi COMMAND → log SENT; client ACK → status ACKED trong DB")
     void commandAckFlowPersistsToDatabase() throws Exception {
-        connectClient("db-client-03", "PC-DB-3");
+        engine.getClientDao().saveDeviceToken("db-client-03", "token-3");
+        connectClient("db-client-03", "PC-DB-3", "token-3");
         awaitCondition("client sẵn sàng", Duration.ofSeconds(10), () ->
                 engine.getClientDao().exists("db-client-03"));
 
@@ -188,7 +208,8 @@ class ServerDatabaseIntegrationTest {
     @Test
     @DisplayName("Client ngắt kết nối → trạng thái OFFLINE trong DB")
     void disconnectMarksClientOffline() throws Exception {
-        connectClient("db-client-04", "PC-DB-4");
+        engine.getClientDao().saveDeviceToken("db-client-04", "token-4");
+        connectClient("db-client-04", "PC-DB-4", "token-4");
         awaitCondition("client ONLINE trong DB", Duration.ofSeconds(10), () ->
                 "ONLINE".equals(engine.getClientDao().getStatus("db-client-04")));
 
@@ -219,9 +240,129 @@ class ServerDatabaseIntegrationTest {
             writer.flush();
             socket.close();
             awaitCondition("engine không DB vẫn nhận client", Duration.ofSeconds(10), () ->
-                    noDbEngine.getSessionManager().count() >= 0); // không crash là đủ
+                noDbEngine.getSessionManager().count() >= 0); // không crash là đủ
         } finally {
             noDbEngine.stop();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Device Pairing & Client Identity Persistence (integration)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("HANDSHAKE không có deviceToken → bị từ chối UNAUTHORIZED_DEVICE, không có session")
+    void handshakeWithoutTokenRejected() throws Exception {
+        connectClient("db-client-noauth", "PC-No-Auth", null);
+
+        // Chờ đủ lâu để server xử lý và từ chối — session không bao giờ được đăng ký
+        awaitCondition("không đăng ký session cho thiết bị chưa ghép đôi", Duration.ofSeconds(3),
+                () -> engine.getSessionManager().count() == 0);
+        assertNull(engine.getSessionManager().get("db-client-noauth"));
+        // Client chưa ghép đôi KHÔNG được upsert vào DB
+        Thread.sleep(300);
+        assertFalse(engine.getClientDao().exists("db-client-noauth"),
+                "Thiết bị chưa ghép đôi không được ghi vào bảng clients");
+    }
+
+    @Test
+    @DisplayName("HANDSHAKE sai deviceToken → bị từ chối, không có session")
+    void handshakeWithWrongTokenRejected() throws Exception {
+        engine.getClientDao().saveDeviceToken("db-client-bad", "right-token");
+        connectClient("db-client-bad", "PC-Bad-Token", "wrong-token");
+
+        awaitCondition("không đăng ký session cho token sai", Duration.ofSeconds(3),
+                () -> engine.getSessionManager().count() == 0);
+        assertNull(engine.getSessionManager().get("db-client-bad"));
+    }
+
+    @Test
+    @DisplayName("PAIR_REQUEST PIN hợp lệ → PAIR_RESPONSE success + token → HANDSHAKE bằng token thành công")
+    void pairRequestFlowIssuesTokenThenHandshakeSucceeds() throws Exception {
+        String pin = engine.getPairingDao().createPin();
+        String clientId = "db-client-pair";
+
+        // Bước 1: mở kết nối ghép đôi — gói đầu là PAIR_REQUEST (PIN + info máy)
+        Socket pairingSocket = new Socket("127.0.0.1", engine.getPort());
+        pairingSocket.setTcpNoDelay(true);
+        pairingSocket.setSoTimeout(15_000);
+        BufferedWriter pairingWriter = new BufferedWriter(
+                new OutputStreamWriter(pairingSocket.getOutputStream(), StandardCharsets.UTF_8));
+        BufferedReader pairingReader = new BufferedReader(
+                new InputStreamReader(pairingSocket.getInputStream(), StandardCharsets.UTF_8));
+        writeAndFlushOn(pairingWriter, BaseMessage.of(MessageType.PAIR_REQUEST, clientId,
+                new com.parental.common.protocol.payload.PairRequestPayload(
+                        pin, "Laptop-Pair", "DESKTOP", "Windows 11", "127.0.0.1", "AA-BB-CC-DD-EE-77")));
+
+        // Bước 2: nhận PAIR_RESPONSE success=true + deviceToken
+        String responseLine = pairingReader.readLine();
+        assertNotNull(responseLine, "Server phải trả PAIR_RESPONSE");
+        BaseMessage<?> response = parser.fromLine(responseLine);
+        assertEquals(MessageType.PAIR_RESPONSE, response.getType());
+        var pairPayload = assertInstanceOf(
+                com.parental.common.protocol.payload.PairResponsePayload.class, response.getPayload());
+        assertTrue(pairPayload.success(), "PIN còn hạn chưa dùng → success=true");
+        assertEquals("PAIRED", pairPayload.message());
+        assertNotNull(pairPayload.deviceToken());
+        pairingSocket.close();
+
+        // DB: client đã paired với đúng token, PIN đã bị tiêu thụ
+        assertTrue(engine.getClientDao().isPaired(clientId));
+        assertTrue(engine.getClientDao().isValidPairing(clientId, pairPayload.deviceToken()));
+        assertEquals(com.parental.server.db.PairingDao.PinState.USED,
+                engine.getPairingDao().getPinState(pin));
+
+        // Bước 3: HANDSHAKE bằng token vừa cấp → session được đăng ký bình thường
+        connectClient(clientId, "Laptop-Pair", pairPayload.deviceToken());
+        awaitCondition("session sau ghép đôi", Duration.ofSeconds(10),
+                () -> engine.getSessionManager().get(clientId) != null);
+        assertEquals("Laptop-Pair", engine.getClientDao().get(clientId).deviceName());
+    }
+
+    @Test
+    @DisplayName("PAIR_REQUEST PIN hết hạn → PAIR_RESPONSE success=false, không cấp token")
+    void pairRequestWithExpiredPinRejected() throws Exception {
+        // Chèn PIN đã hết hạn trực tiếp vào DB
+        try (var connection = database.newConnection();
+             var statement = connection.prepareStatement(
+                     "INSERT INTO pairing_sessions (pin, expires_at, is_used) VALUES ('333333', ?, 0)")) {
+            statement.setTimestamp(1, java.sql.Timestamp.from(Instant.now().minusSeconds(30)));
+            statement.executeUpdate();
+        }
+
+        Socket pairingSocket = new Socket("127.0.0.1", engine.getPort());
+        pairingSocket.setTcpNoDelay(true);
+        pairingSocket.setSoTimeout(15_000);
+        BufferedWriter pairingWriter = new BufferedWriter(
+                new OutputStreamWriter(pairingSocket.getOutputStream(), StandardCharsets.UTF_8));
+        BufferedReader pairingReader = new BufferedReader(
+                new InputStreamReader(pairingSocket.getInputStream(), StandardCharsets.UTF_8));
+        writeAndFlushOn(pairingWriter, BaseMessage.of(MessageType.PAIR_REQUEST, "db-client-late",
+                new com.parental.common.protocol.payload.PairRequestPayload(
+                        "333333", "PC-Late", "DESKTOP", "Windows 11", "127.0.0.1", "AA-BB-CC-DD-EE-88")));
+
+        String responseLine = pairingReader.readLine();
+        assertNotNull(responseLine);
+        BaseMessage<?> response = parser.fromLine(responseLine);
+        var pairPayload = assertInstanceOf(
+                com.parental.common.protocol.payload.PairResponsePayload.class, response.getPayload());
+        assertFalse(pairPayload.success(), "PIN hết hạn → success=false");
+        assertEquals("PIN_EXPIRED", pairPayload.message());
+        assertNull(pairPayload.deviceToken());
+        pairingSocket.close();
+
+        // Không cấp token, không upsert client
+        Thread.sleep(300);
+        assertFalse(engine.getClientDao().exists("db-client-late"));
+    }
+
+    /** Ghi 1 dòng LDJSON ra writer cụ thể (dùng cho kết nối ghép đôi tạm thời). */
+    private void writeAndFlushOn(BufferedWriter writer, BaseMessage<?> message) throws IOException {
+        try {
+            writer.write(parser.toLine(message));
+        } catch (com.parental.common.protocol.ProtocolParseException e) {
+            throw new IOException("Serialize failed in test", e);
+        }
+        writer.flush();
     }
 }

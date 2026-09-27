@@ -38,6 +38,11 @@
                 <artifactId>parental-common</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.parental</groupId>
+                <artifactId>parental-server</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
             <!-- JSON: Jackson -->
             <dependency>

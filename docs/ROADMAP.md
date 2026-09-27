@@ -1,6 +1,7 @@
 # PROJECT ROADMAP & IMPLEMENTATION PHASES
 
-> **✅ TRẠNG THÁI: TOÀN DỰ ÁN HOÀN THÀNH 100%** — đủ 5/5 Phase, 12/12 Task, 167/167 test pass (2026-09-26).
+> **✅ TRẠNG THÁI: TOÀN DỰ ÁN HOÀN THÀNH 100%** — đủ 5/5 Phase, 12/12 Task (2026-09-26).
+> **✅ MỞ RỘNG HOÀN THÀNH: Client Identity Persistence & Device Pairing (2026-09-27)** — 206/206 test pass.
 
 ## Phase 1: Foundation & Common Protocol Engine
 - [x] Task 1.1: Setup Maven Multi-module (`parental-network-control`, `parental-common`, `parental-server`, `parental-client`).
@@ -26,4 +27,12 @@
 - [x] Task 5.2: Giao diện cấu hình giới hạn, chặn website, nút điều khiển tạm dừng/khôi phục mạng thủ công. (167/167 test toàn dự án — 83/83 server; `RuleEvaluationEngine` manual API `manualPause`/`manualResume`/`sendAlert`/`releaseEnforcement`/`syncConfigToClient` (refactor `sendCommand` dùng chung), `RuleDao.setBlockedDomains` transactional, Quick Actions Panel (pause/resume enable theo trạng thái enforced + SwingWorker tránh block EDT), `PolicyConfigDialog` (blocked domains Thêm/Xóa, spinner giờ/ngày + GB/ngày, khung giờ HH:mm, Lưu & Đồng bộ ngay → `upsertRule` + `setBlockedDomains` + đẩy `CONFIG_SYNC` tức thì), exec-maven-plugin 3.2.0 (`mvn -pl parental-server exec:java`))
 
 ---
-**Dự án hoàn thành toàn bộ theo ROADMAP.** Luồng end-to-end: Client (OSHI metrics + netsh/hosts enforcement) ⇄ TCP LDJSON ⇄ Server (SQLite + Rule Engine tự động + GUI giám sát/điều khiển thủ công).
+
+## Mở rộng: Client Identity Persistence & Device Pairing — HOÀN THÀNH 100% (2026-09-27)
+- [x] **Task P.1: Protocol & Database** — `PROTOCOL.md` Mục 3.6 `PAIR_REQUEST`, Mục 3.7 `PAIR_RESPONSE`, Mục 3.1 `HandshakePayload.deviceToken` (nullable); `MessageType` + `PairRequestPayload`/`PairResponsePayload` trong parental-common; DB: `clients.device_token`/`clients.is_paired` (migration idempotent) + bảng `pairing_sessions`; `PairingDao` (SecureRandom 6 số, hiệu lực 5 phút, consume đúng 1 lần, PinState ACTIVE/EXPIRED/USED/NOT_FOUND); `ClientDao.saveDeviceToken`/`isValidPairing`/`isPaired` — UPSERT theo clientId giữ đúng 1 dòng duy nhất (sửa triệt để lỗi nhân bản thiết bị Offline).
+- [x] **Task P.2: Server Enforcement & GUI** — `ClientHandler`: PAIR_REQUEST → kiểm PIN → sinh UUID `deviceToken` + lưu `is_paired=1` → PAIR_RESPONSE → đóng kết nối; HANDSHAKE so khớp token với DB, sai/thiếu → ngắt kết nối `UNAUTHORIZED_DEVICE`; `ServerDashboardFrame` nút `[ ➕ Thêm thiết bị mới ]` → `PairingDialog` (PIN to monospace 48pt, đếm ngược 5 phút, nút Đổi mã PIN, daemon watcher tự đóng + log khi client ghép đôi thành công).
+- [x] **Task P.3: Client Identity & Pairing UI** — `ClientIdentityManager` (`client_identity.json`: clientId sinh UUID MỘT LẦN DUY NHẤT + deviceToken + serverHost/serverPort, atomic write, defensive với file hỏng); `PairingClient` (PAIR_REQUEST one-shot, chờ PAIR_RESPONSE); `ClientPairingFrame` (Swing: IP máy chủ + mã PIN 6 số, nút Ghép đôi & Kết nối, SwingWorker); `TcpClientEngine.performHandshake()` đính token; `ClientApp` luồng mới: có token → chạy ngầm, chưa token → ghép đôi GUI (headless → exit 2).
+- [x] **Task P.4: Kiểm thử** — 32 test mới (`ClientIdentityManagerTest`, `DaosTest` +6 PIN/token, `ServerDatabaseIntegrationTest` +4 luồng PAIR/FULL FLOW/từ chối, `JsonProtocolParserTest` +3, `ClientPairingServerIntegrationTest` 6 test end-to-end TCP thật) + cập nhật 2 integration test cũ cho luồng token; **206/206 test pass** (`mvn test` toàn reactor: 21 common + 100 server + 85 client).
+
+---
+**Dự án hoàn thành toàn bộ theo ROADMAP + mở rộng Device Pairing.** Luồng end-to-end: Client ghép đôi lần đầu bằng mã PIN 6 số (Server GUI sinh, hiệu lực 5 phút) ⇄ `PAIR_REQUEST`/`PAIR_RESPONSE` cấp `deviceToken` ⇄ Client lưu `client_identity.json` ⇄ HANDSHAKE kèm token được xác thực ⇄ Server (SQLite + Rule Engine tự động + GUI giám sát/điều khiển thủ công). Mỗi thiết bị = 1 `clientId` + 1 `deviceToken` bền vững suốt đời máy = đúng 1 dòng trên Dashboard.

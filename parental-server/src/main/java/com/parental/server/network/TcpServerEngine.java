@@ -19,6 +19,7 @@ import com.parental.server.db.ClientDao;
 import com.parental.server.db.CommandLogDao;
 import com.parental.server.db.DatabaseManager;
 import com.parental.server.db.MetricsDao;
+import com.parental.server.db.PairingDao;
 import com.parental.server.db.RuleDao;
 import com.parental.server.rules.RuleEvaluationEngine;
 
@@ -50,6 +51,8 @@ public class TcpServerEngine {
     private MetricsDao metricsDao;
     private CommandLogDao commandLogDao;
     private RuleDao ruleDao;
+    /** Ghép đôi (Device Pairing) — null khi chạy không database. */
+    private PairingDao pairingDao;
 
     /** Rule Engine (Task 4.2) — null khi chạy không database. */
     private RuleEvaluationEngine ruleEvaluationEngine;
@@ -100,6 +103,7 @@ public class TcpServerEngine {
             this.metricsDao = new MetricsDao(databaseManager);
             this.commandLogDao = new CommandLogDao(databaseManager);
             this.ruleDao = new RuleDao(databaseManager);
+            this.pairingDao = new PairingDao(databaseManager);
         }
     }
 
@@ -207,7 +211,7 @@ public class TcpServerEngine {
                 Socket socket = serverSocket.accept();
                 socket.setTcpNoDelay(true);
                 handlerPool.execute(new ClientHandler(socket, sessionManager, parser,
-                        clientDao, metricsDao, commandLogDao));
+                        clientDao, metricsDao, commandLogDao, pairingDao));
             } catch (IOException e) {
                 if (running.get()) {
                     log.error("Accept loop I/O error: {}", e.getMessage());
@@ -248,6 +252,11 @@ public class TcpServerEngine {
     /** DAO cấu hình hạn mức (null nếu engine chạy không DB). */
     public RuleDao getRuleDao() {
         return ruleDao;
+    }
+
+    /** DAO mã PIN ghép đôi (null nếu engine chạy không DB). */
+    public PairingDao getPairingDao() {
+        return pairingDao;
     }
 
     /** Rule Engine tự động thực thi hạn mức (null nếu engine chạy không DB). */

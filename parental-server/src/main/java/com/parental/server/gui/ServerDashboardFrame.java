@@ -170,14 +170,39 @@ public class ServerDashboardFrame extends JFrame {
         scrollPane.setPreferredSize(new Dimension(300, 0));
         scrollPane.setBorder(BorderFactory.createTitledBorder("Thiết bị đang quản lý"));
 
-        // Nút mở dialog cấu hình chính sách (Task 5.2)
-        JButton policyButton = new JButton("⚙ Cấu hình chính sách...");
+        // Nút ghép đôi thiết bị mới (Device Pairing) + dialog cấu hình chính sách (Task 5.2)
+        JButton addDeviceButton = new JButton("\u2795 Th\u00EAm thi\u1EBFt b\u1ECB m\u1EDBi");
+        addDeviceButton.addActionListener(event -> openPairingDialog());
+
+        JButton policyButton = new JButton("\u2699 C\u1EA5u h\u00ECnh ch\u00EDnh s\u00E1ch...");
         policyButton.addActionListener(event -> openPolicyDialog());
+
+        JPanel buttonPanel = new JPanel(new GridLayout(2, 1, 0, 4));
+        buttonPanel.add(addDeviceButton);
+        buttonPanel.add(policyButton);
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(scrollPane, BorderLayout.CENTER);
-        panel.add(policyButton, BorderLayout.SOUTH);
+        panel.add(buttonPanel, BorderLayout.SOUTH);
         return panel;
+    }
+
+    /**
+     * Mở {@link PairingDialog} hiển thị mã PIN ghép đôi (Device Pairing):
+     * PIN 6 số cỡ to + đếm ngược 5 phút + đổi PIN; tự đóng và log sự kiện khi
+     * một client ghép đôi thành công. Chỉ khả dụng khi server chạy CÓ database
+     * (cần bảng {@code pairing_sessions} + {@code clients.device_token}).
+     */
+    private void openPairingDialog() {
+        if (serverEngine.getPairingDao() == null) {
+            appendEventLog("\u26A0 Server \u0111ang ch\u1EA1y kh\u00F4ng database \u2014 kh\u00F4ng th\u1EC3 gh\u00E9p \u0111\u00F4i thi\u1EBFt b\u1ECB");
+            return;
+        }
+        PairingDialog dialog = new PairingDialog(this, serverEngine.getPairingDao(), () -> {
+            appendEventLog("\uD83C\uDF89 M\u1ED9t thi\u1EBFt b\u1ECB m\u1EDBi \u0111\u00E3 gh\u00E9p \u0111\u00F4i th\u00E0nh c\u00F4ng \u2014 c\u00F3 th\u1EC3 k\u1EBFt n\u1ED1i b\u1EB1ng deviceToken");
+            refreshNow();
+        });
+        dialog.open();
     }
 
     /**

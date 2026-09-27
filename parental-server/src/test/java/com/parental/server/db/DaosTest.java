@@ -2,10 +2,14 @@ package com.parental.server.db;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.sql.SQLException;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +31,7 @@ class DaosTest {
     private MetricsDao metricsDao;
     private RuleDao ruleDao;
     private CommandLogDao commandLogDao;
+    private PairingDao pairingDao;
 
     @BeforeEach
     void setUp() {
@@ -35,6 +40,7 @@ class DaosTest {
         metricsDao = new MetricsDao(database);
         ruleDao = new RuleDao(database);
         commandLogDao = new CommandLogDao(database);
+        pairingDao = new PairingDao(database);
     }
 
     // ------------------------------------------------------------------
@@ -99,6 +105,50 @@ class DaosTest {
         assertNull(clientDao.getStatus("ghost"));
         assertNull(clientDao.getLastSeen("ghost"));
         assertFalse(clientDao.exists("ghost"));
+    }
+
+    // ------------------------------------------------------------------
+    // ClientDao — Device Pairing (Identity Persistence)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ClientDao: saveDeviceToken → isValidPairing khớp đúng cặp clientId+token")
+    void deviceTokenRoundTrip() {
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "PC", "DESKTOP", "Windows 11", "127.0.0.1", "AA", "ONLINE"));
+
+        assertTrue(clientDao.saveDeviceToken("client-01", "token-abc"));
+        assertTrue(clientDao.isPaired("client-01"));
+        assertTrue(clientDao.isValidPairing("client-01", "token-abc"),
+                "Đúng clientId + đúng token + đã paired → true");
+        assertFalse(clientDao.isValidPairing("client-01", "token-wrong"), "Sai token → false");
+        assertFalse(clientDao.isValidPairing("client-02", "token-abc"), "Sai clientId → false");
+        assertFalse(clientDao.isValidPairing("client-01", null), "Token null → false");
+        assertFalse(clientDao.isValidPairing(null, "token-abc"), "ClientId null → false");
+    }
+
+    @Test
+    @DisplayName("ClientDao: saveDeviceToken UPSERT — client chưa tồn tại vẫn tạo dòng (is_paired=1)")
+    void saveDeviceTokenUpsertsNewRow() {
+        assertTrue(clientDao.saveDeviceToken("fresh-client", "token-xyz"));
+        assertTrue(clientDao.exists("fresh-client"));
+        assertTrue(clientDao.isPaired("fresh-client"));
+        assertTrue(clientDao.isValidPairing("fresh-client", "token-xyz"));
+    }
+
+    @Test
+    @DisplayName("ClientDao: upsertClient (handshake) KHÔNG xóa token đã cấp — 1 dòng duy nhất")
+    void handshakeUpsertPreservesToken() {
+        clientDao.saveDeviceToken("client-01", "token-abc");
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "Laptop", "DESKTOP", "Windows 11", "192.168.1.9",
+                "AA-BB-CC-DD-EE-FF", "ONLINE"));
+
+        assertTrue(clientDao.isValidPairing("client-01", "token-abc"),
+                "Reconnect handshake phải giữ nguyên device_token/is_paired");
+        assertEquals(1, clientDao.getAllClients().stream()
+                .filter(record -> "client-01".equals(record.clientId())).count(),
+                "UPSERT theo clientId — đúng 1 dòng duy nhất");
     }
 
     // ------------------------------------------------------------------
@@ -268,5 +318,99 @@ class DaosTest {
         assertFalse(commandLogDao.recordSent("cmd-x", "ghost",
                 ActionType.ALERT, "reason"));
         assertNull(commandLogDao.getStatus("cmd-x"));
+    }
+
+    // ------------------------------------------------------------------
+    // PairingDao — mã PIN ghép đôi (Device Pairing)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("PairingDao: createPin → 6 chữ số, còn hạn 5 phút, chưa dùng")
+    void createPinProducesValidActiveSession() {
+        String pin = pairingDao.createPin();
+        assertNotNull(pin);
+        assertTrue(pin.matches("\\d{6}"), "PIN phải là 6 chữ số: " + pin);
+
+        PairingDao.PairingSession session = pairingDao.get(pin);
+        assertNotNull(session);
+        assertFalse(session.used(), "PIN mới tạo phải chưa dùng");
+        assertNotNull(session.createdAt());
+        assertNotNull(session.expiresAt());
+        long validity = Duration.between(session.createdAt(), session.expiresAt()).getSeconds();
+        assertEquals(PairingDao.PIN_VALIDITY_SECONDS, validity,
+                "Hiệu lực phải đúng 5 phút (300s)");
+        assertEquals(PairingDao.PinState.ACTIVE, pairingDao.getPinState(pin));
+    }
+
+    @Test
+    @DisplayName("PairingDao: validateAndConsumePin → true đúng 1 lần, lần 2 false (USED)")
+    void consumePinOnlyOnce() {
+        String pin = pairingDao.createPin();
+
+        assertTrue(pairingDao.validateAndConsumePin(pin), "Lần dùng đầu phải thành công");
+        assertFalse(pairingDao.validateAndConsumePin(pin), "PIN chỉ dùng được một lần");
+        assertEquals(PairingDao.PinState.USED, pairingDao.getPinState(pin));
+    }
+
+    @Test
+    @DisplayName("PairingDao: PIN sai định dạng/không tồn tại → false, NOT_FOUND")
+    void invalidPinRejected() {
+        assertFalse(pairingDao.validateAndConsumePin(null));
+        assertFalse(pairingDao.validateAndConsumePin(""));
+        assertFalse(pairingDao.validateAndConsumePin("12ab45"));
+        assertFalse(pairingDao.validateAndConsumePin("12345"));
+        assertFalse(pairingDao.validateAndConsumePin("000000"), "Chưa tạo mã nào như vậy");
+        assertEquals(PairingDao.PinState.NOT_FOUND, pairingDao.getPinState("999999"));
+    }
+
+    @Test
+    @DisplayName("PairingDao: mã cấp liên tiếp không trùng nhau (SecureRandom + chống đụng PK)")
+    void consecutivePinsDoNotCollide() {
+        String first = pairingDao.createPin();
+        String second = pairingDao.createPin();
+        assertNotNull(first);
+        assertNotNull(second);
+        assertNotEquals(first, second, "Hai PIN ACTIVE cùng lúc phải khác nhau");
+        assertEquals(PairingDao.PinState.ACTIVE, pairingDao.getPinState(first));
+        assertEquals(PairingDao.PinState.ACTIVE, pairingDao.getPinState(second));
+    }
+
+    @Test
+    @DisplayName("PairingDao: purgeExpiredPins xóa mã hết hạn, giữ mã còn hạn")
+    void purgeRemovesOnlyExpiredPins() {
+        String active = pairingDao.createPin();
+
+        // Chèn thủ công một mã đã hết hạn (expires_at trong quá khứ)
+        try (var connection = database.newConnection();
+             var statement = connection.prepareStatement(
+                     "INSERT INTO pairing_sessions (pin, expires_at, is_used) VALUES (?, ?, 0)")) {
+            statement.setString(1, "111111");
+            statement.setTimestamp(2, java.sql.Timestamp.from(Instant.now().minusSeconds(10)));
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+
+        int removed = pairingDao.purgeExpiredPins();
+        assertTrue(removed >= 1, "Phải xóa ít nhất mã 111111 đã hết hạn");
+        assertNull(pairingDao.get("111111"));
+        assertNotNull(pairingDao.get(active), "Mã còn hạn phải được giữ lại");
+    }
+
+    @Test
+    @DisplayName("PairingDao: mã hết hạn (expires_at quá khứ) → PinState EXPIRED, consume false")
+    void expiredPinState() {
+        try (var connection = database.newConnection();
+             var statement = connection.prepareStatement(
+                     "INSERT INTO pairing_sessions (pin, expires_at, is_used) VALUES (?, ?, 0)")) {
+            statement.setString(1, "222222");
+            statement.setTimestamp(2, java.sql.Timestamp.from(Instant.now().minusSeconds(60)));
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException(e);
+        }
+
+        assertEquals(PairingDao.PinState.EXPIRED, pairingDao.getPinState("222222"));
+        assertFalse(pairingDao.validateAndConsumePin("222222"), "PIN hết hạn phải bị từ chối");
     }
 }

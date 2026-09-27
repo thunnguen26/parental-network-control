@@ -19,6 +19,8 @@ import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.PairRequestPayload;
+import com.parental.common.protocol.payload.PairResponsePayload;
 
 @DisplayName("JsonProtocolParser (LDJSON Protocol Engine)")
 class JsonProtocolParserTest {
@@ -112,6 +114,56 @@ class JsonProtocolParserTest {
                     "{\"type\":\"ACK\",\"clientId\":\"client-01\",\"timestamp\":1727280000,\"payload\":{}}\n");
             assertEquals(MessageType.ACK, ack.getType());
             assertInstanceOf(Map.class, ack.getPayload());
+        }
+
+        @Test
+        @DisplayName("PAIR_REQUEST giữ nguyên dữ liệu (Device Pairing)")
+        void pairRequestRoundTrip() throws Exception {
+            PairRequestPayload payload = new PairRequestPayload(
+                    "482913", "Laptop-ConTrai", "DESKTOP", "Windows 11",
+                    "192.168.1.50", "AA-BB-CC-DD-EE-FF");
+            BaseMessage<PairRequestPayload> sent =
+                    BaseMessage.of(MessageType.PAIR_REQUEST, "550e8400-e29b-41d4-a716-446655440000", payload);
+
+            BaseMessage<?> received = parser.fromLine(parser.toLine(sent));
+
+            assertEquals(MessageType.PAIR_REQUEST, received.getType());
+            assertInstanceOf(PairRequestPayload.class, received.getPayload());
+            assertEquals(payload, received.getPayload());
+        }
+
+        @Test
+        @DisplayName("PAIR_RESPONSE giữ nguyên dữ liệu (success + deviceToken)")
+        void pairResponseRoundTrip() throws Exception {
+            PairResponsePayload payload = new PairResponsePayload(
+                    true, "550e8400-e29b-41d4-a716-446655440000", "PAIRED");
+            BaseMessage<PairResponsePayload> sent =
+                    BaseMessage.of(MessageType.PAIR_RESPONSE, "server", payload);
+
+            BaseMessage<?> received = parser.fromLine(parser.toLine(sent));
+
+            assertEquals(MessageType.PAIR_RESPONSE, received.getType());
+            assertInstanceOf(PairResponsePayload.class, received.getPayload());
+            assertEquals(payload, received.getPayload());
+        }
+
+        @Test
+        @DisplayName("HANDSHAKE có/không deviceToken đều round-trip đúng (Mục 3.1 nullable)")
+        void handshakeDeviceTokenRoundTrip() throws Exception {
+            HandshakePayload paired = new HandshakePayload(
+                    "Laptop-ConTrai", "DESKTOP", "Windows 11", "192.168.1.50",
+                    "AA-BB-CC-DD-EE-FF", "token-uuid-123");
+            BaseMessage<?> received = parser.fromLine(parser.toLine(
+                    BaseMessage.of(MessageType.HANDSHAKE, "client-01", paired)));
+            assertEquals("token-uuid-123", ((HandshakePayload) received.getPayload()).deviceToken());
+
+            // Không token (legacy) → parse lenient, deviceToken = null
+            BaseMessage<?> legacy = parser.fromLine(
+                    "{\"type\":\"HANDSHAKE\",\"clientId\":\"client-01\",\"timestamp\":1727280000,"
+                            + "\"payload\":{\"deviceName\":\"PC\",\"deviceType\":\"DESKTOP\","
+                            + "\"osVersion\":\"Windows 11\",\"ipAddress\":\"127.0.0.1\","
+                            + "\"macAddress\":\"AA\"}}\n");
+            assertNull(((HandshakePayload) legacy.getPayload()).deviceToken());
         }
     }
 

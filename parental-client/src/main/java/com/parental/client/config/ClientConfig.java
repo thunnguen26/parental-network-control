@@ -9,7 +9,10 @@ import java.util.Objects;
  * <ul>
  *   <li>{@code serverHost} = "127.0.0.1"</li>
  *   <li>{@code serverPort} = 8888</li>
- *   <li>{@code clientId} — tự sinh UUID nếu chưa chỉ định</li>
+ *   <li>{@code clientId} — ĐỊNH DANH BỀN VỮNG, không tự sinh ở đây nữa: app
+ *       đọc từ {@code client_identity.json} (ClientIdentityManager) và set
+ *       qua builder; nếu chưa set vẫn tự sinh UUID (fallback legacy/test)</li>
+ *   <li>{@code deviceToken} — token ghép đôi (null khi thiết bị chưa ghép đôi)</li>
  *   <li>{@code heartbeatIntervalMs} = 5000</li>
  *   <li>{@code initialReconnectDelayMs} = 1000</li>
  *   <li>{@code maxReconnectDelayMs} = 30000</li>
@@ -32,6 +35,8 @@ public final class ClientConfig {
     private final String serverHost;
     private final int serverPort;
     private final String clientId;
+    /** Token ghép đôi đính kèm HANDSHAKE — null khi thiết bị chưa ghép đôi. */
+    private final String deviceToken;
     private final long heartbeatIntervalMs;
     private final long heartbeatTimeoutMs;
     private final long metricsIntervalMs;
@@ -42,6 +47,7 @@ public final class ClientConfig {
         this.serverHost = builder.serverHost;
         this.serverPort = builder.serverPort;
         this.clientId = builder.clientId;
+        this.deviceToken = builder.deviceToken;
         this.heartbeatIntervalMs = builder.heartbeatIntervalMs;
         this.heartbeatTimeoutMs = builder.heartbeatTimeoutMs;
         this.metricsIntervalMs = builder.metricsIntervalMs;
@@ -68,6 +74,11 @@ public final class ClientConfig {
 
     public String getClientId() {
         return clientId;
+    }
+
+    /** Token ghép đôi (null = thiết bị chưa ghép đôi — server sẽ từ chối). */
+    public String getDeviceToken() {
+        return deviceToken;
     }
 
     public long getHeartbeatIntervalMs() {
@@ -111,12 +122,13 @@ public final class ClientConfig {
                 && initialReconnectDelayMs == other.initialReconnectDelayMs
                 && maxReconnectDelayMs == other.maxReconnectDelayMs
                 && Objects.equals(serverHost, other.serverHost)
-                && Objects.equals(clientId, other.clientId);
+                && Objects.equals(clientId, other.clientId)
+                && Objects.equals(deviceToken, other.deviceToken);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(serverHost, serverPort, clientId,
+        return Objects.hash(serverHost, serverPort, clientId, deviceToken,
                 heartbeatIntervalMs, heartbeatTimeoutMs, metricsIntervalMs,
                 initialReconnectDelayMs, maxReconnectDelayMs);
     }
@@ -124,7 +136,8 @@ public final class ClientConfig {
     @Override
     public String toString() {
         return "ClientConfig{serverHost='" + serverHost + '\'' + ", serverPort=" + serverPort
-                + ", clientId='" + clientId + '\'' + ", heartbeatIntervalMs=" + heartbeatIntervalMs
+                + ", clientId='" + clientId + '\'' + ", deviceToken="
+                + (deviceToken == null ? "null" : "***") + ", heartbeatIntervalMs=" + heartbeatIntervalMs
                 + ", heartbeatTimeoutMs=" + heartbeatTimeoutMs
                 + ", metricsIntervalMs=" + metricsIntervalMs
                 + ", initialReconnectDelayMs=" + initialReconnectDelayMs
@@ -136,7 +149,8 @@ public final class ClientConfig {
 
         private String serverHost = DEFAULT_SERVER_HOST;
         private int serverPort = DEFAULT_SERVER_PORT;
-        private String clientId = java.util.UUID.randomUUID().toString(); // tự sinh UUID nếu chưa có
+        private String clientId = java.util.UUID.randomUUID().toString(); // fallback legacy/test
+        private String deviceToken; // null = chưa ghép đôi
         private long heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
         private long heartbeatTimeoutMs = DEFAULT_HEARTBEAT_TIMEOUT_MS;
         private long metricsIntervalMs = DEFAULT_METRICS_INTERVAL_MS;
@@ -161,6 +175,15 @@ public final class ClientConfig {
 
         public Builder clientId(String clientId) {
             this.clientId = requireNonBlank(clientId, "clientId");
+            return this;
+        }
+
+        /**
+         * Token ghép đôi lấy từ {@code client_identity.json}. {@code null}/
+         * blank → không có token (thiết bị chưa ghép đôi).
+         */
+        public Builder deviceToken(String deviceToken) {
+            this.deviceToken = (deviceToken == null || deviceToken.isBlank()) ? null : deviceToken.trim();
             return this;
         }
 

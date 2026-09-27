@@ -21,6 +21,15 @@
             <artifactId>parental-common</artifactId>
         </dependency>
 
+        <!-- Test-scoped: integration test ghép đôi chạy server thật trong
+             classpath của client (không tạo vòng phụ thuộc — server không
+             đụng client; production client không mang code server) -->
+        <dependency>
+            <groupId>com.parental</groupId>
+            <artifactId>parental-server</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Hardware/Network monitoring -->
         <dependency>
             <groupId>com.github.oshi</groupId>

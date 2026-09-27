@@ -10,6 +10,8 @@ import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.PairRequestPayload;
+import com.parental.common.protocol.payload.PairResponsePayload;
 
 /**
  * Protocol Engine của giao thức LDJSON (khớp Mục 1-3 của
@@ -69,11 +71,12 @@ public final class JsonProtocolParser {
      * Giải mã một dòng LDJSON (có/không {@code \n} cuối đều được, cho phép
      * đầu vào từ {@code BufferedReader.readLine()}) thành {@link BaseMessage}
      * với payload đã được parse sang DTO tương ứng với trường {@code type}:
-     * <ul>
-     *   <li>HANDSHAKE → {@link HandshakePayload}</li>
+     * <ul>     * <li>HANDSHAKE → {@link HandshakePayload}</li>
      *   <li>METRICS_REPORT → {@link MetricsPayload}</li>
      *   <li>COMMAND → {@link CommandPayload}</li>
      *   <li>CONFIG_SYNC → {@link ConfigSyncPayload}</li>
+     *   <li>PAIR_REQUEST → {@link PairRequestPayload}</li>
+     *   <li>PAIR_RESPONSE → {@link PairResponsePayload}</li>
      *   <li>HEARTBEAT / ACK → {@link Map} rỗng (payload không có field)</li>
      * </ul>
      */
@@ -132,6 +135,8 @@ public final class JsonProtocolParser {
             case METRICS_REPORT -> MetricsPayload.class;
             case COMMAND -> CommandPayload.class;
             case CONFIG_SYNC -> ConfigSyncPayload.class;
+            case PAIR_REQUEST -> PairRequestPayload.class;
+            case PAIR_RESPONSE -> PairResponsePayload.class;
             case HEARTBEAT, ACK -> Map.class; // payload rỗng: {}
         };
 

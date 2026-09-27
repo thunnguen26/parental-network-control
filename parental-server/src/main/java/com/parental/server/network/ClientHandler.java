@@ -22,20 +22,38 @@ import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.ProtocolParseException;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.PairRequestPayload;
+import com.parental.common.protocol.payload.PairResponsePayload;
 import com.parental.server.db.ClientDao;
 import com.parental.server.db.ClientRecord;
 import com.parental.server.db.CommandLogDao;
 import com.parental.server.db.MetricsDao;
+import com.parental.server.db.PairingDao;
+import com.parental.server.db.PairingDao.PinState;
 
 /**
  * Xử lý một kết nối Client trên thread riêng (chạy trong ExecutorService của
  * {@link TcpServerEngine}).
  *
- * <p>Nghi thức bắt buộc: gói tin đầu tiên phải là {@code HANDSHAKE} để xác định
- * clientId — nếu không, kết nối bị từ chối. Sau handshake, vòng lặp chính đọc
- * LDJSON qua {@code BufferedReader.readLine()}, giải mã bằng
- * {@link JsonProtocolParser}: HEARTBEAT cập nhật timestamp sống và phản hồi
- * ACK; các gói khác chỉ ghi log (Business Logic thuộc Phase 4).</p>
+ * <p>Nghi thức bắt buộc: gói tin đầu tiên phải là {@code HANDSHAKE} hoặc
+ * {@code PAIR_REQUEST} để xác định clientId — nếu không, kết nối bị từ chối.
+ * Sau handshake, vòng lặp chính đọc LDJSON qua {@code BufferedReader.readLine()},
+ * giải mã bằng {@link JsonProtocolParser}: HEARTBEAT cập nhật timestamp sống
+ * và phản hồi ACK; các gói khác chỉ ghi log.</p>
+ *
+ * <p><b>Device Pairing (Client Identity Persistence)</b>:</p>
+ * <ul>
+ *   <li>{@code PAIR_REQUEST} (gói đầu): kiểm tra PIN qua {@link PairingDao} —
+ *       đúng/còn hạn/chưa dùng → sinh UUID {@code deviceToken}, lưu bảng
+ *       {@code clients} ({@code is_paired = 1}) và trả {@code PAIR_RESPONSE}
+ *       success=true kèm token; sai/hết hạn/đã dùng → success=false kèm lý do.
+ *       Sau khi trả lời, kết nối ghép đôi được đóng — client sẽ handshake lại
+ *       bằng token vừa nhận.</li>
+ *   <li>{@code HANDSHAKE} (gói đầu): so khớp {@code deviceToken} với DB —
+ *       thiết bị chưa ghép đôi hoặc sai token bị ngắt kết nối với mã lỗi
+ *       {@code UNAUTHORIZED_DEVICE} (chỉ khi chạy CÓ database; chế độ không
+ *       DB giữ hành vi cũ cho test/legacy).</li>
+ * </ul>
  */
 public class ClientHandler implements Runnable {
 
@@ -43,6 +61,9 @@ public class ClientHandler implements Runnable {
 
     /** Định danh của Server trong trường clientId khi gửi gói xuống Client. */
     public static final String SERVER_ID = "server";
+
+    /** Mã lỗi ngắt kết nối khi thiết bị chưa ghép đôi hoặc sai deviceToken. */
+    public static final String ERROR_UNAUTHORIZED_DEVICE = "UNAUTHORIZED_DEVICE";
 
     /** Thời gian tối đa chờ gói HANDSHAKE đầu tiên (chống treo thread). */
     private static final int HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -54,19 +75,29 @@ public class ClientHandler implements Runnable {
     private final ClientDao clientDao;
     private final MetricsDao metricsDao;
     private final CommandLogDao commandLogDao;
+    /** Ghép đôi (Identity Persistence) — nullable: null = chạy không database. */
+    private final PairingDao pairingDao;
 
     ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser) {
-        this(socket, sessionManager, parser, null, null, null);
+        this(socket, sessionManager, parser, null, null, null, null);
     }
 
     ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser,
                   ClientDao clientDao, MetricsDao metricsDao, CommandLogDao commandLogDao) {
+        this(socket, sessionManager, parser, clientDao, metricsDao, commandLogDao, null);
+    }
+
+    /** Constructor đầy đủ (Device Pairing): kèm {@link PairingDao} cho PAIR_REQUEST. */
+    ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser,
+                  ClientDao clientDao, MetricsDao metricsDao, CommandLogDao commandLogDao,
+                  PairingDao pairingDao) {
         this.socket = socket;
         this.sessionManager = sessionManager;
         this.parser = parser;
         this.clientDao = clientDao;
         this.metricsDao = metricsDao;
         this.commandLogDao = commandLogDao;
+        this.pairingDao = pairingDao;
     }
 
     @Override
@@ -95,10 +126,30 @@ public class ClientHandler implements Runnable {
                 return;
             }
 
+            // Device Pairing: gói đầu là PAIR_REQUEST → trả PAIR_RESPONSE rồi đóng
+            // (không đăng ký phiên — client sẽ handshake lại bằng token vừa nhận).
+            if (handshake.getType() == MessageType.PAIR_REQUEST) {
+                handlePairRequest(socketRef, writer, handshake);
+                return;
+            }
+
             if (handshake.getType() != MessageType.HANDSHAKE) {
                 log.warn("Rejected connection from {}: first message must be HANDSHAKE but was {}",
                         socketRef.getRemoteSocketAddress(), handshake.getType());
                 return;
+            }
+
+            // Xác thực thiết bị: token phải khớp DB và is_paired = 1 (chỉ khi có DB).
+            if (clientDao != null) {
+                String token = handshake.getPayload() instanceof HandshakePayload hp
+                        ? hp.deviceToken() : null;
+                String clientIdForAuth = resolveClientId(handshake);
+                if (!clientDao.isValidPairing(clientIdForAuth, token)) {
+                    log.warn("[{}] Rejected connection from {}: {} (missing/invalid deviceToken)",
+                            clientIdForAuth, socketRef.getRemoteSocketAddress(),
+                            ERROR_UNAUTHORIZED_DEVICE);
+                    return;
+                }
             }
 
             String clientId = resolveClientId(handshake);
@@ -209,5 +260,67 @@ public class ClientHandler implements Runnable {
             return payload.macAddress();
         }
         return null;
+    }
+
+    // ------------------------------------------------------------------
+    // Device Pairing (PAIR_REQUEST → PAIR_RESPONSE) — PROTOCOL.md Mục 3.6/3.7
+    // ------------------------------------------------------------------
+
+    /**
+     * Xử lý gói ghép đôi: kiểm tra PIN qua {@link PairingDao}, cấp
+     * {@code deviceToken} (UUID) khi hợp lệ rồi trả lời và ĐÓNG kết nối
+     * (luồng ghép đôi không giữ phiên — client handshake lại sau).
+     */
+    private void handlePairRequest(Socket socketRef, PrintWriter writer, BaseMessage<?> message) {
+        PairRequestPayload request = message.getPayload() instanceof PairRequestPayload pairRequest
+                ? pairRequest : null;
+        String clientId = resolveClientId(message);
+        log.info("PAIR_REQUEST from {} (clientId={}, device={})",
+                socketRef.getRemoteSocketAddress(), clientId,
+                request == null ? "unknown" : request.deviceName());
+
+        PairResponsePayload response = evaluatePairRequest(clientId, request);
+
+        try {
+            writer.println(parser.toLine(BaseMessage.of(MessageType.PAIR_RESPONSE,
+                    SERVER_ID, response)));
+            writer.flush();
+        } catch (ProtocolParseException e) {
+            log.error("Failed to serialize PAIR_RESPONSE: {}", e.getMessage());
+        }
+        if (response.success()) {
+            log.info("[{}] Device paired successfully — deviceToken issued (device: {})",
+                    clientId, request == null ? "unknown" : request.deviceName());
+        } else {
+            log.warn("[{}] Pairing rejected: {}", clientId, response.message());
+        }
+    }
+
+    /** Kiểm tra PIN và cấp token (thuần logic — không đụng socket, dễ test). */
+    private PairResponsePayload evaluatePairRequest(String clientId, PairRequestPayload request) {
+        if (pairingDao == null) {
+            return new PairResponsePayload(false, null, "PAIRING_NOT_AVAILABLE");
+        }
+        if (clientId == null || clientId.isBlank()) {
+            return new PairResponsePayload(false, null, PairResponsePayload.MSG_INVALID_PIN);
+        }
+        PinState pinState = pairingDao.getPinState(request == null ? null : request.pin());
+        if (pinState != PinState.ACTIVE) {
+            String reason = switch (pinState) {
+                case EXPIRED -> PairResponsePayload.MSG_PIN_EXPIRED;
+                case USED -> PairResponsePayload.MSG_PIN_ALREADY_USED;
+                default -> PairResponsePayload.MSG_INVALID_PIN;
+            };
+            return new PairResponsePayload(false, null, reason);
+        }
+        if (!pairingDao.validateAndConsumePin(request.pin())) {
+            // Race cực hiếm: PIN bị thiết bị khác tiêu thụ giữa 2 lần đọc.
+            return new PairResponsePayload(false, null, PairResponsePayload.MSG_PIN_ALREADY_USED);
+        }
+        String deviceToken = java.util.UUID.randomUUID().toString();
+        if (clientDao == null || !clientDao.saveDeviceToken(clientId, deviceToken)) {
+            return new PairResponsePayload(false, null, "STORE_FAILED");
+        }
+        return new PairResponsePayload(true, deviceToken, PairResponsePayload.MSG_PAIRED);
     }
 }

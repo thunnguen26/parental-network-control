@@ -406,13 +406,21 @@ public class TcpClientEngine implements AutoCloseable {
                 config.getServerHost(), config.getServerPort(), newSocket.getLocalPort());
     }
 
-    /** Thu thập DeviceInfo, đóng gói và gửi HANDSHAKE ngay khi kết nối thành công. */
+    /**
+     * Thu thập DeviceInfo + {@code deviceToken} (Client Identity Persistence),
+     * đóng gói và gửi HANDSHAKE ngay khi kết nối thành công. Token null khi
+     * thiết bị chưa ghép đôi — server sẽ từ chối với UNAUTHORIZED_DEVICE.
+     */
     private boolean performHandshake() {
-        HandshakePayload payload = deviceInfoCollector.collect();
-        if (payload == null) {
+        HandshakePayload collected = deviceInfoCollector.collect();
+        if (collected == null) {
             log.error("DeviceInfoCollector returned null — cannot send HANDSHAKE");
             return false;
         }
+        // Đính token bền vững (nếu đã ghép đôi) vào payload handshake.
+        HandshakePayload payload = new HandshakePayload(
+                collected.deviceName(), collected.deviceType(), collected.osVersion(),
+                collected.ipAddress(), collected.macAddress(), config.getDeviceToken());
         String line;
         try {
             line = parser.toLine(BaseMessage.of(MessageType.HANDSHAKE, config.getClientId(), payload));
@@ -434,8 +442,9 @@ public class TcpClientEngine implements AutoCloseable {
             return false;
         }
         lastHandshakeTimestampMs.set(System.currentTimeMillis());
-        log.info("HANDSHAKE sent (clientId={}, device={}, os={})",
-                config.getClientId(), payload.deviceName(), payload.osVersion());
+        log.info("HANDSHAKE sent (clientId={}, device={}, os={}, paired={})",
+                config.getClientId(), payload.deviceName(), payload.osVersion(),
+                payload.deviceToken() != null);
         return true;
     }
 

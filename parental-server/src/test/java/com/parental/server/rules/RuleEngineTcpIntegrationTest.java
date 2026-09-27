@@ -84,6 +84,8 @@ class RuleEngineTcpIntegrationTest {
     // ------------------------------------------------------------------
 
     private void connectClient(String clientId, String deviceName) throws IOException {
+        // Device Pairing: server có DB xác thực token — cấp token trước khi handshake
+        engine.getClientDao().saveDeviceToken(clientId, "rule-test-token");
         clientSocket = new Socket("127.0.0.1", engine.getPort());
         clientSocket.setTcpNoDelay(true);
         clientSocket.setSoTimeout(20_000);
@@ -92,7 +94,7 @@ class RuleEngineTcpIntegrationTest {
         clientWriter = new BufferedWriter(
                 new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8));
         writeAndFlush(BaseMessage.of(MessageType.HANDSHAKE, clientId, new HandshakePayload(
-                deviceName, "DESKTOP", "Windows 11", "127.0.0.1", clientId)));
+                deviceName, "DESKTOP", "Windows 11", "127.0.0.1", clientId, "rule-test-token")));
         // Đợi handshake được xử lý xong (upsert DB) trước khi tiếp tục
         awaitCondition("client ONLINE trong DB", Duration.ofSeconds(10), () ->
                 engine.getClientDao().exists(clientId));

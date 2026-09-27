@@ -9,5 +9,9 @@ public enum MessageType {
     METRICS_REPORT,
     COMMAND,
     CONFIG_SYNC,
-    ACK
+    ACK,
+    /** Ghép đôi lần đầu: client gửi PIN + thông tin máy (PROTOCOL.md Mục 3.6). */
+    PAIR_REQUEST,
+    /** Phản hồi ghép đôi: server trả success/deviceToken/message (Mục 3.7). */
+    PAIR_RESPONSE
 }

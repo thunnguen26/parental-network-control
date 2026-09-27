@@ -15,7 +15,7 @@ Every packet must contain:
   "payload": {}
 }
 ```
-- `type`: `MessageType` — một trong: `HANDSHAKE`, `HEARTBEAT`, `METRICS_REPORT`, `COMMAND`, `CONFIG_SYNC`, `ACK`.
+- `type`: `MessageType` — một trong: `HANDSHAKE`, `HEARTBEAT`, `METRICS_REPORT`, `COMMAND`, `CONFIG_SYNC`, `ACK`, `PAIR_REQUEST`, `PAIR_RESPONSE`.
 - `clientId`: định danh client (UUID hoặc MAC), dạng chuỗi.
 - `timestamp`: long, **epoch seconds**.
 - `payload`: object tuân theo schema tương ứng ở Mục 3.
@@ -30,6 +30,7 @@ Every packet must contain:
 | `osVersion` | String | Hệ điều hành | `"Windows 11"` |
 | `ipAddress` | String | Địa chỉ IP | `"192.168.1.50"` |
 | `macAddress` | String | Địa chỉ MAC | `"AA-BB-CC-DD-EE-FF"` |
+| `deviceToken` | String (nullable) | Token bảo mật cấp khi ghép đôi (Mục 3.7); `null`/bỏ trống khi thiết bị CHƯA ghép đôi. Server so khớp với DB — sai/thiếu token → ngắt kết nối `UNAUTHORIZED_DEVICE` | `"550e8400-e29b-41d4-a716-446655440000"` |
 
 ```json
 {
@@ -37,9 +38,12 @@ Every packet must contain:
   "deviceType": "DESKTOP",
   "osVersion": "Windows 11",
   "ipAddress": "192.168.1.50",
-  "macAddress": "AA-BB-CC-DD-EE-FF"
+  "macAddress": "AA-BB-CC-DD-EE-FF",
+  "deviceToken": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
+
+> **Xác thực (Client Identity Persistence)**: `clientId` lưu bền vững trong file `client_identity.json` trên máy con (không sinh lại UUID mới mỗi lần bật). Chỉ thiết bị ĐÃ ghép đôi (token hợp lệ khớp DB) mới được chấp nhận phiên HANDSHAKE.
 
 ### 3.2 METRICS_REPORT → `MetricsPayload` (Client gửi định kỳ báo cáo lưu lượng & thời gian)
 | Field | Type | Mô tả |
@@ -110,4 +114,45 @@ Every packet must contain:
 }
 ```
 - Parser xử lý lenient: ACK payload khớp cả `{}` lẫn `{"commandId": "..."}`.
+
+### 3.6 PAIR_REQUEST → `PairRequestPayload` (Client gửi khi muốn ghép đôi lần đầu)
+| Field | Type | Mô tả |
+|---|---|---|
+| `pin` | String | Mã PIN 6 số do phụ huynh sinh từ Server GUI (`[ ➕ Thêm thiết bị mới ]`), còn hạn 5 phút |
+| `deviceName` | String | Tên thiết bị muốn ghép đôi |
+| `deviceType` | String | `"DESKTOP"` hoặc `"MOBILE"` |
+| `osVersion` | String | Hệ điều hành |
+| `ipAddress` | String | Địa chỉ IP |
+| `macAddress` | String | Địa chỉ MAC |
+
+```json
+{
+  "pin": "482913",
+  "deviceName": "Laptop-ConTrai",
+  "deviceType": "DESKTOP",
+  "osVersion": "Windows 11",
+  "ipAddress": "192.168.1.50",
+  "macAddress": "AA-BB-CC-DD-EE-FF"
+}
+```
+
+> `clientId` trong envelope của PAIR_REQUEST phải là UUID định danh bền vững đã lưu trong `client_identity.json` — Server cấp `deviceToken` gắn với chính `clientId` này (UPSERT 1 dòng duy nhất).
+
+### 3.7 PAIR_RESPONSE → `PairResponsePayload` (Server trả lời PAIR_REQUEST)
+| Field | Type | Mô tả |
+|---|---|---|
+| `success` | boolean | `true` = ghép đôi thành công, `false` = bị từ chối |
+| `deviceToken` | String (nullable) | UUID token cấp quyền kết nối — chỉ có khi `success = true` |
+| `message` | String | Thông điệp kết quả: `"PAIRED"` khi thành công, hoặc lý do từ chối (`"INVALID_PIN"` / `"PIN_EXPIRED"` / `"PIN_ALREADY_USED"`) |
+
+```json
+{
+  "success": true,
+  "deviceToken": "550e8400-e29b-41d4-a716-446655440000",
+  "message": "PAIRED"
+}
+```
+
+> Sau khi nhận `success = true`, Client lưu `deviceToken` vào `client_identity.json`, đóng phiên ghép đôi và chuyển sang chạy ngầm với HANDSHAKE kèm `deviceToken`. Client gửi PAIR_REQUEST phải đợi PAIR_RESPONSE rồi ngắt kết nối (không giữ phiên).
+
 - Mọi bổ sung schema khác bắt buộc cập nhật tài liệu này trước khi code.
