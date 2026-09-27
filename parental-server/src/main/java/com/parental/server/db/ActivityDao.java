@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -50,14 +51,18 @@ public class ActivityDao {
         if (clientId == null || clientId.isBlank()) {
             return -1;
         }
-        String sql = "INSERT INTO activity_logs (client_id, process_name, window_title) "
-                + "VALUES (?, ?, ?)";
+        String sql = "INSERT INTO activity_logs (client_id, process_name, window_title, recorded_at) "
+                + "VALUES (?, ?, ?, ?)";
         try (Connection connection = database.newConnection();
              PreparedStatement statement = connection.prepareStatement(sql,
                      Statement.RETURN_GENERATED_KEYS)) {
             statement.setString(1, clientId);
             statement.setString(2, truncate(processName, 100));
             statement.setString(3, truncate(windowTitle, 2_000));
+            // GHI TƯỜNG MINH giờ LOCAL (hệ máy SERVER) thay vì DEFAULT
+            // CURRENT_TIMESTAMP (UTC của SQLite) — hết lệch múi giờ khi hiển thị
+            // trên JTable so với Event Log; getTimestamp() đọc lại khớp tuyệt đối.
+            statement.setTimestamp(4, Timestamp.valueOf(LocalDateTime.now()));
             statement.executeUpdate();
             try (ResultSet keys = statement.getGeneratedKeys()) {
                 long id = keys.next() ? keys.getLong(1) : -1;
@@ -123,8 +128,10 @@ public class ActivityDao {
 
     /** Xóa nhật ký quá cũ (giữ tối đa {@code keepDays} ngày) — dọn DB định kỳ. */
     public int purgeOlderThan(int keepDays) {
+        // Dữ liệu recorded_at ghi theo giờ LOCAL — mốc so sánh cũng phải
+        // localtime (khác 'now' thuần = UTC, sẽ lệch múi giờ khi purge).
         String sql = "DELETE FROM activity_logs WHERE recorded_at < "
-                + "datetime('now', '-' || ? || ' days')";
+                + "datetime('now', '-' || ? || ' days', 'localtime')";
         try (Connection connection = database.newConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setInt(1, Math.max(0, keepDays));
@@ -140,20 +147,41 @@ public class ActivityDao {
      * động" trên Dashboard).
      *
      * @param clientId định danh client
-     * @return số dòng đã xóa; 0 nếu client không tồn tại/lỗi/null (defensive)
+     * @return true nếu có ít nhất 1 dòng bị xóa (hoặc client sạch sẵn), false khi lỗi
      */
-    public int deleteAll(String clientId) {
+    public boolean deleteAll(String clientId) {
         if (clientId == null || clientId.isBlank()) {
-            return 0;
+            return false;
         }
         String sql = "DELETE FROM activity_logs WHERE client_id = ?";
         try (Connection connection = database.newConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, clientId);
-            return statement.executeUpdate();
+            statement.executeUpdate();
+            return true; // DELETE hợp lệ kể cả 0 dòng (client sạch sẵn)
         } catch (SQLException e) {
             log.error("Failed to delete all activities for client [{}]: {}",
                     clientId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Dọn dữ liệu RÁC từ era script PowerShell lỗi (hotfix 2026-09-27):
+     * các dòng nhầm chuỗi lỗi PowerShell làm tiến trình — process_name chứa
+     * "ACTIVE" (vd "ACTIVE.exe") hoặc window_title chứa "not recognized".
+     * Gọi MỘT LẦN khi mở Dashboard.
+     *
+     * @return số dòng rác đã xóa; 0 nếu sạch/lỗi
+     */
+    public int purgeCorruptedRows() {
+        String sql = "DELETE FROM activity_logs WHERE process_name LIKE '%ACTIVE%' "
+                + "OR window_title LIKE '%recognized%'";
+        try (Connection connection = database.newConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            return statement.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to purge corrupted activity rows: {}", e.getMessage());
             return 0;
         }
     }

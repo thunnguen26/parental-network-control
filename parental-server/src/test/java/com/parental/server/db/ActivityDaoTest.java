@@ -1,6 +1,7 @@
 package com.parental.server.db;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -110,7 +111,7 @@ class ActivityDaoTest {
     }
 
     @Test
-    @DisplayName("deleteAll: xóa TOÀN BỘ nhật ký của client, trả số dòng; cách ly client khác")
+    @DisplayName("deleteAll: xóa TOÀN BỘ nhật ký của client, trả true; cách ly client khác")
     void deleteAllRemovesOnlyTargetClientRows() {
         activityDao.logActivity("client-01", "chrome.exe", "Tab 1");
         activityDao.logActivity("client-01", "msedge.exe", "Tab 2");
@@ -119,21 +120,61 @@ class ActivityDaoTest {
                 "client-02", "PC 2", "DESKTOP", "Windows 11", "127.0.0.2", "AB", "ONLINE"));
         activityDao.logActivity("client-02", "chrome.exe", "Của client khác");
 
-        int deleted = activityDao.deleteAll("client-01");
-
-        assertEquals(3, deleted, "Đúng 3 bản ghi của client-01 bị xóa");
+        assertTrue(activityDao.deleteAll("client-01"), "deleteAll phải trả true khi xóa thành công");
         assertEquals(0, activityDao.countAll("client-01"), "client-01 sạch bóng");
         assertEquals(1, activityDao.countAll("client-02"),
                 "Dữ liệu client khác phải được GIỮ NGUYÊN (cách ly)");
     }
 
     @Test
-    @DisplayName("deleteAll: client lạ/null/blank → 0, không ném exception (defensive)")
+    @DisplayName("deleteAll: client lạ → true (DELETE hợp lệ 0 dòng); null/blank → false (defensive)")
     void deleteAllDefensiveEdges() {
-        assertEquals(0, activityDao.deleteAll("ghost-client"), "Client không tồn tại → 0 dòng");
-        assertEquals(0, activityDao.deleteAll(null));
-        assertEquals(0, activityDao.deleteAll(""));
-        assertEquals(0, activityDao.deleteAll("   "));
+        assertTrue(activityDao.deleteAll("ghost-client"),
+                "Client không tồn tại — DELETE vẫn hợp lệ (0 dòng)");
+        assertFalse(activityDao.deleteAll(null));
+        assertFalse(activityDao.deleteAll(""));
+        assertFalse(activityDao.deleteAll("   "));
+    }
+
+    @Test
+    @DisplayName("purgeCorruptedRows: xóa rác 'ACTIVE' (process) + 'recognized' (title), giữ dữ liệu sạch")
+    void purgeCorruptedRowsRemovesGarbage() {
+        activityDao.logActivity("client-01", "ACTIVE.exe",
+                ": The term 'ACTIVE.exe — ' is not recognized as the name of a cmdlet");
+        activityDao.logActivity("client-01", "chrome.exe", "Tab lỗi không recognized lẫn vào title");
+        activityDao.logActivity("client-01", "msedge.exe", "Bài tập Toán - Microsoft Edge");
+        activityDao.logActivity("client-01", "notepad.exe", "Ghi chú");
+
+        int purged = activityDao.purgeCorruptedRows();
+
+        assertEquals(2, purged, "Xóa đúng 2 dòng rác (ACTIVE.exe + title chứa 'recognized')");
+        List<ActivityDao.ActivityRecord> remaining =
+                activityDao.getRecentActivities("client-01", 10);
+        assertEquals(2, remaining.size(), "Còn đúng 2 dòng sạch");
+        assertTrue(remaining.stream().noneMatch(record ->
+                        record.processName().contains("ACTIVE")),
+                "Không còn dòng rác 'ACTIVE'");
+    }
+
+    @Test
+    @DisplayName("purgeCorruptedRows: DB sạch → 0, không ném (defensive)")
+    void purgeCorruptedRowsOnCleanDbReturnsZero() {
+        assertEquals(0, activityDao.purgeCorruptedRows());
+    }
+
+    @Test
+    @DisplayName("recorded_at ghi giờ LOCAL tường minh — đọc lại lệch < 5 phút (hết lỗi UTC ±7h)")
+    void recordedAtIsLocalTimeNotUtc() {
+        java.time.LocalDateTime before = java.time.LocalDateTime.now().minusSeconds(5);
+        activityDao.logActivity("client-01", "chrome.exe", "Kiểm tra múi giờ");
+        java.time.LocalDateTime after = java.time.LocalDateTime.now().plusSeconds(5);
+
+        java.time.LocalDateTime stored = java.time.LocalDateTime.ofInstant(
+                activityDao.getRecentActivities("client-01", 1).get(0).recordedAt(),
+                java.time.ZoneId.systemDefault());
+
+        assertFalse(stored.isBefore(before), "recorded_at không thể TRƯỚC thời điểm ghi (giờ local)");
+        assertFalse(stored.isAfter(after), "recorded_at không thể SAU thời điểm ghi +5s (giờ local)");
     }
 
     @Test

@@ -164,6 +164,15 @@ public class ServerDashboardFrame extends JFrame {
         initUi();
         registerEngineListeners();
         startUiRefresher();
+        // Dọn dữ liệu RÁC era script PowerShell lỗi (process "ACTIVE.exe",
+        // title "not recognized") còn sót trong DB — chạy ĐÚNG 1 LẦN khi mở.
+        if (serverEngine.getActivityDao() != null) {
+            int purged = serverEngine.getActivityDao().purgeCorruptedRows();
+            if (purged > 0) {
+                appendEventLog("\uD83E\uDDF9 \u0110\u00E3 d\u1ECDn " + purged
+                        + " b\u1EA3n ghi ho\u1EA1t \u0111\u1ED9ng r\u00E1c t\u1EEB era l\u1ED7i PowerShell");
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -699,20 +708,33 @@ public class ServerDashboardFrame extends JFrame {
             return;
         }
         String clientId = selected.clientId();
-        new javax.swing.SwingWorker<Integer, Void>() {
+        // XÓA TRẮNG NGAY trên EDT — phản hồi tức thì trước cả khi SwingWorker
+        // chạy xong: bảng nhật ký + ô "Hoạt động người dùng" + bộ lọc.
+        clearActivityTable();
+        activeAppField.setText("—");
+        // Xóa luôn cache "Đang mở" trong phiên (nếu client online) — nếu không
+        // refreshNow() sẽ nạp lại hoạt động cũ từ session.lastActivity.
+        ClientSession liveSession = sessionManager.get(clientId);
+        if (liveSession != null) {
+            liveSession.setLastActivity(null);
+        }
+        new javax.swing.SwingWorker<Boolean, Void>() {
             @Override
-            protected Integer doInBackground() {
+            protected Boolean doInBackground() {
                 return serverEngine.getActivityDao() != null
                         ? serverEngine.getActivityDao().deleteAll(clientId)
-                        : 0;
+                        : false;
             }
 
             @Override
             protected void done() {
                 try {
-                    int deleted = get();
-                    appendEventLog("🗑️ Đã xóa " + deleted + " bản ghi hoạt động của '"
-                            + deviceDisplay + "'");
+                    if (get()) {
+                        appendEventLog("🗑️ Đã xóa toàn bộ lịch sử hoạt động của '"
+                                + deviceDisplay + "'");
+                    } else {
+                        appendEventLog("⚠ Xóa lịch sử hoạt động thất bại (lỗi cơ sở dữ liệu)");
+                    }
                 } catch (Exception e) {
                     appendEventLog("⚠ Lỗi khi xóa lịch sử hoạt động: " + e.getMessage());
                     log.error("Clear activity history failed: {}", e.getMessage(), e);
@@ -1002,8 +1024,10 @@ public class ServerDashboardFrame extends JFrame {
         List<ActivityDao.ActivityRecord> records =
                 serverEngine.getActivityDao().getRecentActivities(clientId, ACTIVITY_LOG_LIMIT);
         activityTableModel.setRowCount(0);
+        // recorded_at giờ ghi bằng giờ LOCAL tường minh (ActivityDao) — format
+        // theo múi giờ hệ thống máy phụ huynh, KHÔNG còn lệch so với Event Log.
         java.time.format.DateTimeFormatter timeFormat =
-                java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+                java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy")
                         .withZone(java.time.ZoneId.systemDefault());
         for (ActivityDao.ActivityRecord record : records) {
             activityTableModel.addRow(new Object[] {
