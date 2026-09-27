@@ -94,7 +94,8 @@ public class ClientApp {
                 .metricsIntervalMs(5000)
                 .build();
 
-        TcpClientEngine clientEngine = buildEngine(config);
+        TcpClientEngine clientEngine = buildEngine(config, identityManager, () ->
+                SwingUtilities.invokeLater(() -> showPairingUiAfterUnpair(identityManager, host, port)));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutting down client agent...");
@@ -106,6 +107,29 @@ public class ClientApp {
                 host, port, identity.clientId());
 
         keepMainThreadAlive();
+    }
+
+    /**
+     * Bị server thu hồi ghép đôi (UNPAIR) — hiện lại màn hình ghép đôi lần
+     * đầu (người dùng nhập lại IP + PIN mới từ phụ huynh). Gọi trên EDT.
+     */
+    private static void showPairingUiAfterUnpair(ClientIdentityManager identityManager,
+                                                 String host, int port) {
+        log.warn("Device was unpaired by server — showing pairing UI again");
+        DeviceInfoCollector collector = new DefaultDeviceInfoCollector();
+        ClientIdentity fresh = identityManager.loadOrCreate();
+        ClientPairingFrame frame = new ClientPairingFrame(
+                identityManager, collector, host,
+                () -> {
+                    // Được gọi trên thread nền sau khi token mới đã lưu (hotfix EDT).
+                    ClientIdentity paired = identityManager.load();
+                    if (paired == null || paired.deviceToken() == null) {
+                        log.error("Re-paired but token missing — exiting");
+                        System.exit(1);
+                    }
+                    startBackgroundEngine(identityManager, paired, host, port);
+                });
+        frame.setVisible(true);
     }
 
     /** Chưa ghép đôi: hiện giao diện ghép đôi; thành công → chuyển sang chạy ngầm. */
@@ -142,8 +166,15 @@ public class ClientApp {
         keepMainThreadAlive();
     }
 
-    /** Dựng TcpClientEngine đầy đủ 7 tham số như ClientApp cũ (Task 3.3). */
-    private static TcpClientEngine buildEngine(ClientConfig config) {
+    /**
+     * Dựng TcpClientEngine đầy đủ 10 tham số: kèm {@link ClientIdentityManager}
+     * + listener UNPAIR (thiết bị bị xóa → khôi phục mạng, xóa identity,
+     * quay về màn hình ghép đôi qua EDT) + {@link WindowsActivityCollector}
+     * (Activity Monitoring — gửi ACTIVITY_REPORT mỗi 10s).
+     */
+    private static TcpClientEngine buildEngine(ClientConfig config,
+                                               ClientIdentityManager identityManager,
+                                               Runnable unpairListener) {
         WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer();
         SystemTrayAlertNotifier notifier = new SystemTrayAlertNotifier();
         OshiNetworkMetricsCollector metricsCollector = new OshiNetworkMetricsCollector();
@@ -157,7 +188,10 @@ public class ClientApp {
                 new ServerCommandHandler() { }, // listener mặc định: chỉ log
                 metricsCollector,
                 hostsFileManager,
-                actionDispatcher
+                actionDispatcher,
+                identityManager,
+                unpairListener,
+                new com.parental.client.activity.WindowsActivityCollector() // Activity Monitoring
         );
     }
 

@@ -22,6 +22,9 @@ public enum DisconnectReason {
     /** Server đang graceful shutdown và chủ động đóng phiên. */
     SERVER_SHUTDOWN,
 
+    /** Phụ huynh xóa thiết bị — server gửi UNPAIR rồi chủ động ngắt (Delete/Unpair). */
+    UNPAIRED,
+
     /** Lý do khác/không xác định. */
     UNKNOWN
 }

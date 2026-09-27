@@ -152,6 +152,125 @@ class DaosTest {
     }
 
     // ------------------------------------------------------------------
+    // ClientDao — Alias (biệt danh thiết bị)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ClientDao.updateAlias: đặt alias → get/getAllClients trả về alias")
+    void updateAliasSetsAndReadsBack() {
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "Laptop-ConTrai", "DESKTOP", "Windows 11", "127.0.0.1",
+                "AA-BB-CC-DD-EE-FF", "ONLINE"));
+
+        assertTrue(clientDao.updateAlias("client-01", "Máy con lớn"));
+
+        ClientRecord record = clientDao.get("client-01");
+        assertNotNull(record);
+        assertEquals("Máy con lớn", record.alias());
+        assertEquals("Laptop-ConTrai", record.deviceName(), "Tên máy gốc không đổi");
+        assertEquals("Máy con lớn", clientDao.getAllClients().stream()
+                .filter(r -> "client-01".equals(r.clientId())).findFirst().orElseThrow().alias());
+    }
+
+    @Test
+    @DisplayName("ClientDao.updateAlias: alias rỗng/null → xóa alias (NULL), về tên gốc")
+    void updateAliasClearsWhenBlankOrNull() {
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "PC", "DESKTOP", "Windows 11", "127.0.0.1", "AA", "ONLINE"));
+        clientDao.updateAlias("client-01", "Biệt danh");
+
+        assertTrue(clientDao.updateAlias("client-01", ""), "Rỗng → xóa alias, vẫn true");
+        assertNull(clientDao.get("client-01").alias());
+
+        clientDao.updateAlias("client-01", "  \t ");
+        assertNull(clientDao.get("client-01").alias(), "Chỉ whitespace → xóa alias");
+
+        clientDao.updateAlias("client-01", "Tên khác");
+        assertTrue(clientDao.updateAlias("client-01", null), "null → xóa alias, vẫn true");
+        assertNull(clientDao.get("client-01").alias());
+    }
+
+    @Test
+    @DisplayName("ClientDao.updateAlias: alias > 100 ký tự bị cắt; client không tồn tại → false")
+    void updateAliasTrimsTo100AndRejectsMissingClient() {
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "PC", "DESKTOP", "Windows 11", "127.0.0.1", "AA", "ONLINE"));
+
+        String longAlias = "X".repeat(150);
+        assertTrue(clientDao.updateAlias("client-01", longAlias));
+        assertEquals(100, clientDao.get("client-01").alias().length(),
+                "Alias phải bị cắt còn 100 ký tự");
+
+        assertFalse(clientDao.updateAlias("ghost", "Không tồn tại"));
+        assertFalse(clientDao.updateAlias(null, "clientId null"));
+        assertFalse(clientDao.updateAlias("  ", "clientId blank"));
+        assertEquals("Abc", ClientDao.normalizeAlias("  Abc  "), "normalizeAlias: trim");
+        assertNull(ClientDao.normalizeAlias("   "), "normalizeAlias: blank → null");
+    }
+
+    // ------------------------------------------------------------------
+    // ClientDao.deleteClient — xóa sạch + cascade (atomic transaction)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ClientDao.deleteClient: xóa clients + rules + domains + metrics + commands (atomic)")
+    void deleteClientRemovesAllRelatedRows() {
+        // Dựng client đầy đủ dữ liệu liên quan
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "PC", "DESKTOP", "Windows 11", "127.0.0.1", "AA", "ONLINE"));
+        ruleDao.upsertRule("client-01", new ConfigSyncPayload(
+                List.of("tiktok.com", "facebook.com"), 3_600, 1_000, "06:00", "22:00"));
+        metricsDao.insert("client-01", new MetricsPayload(1_000, 500, 0, 0, 60, "ACTIVE"));
+        metricsDao.insert("client-01", new MetricsPayload(2_000, 900, 0, 0, 120, "ACTIVE"));
+        commandLogDao.recordSent("cmd-1", "client-01", ActionType.PAUSE_NETWORK, "reason");
+
+        // Trước khi xóa: đủ dữ liệu
+        assertTrue(clientDao.exists("client-01"));
+        assertNotNull(ruleDao.getRule("client-01"));
+        assertEquals(2, metricsDao.countAll("client-01"));
+        assertEquals(2, ruleDao.getBlockedDomains("client-01").size());
+        assertNotNull(commandLogDao.getStatus("cmd-1"));
+
+        // Xóa
+        assertTrue(clientDao.deleteClient("client-01"));
+
+        // Sau khi xóa: SẠCH hoàn toàn mọi bảng liên quan
+        assertFalse(clientDao.exists("client-01"), "clients phải bị xóa");
+        assertNull(clientDao.get("client-01"));
+        assertNull(ruleDao.getRule("client-01"), "client_rules phải bị xóa");
+        assertTrue(ruleDao.getBlockedDomains("client-01").isEmpty(), "blocked_domains phải bị xóa");
+        assertEquals(0, metricsDao.countAll("client-01"), "metrics_logs phải bị xóa");
+        assertNull(commandLogDao.getStatus("cmd-1"), "command_logs phải bị xóa");
+    }
+
+    @Test
+    @DisplayName("ClientDao.deleteClient: client không tồn tại/null → false, không crash")
+    void deleteClientMissingOrInvalidIsSafe() {
+        assertFalse(clientDao.deleteClient("ghost"));
+        assertFalse(clientDao.deleteClient(null));
+        assertFalse(clientDao.deleteClient(""));
+    }
+
+    @Test
+    @DisplayName("ClientDao.deleteClient: xóa client này KHÔNG ảnh hưởng client khác")
+    void deleteClientIsolatesOtherClients() {
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "PC-1", "DESKTOP", "Windows 11", "127.0.0.1", "AA", "ONLINE"));
+        clientDao.upsertClient(new ClientRecord(
+                "client-02", "PC-2", "DESKTOP", "Windows 11", "127.0.0.2", "BB", "ONLINE"));
+        metricsDao.insert("client-01", new MetricsPayload(1_000, 500, 0, 0, 60, "ACTIVE"));
+        metricsDao.insert("client-02", new MetricsPayload(2_000, 900, 0, 0, 60, "ACTIVE"));
+        clientDao.updateAlias("client-02", "Giữ lại");
+
+        assertTrue(clientDao.deleteClient("client-01"));
+
+        assertFalse(clientDao.exists("client-01"));
+        assertTrue(clientDao.exists("client-02"), "Client khác phải nguyên vẹn");
+        assertEquals(1, metricsDao.countAll("client-02"), "Metrics client khác giữ nguyên");
+        assertEquals("Giữ lại", clientDao.get("client-02").alias());
+    }
+
+    // ------------------------------------------------------------------
     // MetricsDao
     // ------------------------------------------------------------------
 

@@ -14,7 +14,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
+import com.parental.common.protocol.MessageType;
+import com.parental.common.protocol.payload.UnpairPayload;
+import com.parental.server.db.ActivityDao;
 import com.parental.server.db.ClientDao;
 import com.parental.server.db.CommandLogDao;
 import com.parental.server.db.DatabaseManager;
@@ -53,6 +57,8 @@ public class TcpServerEngine {
     private RuleDao ruleDao;
     /** Ghép đôi (Device Pairing) — null khi chạy không database. */
     private PairingDao pairingDao;
+    /** Nhật ký hoạt động (Activity Monitoring) — null khi chạy không database. */
+    private ActivityDao activityDao;
 
     /** Rule Engine (Task 4.2) — null khi chạy không database. */
     private RuleEvaluationEngine ruleEvaluationEngine;
@@ -104,6 +110,7 @@ public class TcpServerEngine {
             this.commandLogDao = new CommandLogDao(databaseManager);
             this.ruleDao = new RuleDao(databaseManager);
             this.pairingDao = new PairingDao(databaseManager);
+            this.activityDao = new ActivityDao(databaseManager);
         }
     }
 
@@ -211,7 +218,7 @@ public class TcpServerEngine {
                 Socket socket = serverSocket.accept();
                 socket.setTcpNoDelay(true);
                 handlerPool.execute(new ClientHandler(socket, sessionManager, parser,
-                        clientDao, metricsDao, commandLogDao, pairingDao));
+                        clientDao, metricsDao, commandLogDao, pairingDao, activityDao));
             } catch (IOException e) {
                 if (running.get()) {
                     log.error("Accept loop I/O error: {}", e.getMessage());
@@ -258,6 +265,43 @@ public class TcpServerEngine {
     public PairingDao getPairingDao() {
         return pairingDao;
     }
+
+    /** DAO nhật ký hoạt động (null nếu engine chạy không DB). */
+    public ActivityDao getActivityDao() {
+        return activityDao;
+    }
+
+    /**
+     * Thu hồi ghép đôi một client (Delete / Unpair): nếu client đang ONLINE
+     * thì gửi gói {@code UNPAIR} (PROTOCOL.md Mục 3.8) kèm lý do rồi chủ động
+     * đóng phiên (callback fire kèm reason {@link DisconnectReason#UNPAIRED});
+     * nếu OFFLINE thì chỉ bỏ qua bước mạng.
+     *
+     * @param clientId định danh client bị xóa
+     * @param reason   lý do hiển thị trên máy con
+     * @return {@code true} nếu đã gửi UNPAIR thành công (client đang online);
+     *         {@code false} nếu client offline (vẫn coi là thu hồi xong)
+     */
+    public boolean unpairClient(String clientId, String reason) {
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || session.isClosed()) {
+            log.info("Unpair client [{}]: offline — no UNPAIR message needed", clientId);
+            return false;
+        }
+        boolean sent = session.send(BaseMessage.of(MessageType.UNPAIR, SERVER_ID,
+                new UnpairPayload(reason != null ? reason : UnpairPayload.DEFAULT_REASON)));
+        if (sent) {
+            log.info("Unpair client [{}]: UNPAIR sent, closing session now", clientId);
+        } else {
+            log.warn("Unpair client [{}]: failed to send UNPAIR — closing session anyway", clientId);
+        }
+        // Đóng phiên NGAY sau khi gửi (hoặc gửi hỏng) — client sees EOF/UNPAIR.
+        sessionManager.remove(clientId, DisconnectReason.UNPAIRED);
+        return sent;
+    }
+
+    /** Định danh của Server trong envelope khi gửi gói xuống client. */
+    public static final String SERVER_ID = ClientHandler.SERVER_ID;
 
     /** Rule Engine tự động thực thi hạn mức (null nếu engine chạy không DB). */
     public RuleEvaluationEngine getRuleEvaluationEngine() {

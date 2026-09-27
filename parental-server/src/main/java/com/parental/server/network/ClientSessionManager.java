@@ -66,6 +66,18 @@ public class ClientSessionManager {
         }
     }
 
+    /** Fire callback ACTIVITY_REPORT cho mọi listener (Activity Monitoring). */
+    public void fireActivityReport(ClientSession session,
+            com.parental.common.protocol.payload.ActivityReportPayload activity) {
+        for (ClientConnectionListener listener : listeners) {
+            try {
+                listener.onActivityReport(session, activity);
+            } catch (RuntimeException e) {
+                log.error("ConnectionListener.onActivityReport threw: {}", e.getMessage());
+            }
+        }
+    }
+
     /**
      * Đăng ký phiên mới. Nếu clientId đã tồn tại (reconnect đè lên) thì phiên
      * cũ bị đóng trước khi thay thế (reason REPLACED) để không rò rỉ socket.

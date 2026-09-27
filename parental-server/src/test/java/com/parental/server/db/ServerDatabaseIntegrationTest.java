@@ -33,6 +33,7 @@ import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.UnpairPayload;
 import com.parental.server.network.TcpServerEngine;
 
 /**
@@ -317,6 +318,59 @@ class ServerDatabaseIntegrationTest {
         awaitCondition("session sau ghép đôi", Duration.ofSeconds(10),
                 () -> engine.getSessionManager().get(clientId) != null);
         assertEquals("Laptop-Pair", engine.getClientDao().get(clientId).deviceName());
+    }
+
+    @Test
+    @DisplayName("Xóa client đang ONLINE: UNPAIR qua socket → session bị ngắt + DB xóa sạch")
+    void deleteOnlineClientSendsUnpairAndCleansDb() throws Exception {
+        String clientId = "db-client-unpair";
+        engine.getClientDao().saveDeviceToken(clientId, "token-unpair");
+        connectClient(clientId, "PC-Unpair", "token-unpair");
+        awaitCondition("session ONLINE trong DB", Duration.ofSeconds(10), () ->
+                "ONLINE".equals(engine.getClientDao().getStatus(clientId)));
+
+        // Thu hồi: gửi UNPAIR qua socket thật + ngắt phiên (reason UNPAIRED)
+        assertTrue(engine.unpairClient(clientId, UnpairPayload.DEFAULT_REASON),
+                "Client đang online → UNPAIR phải gửi thành công");
+
+        // Client ảo nhận được gói UNPAIR trước khi socket đóng
+        String unpairLine = clientReader.readLine();
+        assertNotNull(unpairLine, "Client phải nhận gói UNPAIR trước khi bị ngắt");
+        BaseMessage<?> unpair = parser.fromLine(unpairLine);
+        assertEquals(MessageType.UNPAIR, unpair.getType());
+        var unpairPayload = assertInstanceOf(UnpairPayload.class, unpair.getPayload());
+        assertEquals(UnpairPayload.DEFAULT_REASON, unpairPayload.reason());
+
+        // Session bị gỡ khỏi manager (kèm callback reason UNPAIRED)
+        awaitCondition("session bị gỡ sau unpair", Duration.ofSeconds(10), () ->
+                engine.getSessionManager().get(clientId) == null);
+
+        // DB xóa sạch client
+        assertTrue(engine.getClientDao().deleteClient(clientId));
+        awaitCondition("client biến mất khỏi DB", Duration.ofSeconds(5), () ->
+                !engine.getClientDao().exists(clientId));
+    }
+
+    @Test
+    @DisplayName("unpairClient với client OFFLINE → false, không crash")
+    void unpairOfflineClientIsSafe() {
+        assertFalse(engine.unpairClient("ghost-client", "reason"),
+                "Client không online → false (không gửi gì)");
+    }
+
+    @Test
+    @DisplayName("updateAlias qua TCP engine DB: alias persist và map vào ClientRecord")
+    void aliasPersistsThroughEngineDatabase() throws Exception {
+        engine.getClientDao().saveDeviceToken("db-client-alias", "token-alias");
+        connectClient("db-client-alias", "PC-Alias", "token-alias");
+        awaitCondition("client ONLINE", Duration.ofSeconds(10), () ->
+                "ONLINE".equals(engine.getClientDao().getStatus("db-client-alias")));
+
+        assertTrue(engine.getClientDao().updateAlias("db-client-alias", "Máy học bài"));
+        ClientRecord record = engine.getClientDao().get("db-client-alias");
+        assertNotNull(record);
+        assertEquals("Máy học bài", record.alias());
+        assertEquals("PC-Alias", record.deviceName(), "Tên gốc giữ nguyên");
     }
 
     @Test

@@ -22,20 +22,25 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.parental.client.activity.ActivityCollector;
+import com.parental.client.activity.WindowsActivityCollector;
 import com.parental.client.config.ClientConfig;
 import com.parental.client.enforcement.ActionDispatcher;
 import com.parental.client.enforcement.HostsFileManager;
 import com.parental.client.device.DeviceInfoCollector;
+import com.parental.client.identity.ClientIdentityManager;
 import com.parental.client.metrics.NetworkMetricsCollector;
 import com.parental.client.metrics.OshiNetworkMetricsCollector;
 import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.ProtocolParseException;
+import com.parental.common.protocol.payload.ActivityReportPayload;
 import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.UnpairPayload;
 
 /**
  * TCP Client Engine (Task 2.2): quản lý vòng đời kết nối tới Server.
@@ -88,6 +93,20 @@ public class TcpClientEngine implements AutoCloseable {
     private final HostsFileManager hostsFileManager;
     /** Action Dispatcher (Task 3.3) — nullable: null = COMMAND chỉ log, không thực thi. */
     private final ActionDispatcher actionDispatcher;
+    /**
+     * Bộ thu thập hoạt động (Activity Monitoring — PROTOCOL.md Mục 3.9) —
+     * nullable: null = TẮT gửi ACTIVITY_REPORT (test/legacy).
+     */
+    private final ActivityCollector activityCollector;
+    /**
+     * Quản lý định danh bền vững — nullable. Khi nhận {@code UNPAIR} (thiết bị
+     * bị xóa khỏi danh sách quản lý), file {@code client_identity.json} bị xóa
+     * (mất deviceToken → hết quyền kết nối) và listener {@code onUnpaired}
+     * được báo để app quay về màn hình ghép đôi.
+     */
+    private final ClientIdentityManager identityManager;
+    /** Listener sự kiện bị thu hồi ghép đôi (UNPAIR) — nullable. */
+    private final Runnable unpairListener;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
@@ -114,6 +133,8 @@ public class TcpClientEngine implements AutoCloseable {
     private volatile ScheduledFuture<?> heartbeatTask;
     /** Scheduler riêng cho METRICS_REPORT — không làm nghẽn heartbeat/watchdog (Task 3.1). */
     private volatile ScheduledExecutorService metricsScheduler;
+    /** Scheduler riêng cho ACTIVITY_REPORT — thu thập có thể tốn ~3s (PowerShell). */
+    private volatile ScheduledExecutorService activityScheduler;
     private volatile Thread connectorThread;
     private volatile Thread readerThread;
     /** JVM shutdown hook — đăng ký khi start(), hủy khi stop() để không rò rỉ. */
@@ -144,6 +165,35 @@ public class TcpClientEngine implements AutoCloseable {
                            JsonProtocolParser parser, ServerCommandHandler commandHandler,
                            NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
                            ActionDispatcher actionDispatcher) {
+        this(config, deviceInfoCollector, parser, commandHandler, metricsCollector,
+                hostsFileManager, actionDispatcher, null, null, null);
+    }
+
+    /**
+     * Constructor đầy đủ nhất (Unpair): kèm {@link ClientIdentityManager} +
+     * listener {@code onUnpaired} — nhận {@code UNPAIR} → khôi phục mạng, xóa
+     * {@code client_identity.json}, gọi listener (app quay về màn hình ghép
+     * đôi) rồi ngừng kết nối. Truyền {@code null} cho cả 2 khi không dùng.
+     */
+    public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
+                           JsonProtocolParser parser, ServerCommandHandler commandHandler,
+                           NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
+                           ActionDispatcher actionDispatcher, ClientIdentityManager identityManager,
+                           Runnable unpairListener) {
+        this(config, deviceInfoCollector, parser, commandHandler, metricsCollector,
+                hostsFileManager, actionDispatcher, identityManager, unpairListener, null);
+    }
+
+    /**
+     * Constructor đầy đủ nhất (Activity Monitoring): kèm
+     * {@link ActivityCollector} — gửi ACTIVITY_REPORT định kỳ
+     * {@code config.getActivityIntervalMs()} (0 = tắt). Truyền null = tắt.
+     */
+    public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
+                           JsonProtocolParser parser, ServerCommandHandler commandHandler,
+                           NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
+                           ActionDispatcher actionDispatcher, ClientIdentityManager identityManager,
+                           Runnable unpairListener, ActivityCollector activityCollector) {
         this.config = Objects.requireNonNull(config, "config");
         this.deviceInfoCollector = Objects.requireNonNull(deviceInfoCollector, "deviceInfoCollector");
         this.parser = Objects.requireNonNull(parser, "parser");
@@ -151,6 +201,9 @@ public class TcpClientEngine implements AutoCloseable {
         this.metricsCollector = metricsCollector; // nullable — null = tắt gửi metrics
         this.hostsFileManager = hostsFileManager; // nullable — null = không can thiệp hosts
         this.actionDispatcher = actionDispatcher; // nullable — null = COMMAND chỉ log
+        this.identityManager = identityManager;   // nullable — null = không xử lý UNPAIR file
+        this.unpairListener = unpairListener;     // nullable — null = không callback UNPAIR
+        this.activityCollector = activityCollector; // nullable — null = tắt ACTIVITY_REPORT
     }
 
     // ------------------------------------------------------------------
@@ -228,6 +281,7 @@ public class TcpClientEngine implements AutoCloseable {
         unregisterShutdownHook();
         shutdownHeartbeatScheduler();
         shutdownMetricsScheduler();
+        shutdownActivityScheduler();
         // Đóng socket ĐẦU TIÊN để đánh thức readLine() đang block trên Windows.
         closeConnectionQuietly();
         // Task 3.3: luôn khôi phục mạng khi client tắt (xóa firewall rule) —
@@ -382,6 +436,8 @@ public class TcpClientEngine implements AutoCloseable {
         // nhỏ hơn mốc này) sẽ không bao giờ kích hoạt watchdog nhầm lẫn.
         lastServerActivityMs.set(System.currentTimeMillis());
         startMetricsScheduler();
+        // Activity Monitoring (Mục 3.9): scheduler riêng, không block heartbeat.
+        startActivityScheduler();
     }
 
     // ------------------------------------------------------------------
@@ -547,6 +603,84 @@ public class TcpClientEngine implements AutoCloseable {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Activity scheduler (Activity Monitoring — PROTOCOL.md Mục 3.9): gửi
+    // ACTIVITY_REPORT định kỳ, scheduler RIÊNG — PowerShell có thể tốn tới 3s
+    // nên tuyệt đối không chạy chung heartbeat/reader (không block lệnh).
+    // ------------------------------------------------------------------
+
+    /** Khởi động scheduler ACTIVITY_REPORT (chỉ khi collector != null và interval > 0). */
+    private void startActivityScheduler() {
+        if (activityCollector == null || activityScheduler != null
+                || config.getActivityIntervalMs() <= 0) {
+            return;
+        }
+        ScheduledExecutorService scheduler =
+                Executors.newSingleThreadScheduledExecutor(namedDaemonFactory("parental-client-activity"));
+        activityScheduler = scheduler;
+        long period = config.getActivityIntervalMs();
+        scheduler.scheduleAtFixedRate(this::sendActivityReport, period, period, TimeUnit.MILLISECONDS);
+        if (!running.get()) { // race với stop(): dọn ngay
+            shutdownActivityScheduler();
+        }
+    }
+
+    private void shutdownActivityScheduler() {
+        ScheduledExecutorService scheduler = activityScheduler;
+        activityScheduler = null;
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+    }
+
+    /**
+     * Thu thập hoạt động từ {@link ActivityCollector} rồi đẩy gói
+     * ACTIVITY_REPORT lên Server (ghi đồng bộ qua {@code writeLock} cùng
+     * heartbeat/metrics — không hỏng khung LDJSON). Collector rỗng (không xác
+     * định được) → bỏ qua chu kỳ, không gửi tin rỗng làm nhiễu nhật ký.
+     */
+    private void sendActivityReport() {
+        if (!running.get() || !connected.get() || activityCollector == null) {
+            return;
+        }
+        ActivityReportPayload activity;
+        try {
+            activity = activityCollector.collect();
+        } catch (RuntimeException e) {
+            // Defensive: collector lỗi không được làm chết scheduler (AGENTS.md)
+            log.error("Activity collector threw: {}", e.getMessage());
+            return;
+        }
+        if (activity == null
+                || (activity.activeProcessName().isEmpty() && activity.topProcesses().isEmpty())) {
+            return; // không thu được gì (headless/khóa màn hình) — không gửi rỗng
+        }
+        String line;
+        try {
+            line = parser.toLine(BaseMessage.of(MessageType.ACTIVITY_REPORT,
+                    config.getClientId(), activity));
+        } catch (ProtocolParseException e) {
+            log.error("Serialize ACTIVITY_REPORT failed: {}", e.getMessage());
+            return;
+        }
+        try {
+            synchronized (writeLock) {
+                Writer w = writer;
+                Socket s = socket;
+                if (w == null || s == null || s.isClosed()) {
+                    return;
+                }
+                w.write(line);
+                w.flush();
+            }
+            log.debug("ACTIVITY_REPORT sent (process={}, title={})",
+                    activity.activeProcessName(), activity.activeWindowTitle());
+        } catch (IOException e) {
+            log.warn("ACTIVITY_REPORT write failed (clientId={}): {}",
+                    config.getClientId(), e.getMessage());
+        }
+    }
+
     /**
      * Lấy metrics từ {@link NetworkMetricsCollector} rồi đẩy gói
      * METRICS_REPORT lên Server qua luồng TCP (ghi đồng bộ qua writeLock cùng
@@ -673,13 +807,75 @@ public class TcpClientEngine implements AutoCloseable {
         }
         switch (message.getType()) {
             case ACK -> {
-                lastAckTimestampMs.set(System.currentTimeMillis());
+                lastAckTimestampMs.set(
+                        System.currentTimeMillis());
                 log.debug("ACK received (clientId={})", config.getClientId());
             }
             case COMMAND -> handleCommand(message);
             case CONFIG_SYNC -> handleConfigSync(message);
-            case HANDSHAKE, HEARTBEAT, METRICS_REPORT ->
+            case UNPAIR -> handleUnpair(message);
+            case HANDSHAKE, HEARTBEAT, METRICS_REPORT, PAIR_REQUEST, PAIR_RESPONSE ->
                     log.debug("Unexpected {} from server, ignored", message.getType());
+        }
+    }
+
+    /**
+     * Xử lý UNPAIR (PROTOCOL.md Mục 3.8 — thiết bị bị phụ huynh xóa khỏi
+     * danh sách quản lý): khôi phục mạng bình thường (resume — gỡ firewall
+     * rule + hosts block), xóa {@code client_identity.json} (mất deviceToken
+     * → hết quyền kết nối), báo listener (app quay về màn hình ghép đôi) rồi
+     * ngừng engine. Server đóng socket ngay sau khi gửi UNPAIR nên không cần
+     * chủ động ngắt — connectLoop sẽ không reconnect được vì stop() đã chạy.
+     */
+    private void handleUnpair(BaseMessage<?> message) {
+        String reason = message.getPayload() instanceof UnpairPayload unpair
+                ? unpair.reason() : UnpairPayload.DEFAULT_REASON;
+        log.warn("UNPAIR received: {} — restoring network and resetting identity", reason);
+
+        // 1. Khôi phục mạng: xóa firewall rule (PAUSED → ACTIVE) + gỡ hosts block.
+        if (actionDispatcher != null) {
+            try {
+                actionDispatcher.cleanup(); // resume network + cleanup notifier
+            } catch (RuntimeException e) {
+                log.error("UNPAIR cleanup (network restore) failed: {}", e.getMessage());
+            }
+        }
+        if (hostsFileManager != null) {
+            try {
+                hostsFileManager.clearBlocks(); // gỡ domains block
+            } catch (RuntimeException e) {
+                log.error("UNPAIR clear hosts blocks failed: {}", e.getMessage());
+            }
+        }
+
+        // 2. Xóa định danh bền vững — mất deviceToken → handshake sau bị từ chối.
+        if (identityManager != null) {
+            try {
+                java.nio.file.Files.deleteIfExists(identityManager.getIdentityFilePath());
+                log.warn("Identity file deleted (device unpaired): {}",
+                        identityManager.getIdentityFilePath());
+            } catch (Exception e) {
+                log.error("Cannot delete identity file {}: {}",
+                        identityManager.getIdentityFilePath(), e.getMessage());
+            }
+        }
+
+        // 3. Dừng engine — KHÔNG reconnect nữa (đã mất quyền kết nối).
+        stop();
+
+        // 4. Báo listener trên thread riêng — app quyết định quay về màn hình
+        // ghép đôi (không bao giờ block luồng đọc socket).
+        Runnable listener = unpairListener;
+        if (listener != null) {
+            Thread notify = new Thread(() -> {
+                try {
+                    listener.run();
+                } catch (RuntimeException e) {
+                    log.error("Unpair listener threw: {}", e.getMessage(), e);
+                }
+            }, "parental-client-unpair-notify");
+            notify.setDaemon(true);
+            notify.start();
         }
     }
 
@@ -787,6 +983,7 @@ public class TcpClientEngine implements AutoCloseable {
         connected.set(false);
         shutdownHeartbeatScheduler();
         shutdownMetricsScheduler();
+        shutdownActivityScheduler();
         Socket s = socket;
         socket = null;
         writer = null;

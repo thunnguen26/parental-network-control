@@ -20,10 +20,12 @@ import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.ProtocolParseException;
+import com.parental.common.protocol.payload.ActivityReportPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.PairRequestPayload;
 import com.parental.common.protocol.payload.PairResponsePayload;
+import com.parental.server.db.ActivityDao;
 import com.parental.server.db.ClientDao;
 import com.parental.server.db.ClientRecord;
 import com.parental.server.db.CommandLogDao;
@@ -77,20 +79,30 @@ public class ClientHandler implements Runnable {
     private final CommandLogDao commandLogDao;
     /** Ghép đôi (Identity Persistence) — nullable: null = chạy không database. */
     private final PairingDao pairingDao;
+    /** Nhật ký hoạt động (Activity Monitoring) — nullable: null = chạy không DB. */
+    private final ActivityDao activityDao;
 
     ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser) {
-        this(socket, sessionManager, parser, null, null, null, null);
+        this(socket, sessionManager, parser, null, null, null, null, null);
     }
 
     ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser,
                   ClientDao clientDao, MetricsDao metricsDao, CommandLogDao commandLogDao) {
-        this(socket, sessionManager, parser, clientDao, metricsDao, commandLogDao, null);
+        this(socket, sessionManager, parser, clientDao, metricsDao, commandLogDao, null, null);
     }
 
     /** Constructor đầy đủ (Device Pairing): kèm {@link PairingDao} cho PAIR_REQUEST. */
     ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser,
                   ClientDao clientDao, MetricsDao metricsDao, CommandLogDao commandLogDao,
                   PairingDao pairingDao) {
+        this(socket, sessionManager, parser, clientDao, metricsDao, commandLogDao,
+                pairingDao, null);
+    }
+
+    /** Constructor đầy đủ nhất (Activity Monitoring): kèm {@link ActivityDao}. */
+    ClientHandler(Socket socket, ClientSessionManager sessionManager, JsonProtocolParser parser,
+                  ClientDao clientDao, MetricsDao metricsDao, CommandLogDao commandLogDao,
+                  PairingDao pairingDao, ActivityDao activityDao) {
         this.socket = socket;
         this.sessionManager = sessionManager;
         this.parser = parser;
@@ -98,6 +110,7 @@ public class ClientHandler implements Runnable {
         this.metricsDao = metricsDao;
         this.commandLogDao = commandLogDao;
         this.pairingDao = pairingDao;
+        this.activityDao = activityDao;
     }
 
     @Override
@@ -240,6 +253,24 @@ public class ClientHandler implements Runnable {
                     } else {
                         log.debug("[{}] METRICS_REPORT with unexpected payload: {}",
                                 session.getClientId(), message.getPayload());
+                    }
+                }
+                case ACTIVITY_REPORT -> {
+                    // Activity Monitoring (Mục 3.9): mọi dữ liệu inbound là dấu
+                    // hiệu sống — làm mới heartbeat để sweeper không gỡ nhầm.
+                    session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
+                    if (message.getPayload() instanceof ActivityReportPayload activity) {
+                        session.setLastActivity(activity); // Dashboard đọc trực tiếp (realtime)
+                        // Lưu nhật ký vào DB (bảng activity_logs)
+                        if (activityDao != null) {
+                            activityDao.logActivity(session.getClientId(),
+                                    activity.activeProcessName(), activity.activeWindowTitle());
+                        }
+                        // Kích hoạt event listener (Dashboard cập nhật "Đang mở: ...")
+                        sessionManager.fireActivityReport(session, activity);
+                        log.debug("[{}] ACTIVITY_REPORT: {} — {}",
+                                session.getClientId(), activity.activeProcessName(),
+                                activity.activeWindowTitle());
                     }
                 }
                 case HANDSHAKE ->

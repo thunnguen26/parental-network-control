@@ -24,11 +24,13 @@ import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
+import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
@@ -39,6 +41,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.UnpairPayload;
+import com.parental.server.db.ActivityDao;
 import com.parental.server.db.ClientDao;
 import com.parental.server.db.ClientRecord;
 import com.parental.server.db.MetricsDao;
@@ -107,11 +111,21 @@ public class ServerDashboardFrame extends JFrame {
     // --- Bottom event log ---
     private JTextArea eventLogArea;
 
+    // --- Activity Monitoring (Mục 3.9) ---
+    private JTextField activeAppField;
+    private javax.swing.table.DefaultTableModel activityTableModel;
+    private JTable activityTable;
+    private java.time.Instant lastActivityTableRefresh = java.time.Instant.EPOCH;
+
     // --- Quick actions (Task 5.2) ---
     private JButton pauseButton;
     private JButton resumeButton;
     private JTextField alertMessageField;
     private JButton sendAlertButton;
+
+    // --- Quản trị thiết bị (Alias + Delete/Unpair) ---
+    private JButton deleteDeviceButton;
+    private JButton renameButton;
 
     private Timer uiRefresher;
 
@@ -154,6 +168,7 @@ public class ServerDashboardFrame extends JFrame {
         // Load danh sách thiết bị lần đầu + cập nhật trạng thái nút ngay
         reloadDeviceList();
         updateQuickActionButtons();
+        updateDeviceAdminButtons();
     }
 
     private JPanel buildSidebar() {
@@ -170,21 +185,147 @@ public class ServerDashboardFrame extends JFrame {
         scrollPane.setPreferredSize(new Dimension(300, 0));
         scrollPane.setBorder(BorderFactory.createTitledBorder("Thiết bị đang quản lý"));
 
-        // Nút ghép đôi thiết bị mới (Device Pairing) + dialog cấu hình chính sách (Task 5.2)
+        // Nút ghép đôi thiết bị mới (Device Pairing) + xóa thiết bị + dialog cấu hình chính sách (Task 5.2)
         JButton addDeviceButton = new JButton("\u2795 Th\u00EAm thi\u1EBFt b\u1ECB m\u1EDBi");
         addDeviceButton.addActionListener(event -> openPairingDialog());
+
+        deleteDeviceButton = new JButton("\uD83D\uDDD1 X\u00F3a thi\u1EBFt b\u1ECB");
+        deleteDeviceButton.setEnabled(false); // chỉ bật khi có thiết bị đang chọn
+        deleteDeviceButton.addActionListener(event -> deleteSelectedDevice());
 
         JButton policyButton = new JButton("\u2699 C\u1EA5u h\u00ECnh ch\u00EDnh s\u00E1ch...");
         policyButton.addActionListener(event -> openPolicyDialog());
 
-        JPanel buttonPanel = new JPanel(new GridLayout(2, 1, 0, 4));
+        JPanel buttonPanel = new JPanel(new GridLayout(3, 1, 0, 4));
         buttonPanel.add(addDeviceButton);
+        buttonPanel.add(deleteDeviceButton);
         buttonPanel.add(policyButton);
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(scrollPane, BorderLayout.CENTER);
         panel.add(buttonPanel, BorderLayout.SOUTH);
         return panel;
+    }
+
+    /**
+     * Xóa thiết bị đang chọn (Delete / Unpair Client): hộp thoại xác nhận →
+     * nếu đang ONLINE: gửi UNPAIR + ngắt phiên qua {@code TcpServerEngine.unpairClient}
+     * → xóa sạch DB (transaction) qua {@code ClientDao.deleteClient} → cập nhật
+     * JList + chi tiết + Event Log. Chạy trên SwingWorker (DAO blocking).
+     */
+    private void deleteSelectedDevice() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("\u26A0 Ch\u01B0a ch\u1ECDn thi\u1EBFt b\u1ECB n\u00E0o \u0111\u1EC3 x\u00F3a");
+            return;
+        }
+        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+        int choice = JOptionPane.showConfirmDialog(this,
+                "X\u00F3a thi\u1EBFt b\u1ECB '" + deviceDisplay + "' kh\u1ECFi danh s\u00E1ch qu\u1EA3n l\u00FD?\n\n"
+                        + "\u2022 Thi\u1EBFt b\u1ECB \u0111ang online s\u1EBD b\u1ECB ng\u1EAFt k\u1EBFt n\u1ED1i v\u00E0 quay v\u1EC1 m\u00E0n h\u00ECnh gh\u00E9p \u0111\u00F4i\n"
+                        + "\u2022 To\u00E0n b\u1ED9 d\u1EEF li\u1EC7u (h\u1EA1n m\u1EE9c, l\u1ECBch s\u1EED traffic, l\u1EC7nh) s\u1EBD b\u1ECB x\u00F3a s\u1EA1ch\n\n"
+                        + "Thao t\u00E1c kh\u00F4ng th\u1EC3 ho\u00E0n t\u1EA3c!",
+                "X\u00F3a thi\u1EBFt b\u1ECB",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        String clientId = selected.clientId();
+        boolean wasOnline = "ONLINE".equals(selected.status());
+        new javax.swing.SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                // 1. ONLINE → gửi UNPAIR + ngắt phiên (reason UNPAIRED)
+                if (wasOnline) {
+                    serverEngine.unpairClient(clientId, UnpairPayload.DEFAULT_REASON);
+                }
+                // 2. Xóa sạch DB (transaction: clients + rules + metrics + commands + domains)
+                return clientDao.deleteClient(clientId)
+                        ? "\uD83D\uDDD1 \u0110\u00E3 x\u00F3a thi\u1EBFt b\u1ECB '" + deviceDisplay
+                                + "' kh\u1ECFi danh s\u00E1ch qu\u1EA3n l\u00FD"
+                                + (wasOnline ? " (\u0111\u00E3 g\u1EEDi UNPAIR + ng\u1EAFt k\u1EBFt n\u1ED1i)" : " (offline)")
+                        : null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String successMessage = get();
+                    if (successMessage != null) {
+                        appendEventLog(successMessage);
+                    } else {
+                        appendEventLog("\u26A0 X\u00F3a thi\u1EBFt b\u1ECB th\u1EA5t b\u1EA1i (l\u1ED7i c\u01A1 s\u1EDF d\u1EEF li\u1EC7u)");
+                    }
+                } catch (Exception e) {
+                    appendEventLog("\u26A0 L\u1ED7i khi x\u00F3a thi\u1EBFt b\u1ECB: " + e.getMessage());
+                    log.error("Delete device failed: {}", e.getMessage(), e);
+                }
+                refreshNow();
+            }
+        }.execute();
+    }
+
+    /**
+     * Đặt biệt danh (Alias) cho thiết bị đang chọn: Input Dialog → lưu DB
+     * qua {@code ClientDao.updateAlias} (nhập r\u00F5ng → x\u00F3a biệt danh) →
+     * cập nhật danh sách + tiêu đề thông tin ngay trên EDT.
+     */
+    private void renameSelectedDevice() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("\u26A0 Ch\u01B0a ch\u1ECDn thi\u1EBFt b\u1ECB n\u00E0o \u0111\u1EC3 \u0111\u1ED5i t\u00EAn");
+            return;
+        }
+        String input = (String) JOptionPane.showInputDialog(this,
+                "Nh\u1EADp bi\u1EC7t danh m\u1EDBi cho '" + selected.deviceName() + "':\n"
+                        + "(\u0111\u1EC3 tr\u1ED1ng r\u1ED3i b\u1EA5m OK \u2192 x\u00F3a bi\u1EC7t danh, v\u1EC1 t\u00EAn m\u00E1y g\u1ED1c)",
+                "\u270F\uFE0F \u0110\u1ED5i t\u00EAn thi\u1EBFt b\u1ECB",
+                JOptionPane.PLAIN_MESSAGE, null, null,
+                selected.alias() != null ? selected.alias() : selected.deviceName());
+        if (input == null) {
+            return; // người dùng bấm Cancel — không đổi gì
+        }
+        String newAlias = input.trim();
+        String clientId = selected.clientId();
+        String deviceName = selected.deviceName();
+
+        new javax.swing.SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                boolean saved = clientDao.updateAlias(clientId, newAlias);
+                if (saved) {
+                    clientDao.getAllClients().stream()
+                            .filter(record -> clientId.equals(record.clientId()))
+                            .findFirst()
+                            .ifPresent(updated -> latestRecord.set(updated));
+                }
+                return saved ? newAlias : null;
+            }
+
+            private final java.util.concurrent.atomic.AtomicReference<ClientRecord> latestRecord
+                    = new java.util.concurrent.atomic.AtomicReference<>();
+
+            @Override
+            protected void done() {
+                try {
+                    String savedAlias = get();
+                    if (savedAlias == null) {
+                        appendEventLog("\u26A0 Kh\u00F4ng l\u01B0u \u0111\u01B0\u1EE3c bi\u1EC7t danh (thi\u1EBFt b\u1ECB kh\u00F4ng t\u1ED3n t\u1EA1i trong DB)");
+                        return;
+                    }
+                    appendEventLog(savedAlias.isEmpty()
+                            ? "\u270F\uFE0F \u0110\u00E3 x\u00F3a bi\u1EC7t danh c\u1EE7a '" + deviceName + "' — v\u1EC1 t\u00EAn m\u00E1y g\u1ED1c"
+                            : "\u270F\uFE0F \u0110\u1EB7t bi\u1EC7t danh '" + savedAlias + "' cho thi\u1EBFt b\u1ECB '" + deviceName + "'");
+                } catch (Exception e) {
+                    appendEventLog("\u26A0 L\u1ED7i khi \u0111\u1ED5i t\u00EAn: " + e.getMessage());
+                }
+                refreshNow(); // cập nhật JList + chi tiết ngay trên EDT
+            }
+        }.execute();
     }
 
     /**
@@ -303,6 +444,11 @@ public class ServerDashboardFrame extends JFrame {
         osField.setEditable(false);
         sessionDurationField.setEditable(false);
 
+        // Nút Đổi tên đặt ngay cạnh trường Tên máy
+        renameButton = new JButton("\u270F\uFE0F \u0110\u1ED5i t\u00EAn");
+        renameButton.addActionListener(event -> renameSelectedDevice());
+        renameButton.setEnabled(false); // bật khi có thiết bị đang chọn
+
         JPanel infoPanel = new JPanel(new GridBagLayout());
         infoPanel.setBorder(BorderFactory.createTitledBorder("Thông tin thiết bị"));
         GridBagConstraints gbc = new GridBagConstraints();
@@ -316,6 +462,9 @@ public class ServerDashboardFrame extends JFrame {
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         infoPanel.add(deviceNameField, gbc);
+        gbc.gridx = 2;
+        gbc.weightx = 0;
+        infoPanel.add(renameButton, gbc);
 
         gbc.gridx = 0;
         gbc.gridy = 1;
@@ -384,12 +533,42 @@ public class ServerDashboardFrame extends JFrame {
         rulesGbc.gridy = 3;
         rulesPanel.add(usageBar, rulesGbc);
 
+        // --- Hoạt động tức thời (Activity Monitoring — Mục 3.9) ---
+        JPanel activityPanel = new JPanel(new BorderLayout(8, 0));
+        activityPanel.setBorder(BorderFactory.createTitledBorder("Hoạt động người dùng"));
+        activeAppField = new JTextField("—");
+        activeAppField.setEditable(false);
+        activeAppField.setHorizontalAlignment(JTextField.CENTER);
+        activeAppField.setFont(activeAppField.getFont().deriveFont(Font.BOLD, 13f));
+        activityPanel.add(activeAppField, BorderLayout.CENTER);
+
+        // --- Nhật ký hoạt động gần đây (JTable 10 bản ghi mới nhất) ---
+        activityTableModel = new javax.swing.table.DefaultTableModel(
+                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false; // chỉ đọc
+            }
+        };
+        activityTable = new JTable(activityTableModel);
+        activityTable.getColumnModel().getColumn(0).setPreferredWidth(90);
+        activityTable.getColumnModel().getColumn(1).setPreferredWidth(120);
+        activityTable.getColumnModel().getColumn(2).setPreferredWidth(420);
+        activityTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
+        JScrollPane activityScroll = new JScrollPane(activityTable);
+        activityScroll.setPreferredSize(new Dimension(0, 130));
+        activityScroll.setBorder(BorderFactory.createTitledBorder("Nhật ký hoạt động gần đây (10 bản ghi)"));
+
         JPanel center = new JPanel(new BorderLayout(0, 8));
         center.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
         center.add(infoPanel, BorderLayout.NORTH);
         JPanel middle = new JPanel(new BorderLayout());
         middle.add(cardsPanel, BorderLayout.NORTH);
         middle.add(rulesPanel, BorderLayout.CENTER);
+        JPanel activityZone = new JPanel(new BorderLayout(0, 6));
+        activityZone.add(activityPanel, BorderLayout.NORTH);
+        activityZone.add(activityScroll, BorderLayout.CENTER);
+        middle.add(activityZone, BorderLayout.SOUTH);
         center.add(middle, BorderLayout.CENTER);
         center.add(buildQuickActionsPanel(), BorderLayout.SOUTH);
         return center;
@@ -420,7 +599,11 @@ public class ServerDashboardFrame extends JFrame {
         return panel;
     }
 
-    /** Renderer dòng thiết bị: icon ● Online/Offline + tên máy + IP + trạng thái. */
+    /**
+     * Renderer dòng thiết bị: icon ● Online/Offline + tên máy + IP + trạng thái.
+     * <p>Có alias: {@code ● [Biệt danh] (Tên gốc) — Trạng thái}; không alias →
+     * giữ nguyên định dạng cũ {@code ● Tên máy (IP) — Trạng thái}.</p>
+     */
     private static final class DeviceCellRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index,
@@ -430,8 +613,14 @@ public class ServerDashboardFrame extends JFrame {
                 boolean online = "ONLINE".equals(record.status());
                 String icon = online ? "●" : "○";
                 String statusText = online ? "Online" : "Offline";
-                label.setText(String.format("%s %s (%s) — %s", icon, record.deviceName(),
-                        record.ipAddress(), statusText));
+                boolean hasAlias = record.alias() != null && !record.alias().isBlank();
+                if (hasAlias) {
+                    label.setText(String.format("%s [%s] (%s) — %s", icon, record.alias(),
+                            record.deviceName(), statusText));
+                } else {
+                    label.setText(String.format("%s %s (%s) — %s", icon, record.deviceName(),
+                            record.ipAddress(), statusText));
+                }
                 label.setForeground(online ? new Color(0, 128, 0) : Color.GRAY);
             }
             return component;
@@ -458,6 +647,16 @@ public class ServerDashboardFrame extends JFrame {
                 SwingUtilities.invokeLater(() -> {
                     appendEventLog("Client '" + clientId + "' đã ngắt kết nối (" + reason + ")");
                     reloadDeviceList();
+                });
+            }
+
+            @Override
+            public void onActivityReport(ClientSession session,
+                    com.parental.common.protocol.payload.ActivityReportPayload activity) {
+                // Activity Monitoring (Mục 3.9): cập nhật "Đang mở" tức thời +
+                // nhắc refresher nạp lại bảng nhật ký (DB đã có bản ghi mới).
+                SwingUtilities.invokeLater(() -> {
+                    lastActivityTableRefresh = java.time.Instant.EPOCH; // buộc reload bảng
                 });
             }
         });
@@ -500,6 +699,7 @@ public class ServerDashboardFrame extends JFrame {
             }
         }
         updateQuickActionButtons();
+        updateDeviceAdminButtons();
     }
 
     private void refreshCenterPanel() {
@@ -523,8 +723,11 @@ public class ServerDashboardFrame extends JFrame {
         }
         String clientId = selected.clientId();
 
-        // Thông tin thiết bị
-        deviceNameField.setText(orDash(selected.deviceName()));
+        // Thông tin thiết bị (có alias → hiển thị "alias (tên gốc)"; không → tên gốc)
+        boolean hasAlias = selected.alias() != null && !selected.alias().isBlank();
+        deviceNameField.setText(hasAlias
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : orDash(selected.deviceName()));
         macField.setText(orDash(selected.macAddress()));
         osField.setText(orDash(selected.osVersion()));
 
@@ -539,6 +742,25 @@ public class ServerDashboardFrame extends JFrame {
             downloadSpeedField.setText("—");
             uploadSpeedField.setText("—");
             sessionDurationField.setText("—");
+        }
+
+        // Hoạt động tức thời từ phiên (Activity Monitoring — Mục 3.9)
+        com.parental.common.protocol.payload.ActivityReportPayload activity =
+                session != null ? session.getLastActivity() : null;
+        if (activity != null && !activity.activeProcessName().isEmpty()) {
+            String title = activity.activeWindowTitle();
+            activeAppField.setText(activity.activeProcessName()
+                    + (title.isEmpty() ? "" : " — " + title));
+        } else {
+            activeAppField.setText("—");
+        }
+
+        // Nhật ký hoạt động gần đây (reload khi đổi thiết bị hoặc có bản ghi mới,
+        // tối đa 1 lần/2s để không đập DB liên tục)
+        java.time.Instant now = java.time.Instant.now();
+        if (java.time.Duration.between(lastActivityTableRefresh, now).getSeconds() >= 2) {
+            lastActivityTableRefresh = now;
+            reloadActivityTable(clientId);
         }
 
         // Tổng dung lượng hôm nay (DB)
@@ -585,10 +807,32 @@ public class ServerDashboardFrame extends JFrame {
         downloadSpeedField.setText("—");
         uploadSpeedField.setText("—");
         todayTrafficField.setText("—");
+        activeAppField.setText("—");
+        activityTableModel.setRowCount(0); // xóa trắng nhật ký
         quotaBar.setValue(0);
         quotaBar.setString("Chưa chọn thiết bị");
         usageBar.setValue(0);
         usageBar.setString("Chưa chọn thiết bị");
+    }
+
+    /** Nạp 10 bản ghi hoạt động gần nhất của client vào JTable (EDT, DAO blocking nhẹ). */
+    private void reloadActivityTable(String clientId) {
+        if (serverEngine.getActivityDao() == null) {
+            return; // chạy không DB — không có nhật ký
+        }
+        List<ActivityDao.ActivityRecord> records =
+                serverEngine.getActivityDao().getRecentActivities(clientId, 10);
+        activityTableModel.setRowCount(0);
+        java.time.format.DateTimeFormatter timeFormat =
+                java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+                        .withZone(java.time.ZoneId.systemDefault());
+        for (ActivityDao.ActivityRecord record : records) {
+            activityTableModel.addRow(new Object[] {
+                    record.recordedAt() != null ? timeFormat.format(record.recordedAt()) : "—",
+                    orDash(record.processName()),
+                    orDash(record.windowTitle())
+            });
+        }
     }
 
     private static String orDash(String text) {
@@ -622,6 +866,17 @@ public class ServerDashboardFrame extends JFrame {
                     refreshNow();
                 });
         dialog.setVisible(true);
+    }
+
+    /** Bật/tắt nút Xóa + Đổi tên theo việc có thiết bị đang chọn hay không. */
+    private void updateDeviceAdminButtons() {
+        boolean hasSelection = deviceList != null && deviceList.getSelectedValue() != null;
+        if (deleteDeviceButton != null) {
+            deleteDeviceButton.setEnabled(hasSelection);
+        }
+        if (renameButton != null) {
+            renameButton.setEnabled(hasSelection);
+        }
     }
 
     /** Reload danh sách thiết bị + chi tiết ngay lập tức (gọi từ ngoài EDT-safe). */

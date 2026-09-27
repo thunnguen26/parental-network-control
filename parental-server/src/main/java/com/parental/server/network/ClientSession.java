@@ -44,6 +44,9 @@ public class ClientSession {
     /** Metrics traffic gần nhất nhận từ client (METRICS_REPORT — Task 3.1). */
     private volatile MetricsPayload lastMetrics;
 
+    /** Hoạt động gần nhất (ACTIVITY_REPORT — Mục 3.9): "đang mở gì" cho Dashboard. */
+    private volatile com.parental.common.protocol.payload.ActivityReportPayload lastActivity;
+
     public ClientSession(String clientId, Socket socket,
                          BufferedReader reader, PrintWriter writer, JsonProtocolParser parser) {
         this.clientId = clientId;
@@ -149,6 +152,16 @@ public class ClientSession {
 
     public void setLastMetrics(MetricsPayload lastMetrics) {
         this.lastMetrics = lastMetrics;
+    }
+
+    /** Hoạt động gần nhất (null nếu client chưa ever gửi ACTIVITY_REPORT). */
+    public com.parental.common.protocol.payload.ActivityReportPayload getLastActivity() {
+        return lastActivity;
+    }
+
+    public void setLastActivity(
+            com.parental.common.protocol.payload.ActivityReportPayload lastActivity) {
+        this.lastActivity = lastActivity;
     }
 
     public long getLastHeartbeatTimestamp() {

@@ -29,6 +29,8 @@ public final class ClientConfig {
     public static final long DEFAULT_HEARTBEAT_TIMEOUT_MS = 15_000;
     /** Chu kỳ gửi METRICS_REPORT mặc định (Task 3.1). */
     public static final long DEFAULT_METRICS_INTERVAL_MS = 5_000;
+    /** Chu kỳ gửi ACTIVITY_REPORT mặc định (Activity Monitoring — PROTOCOL.md Mục 3.9). */
+    public static final long DEFAULT_ACTIVITY_INTERVAL_MS = 10_000;
     public static final long DEFAULT_INITIAL_RECONNECT_DELAY_MS = 1_000;
     public static final long DEFAULT_MAX_RECONNECT_DELAY_MS = 30_000;
 
@@ -40,6 +42,8 @@ public final class ClientConfig {
     private final long heartbeatIntervalMs;
     private final long heartbeatTimeoutMs;
     private final long metricsIntervalMs;
+    /** Chu kỳ gửi ACTIVITY_REPORT (0 = tắt giám sát hoạt động). */
+    private final long activityIntervalMs;
     private final long initialReconnectDelayMs;
     private final long maxReconnectDelayMs;
 
@@ -51,6 +55,7 @@ public final class ClientConfig {
         this.heartbeatIntervalMs = builder.heartbeatIntervalMs;
         this.heartbeatTimeoutMs = builder.heartbeatTimeoutMs;
         this.metricsIntervalMs = builder.metricsIntervalMs;
+        this.activityIntervalMs = builder.activityIntervalMs;
         this.initialReconnectDelayMs = builder.initialReconnectDelayMs;
         this.maxReconnectDelayMs = builder.maxReconnectDelayMs;
     }
@@ -99,6 +104,14 @@ public final class ClientConfig {
         return metricsIntervalMs;
     }
 
+    /**
+     * Chu kỳ gửi gói ACTIVITY_REPORT (mặc định
+     * {@value #DEFAULT_ACTIVITY_INTERVAL_MS} ms; 0 = tắt giám sát hoạt động).
+     */
+    public long getActivityIntervalMs() {
+        return activityIntervalMs;
+    }
+
     public long getInitialReconnectDelayMs() {
         return initialReconnectDelayMs;
     }
@@ -119,6 +132,7 @@ public final class ClientConfig {
                 && heartbeatIntervalMs == other.heartbeatIntervalMs
                 && heartbeatTimeoutMs == other.heartbeatTimeoutMs
                 && metricsIntervalMs == other.metricsIntervalMs
+                && activityIntervalMs == other.activityIntervalMs
                 && initialReconnectDelayMs == other.initialReconnectDelayMs
                 && maxReconnectDelayMs == other.maxReconnectDelayMs
                 && Objects.equals(serverHost, other.serverHost)
@@ -129,7 +143,7 @@ public final class ClientConfig {
     @Override
     public int hashCode() {
         return Objects.hash(serverHost, serverPort, clientId, deviceToken,
-                heartbeatIntervalMs, heartbeatTimeoutMs, metricsIntervalMs,
+                heartbeatIntervalMs, heartbeatTimeoutMs, metricsIntervalMs, activityIntervalMs,
                 initialReconnectDelayMs, maxReconnectDelayMs);
     }
 
@@ -140,6 +154,7 @@ public final class ClientConfig {
                 + (deviceToken == null ? "null" : "***") + ", heartbeatIntervalMs=" + heartbeatIntervalMs
                 + ", heartbeatTimeoutMs=" + heartbeatTimeoutMs
                 + ", metricsIntervalMs=" + metricsIntervalMs
+                + ", activityIntervalMs=" + activityIntervalMs
                 + ", initialReconnectDelayMs=" + initialReconnectDelayMs
                 + ", maxReconnectDelayMs=" + maxReconnectDelayMs + '}';
     }
@@ -154,6 +169,7 @@ public final class ClientConfig {
         private long heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
         private long heartbeatTimeoutMs = DEFAULT_HEARTBEAT_TIMEOUT_MS;
         private long metricsIntervalMs = DEFAULT_METRICS_INTERVAL_MS;
+        private long activityIntervalMs = DEFAULT_ACTIVITY_INTERVAL_MS;
         private long initialReconnectDelayMs = DEFAULT_INITIAL_RECONNECT_DELAY_MS;
         private long maxReconnectDelayMs = DEFAULT_MAX_RECONNECT_DELAY_MS;
 
@@ -208,6 +224,19 @@ public final class ClientConfig {
                 throw new IllegalArgumentException("metricsIntervalMs must be positive, got: " + metricsIntervalMs);
             }
             this.metricsIntervalMs = metricsIntervalMs;
+            return this;
+        }
+
+        /**
+         * Chu kỳ gửi ACTIVITY_REPORT (ms). 0 = TẮT giám sát hoạt động (test
+         * headless dùng để không spawn PowerShell); giá trị dương phải > 0.
+         */
+        public Builder activityIntervalMs(long activityIntervalMs) {
+            if (activityIntervalMs < 0) {
+                throw new IllegalArgumentException("activityIntervalMs must be >= 0 (0 = disabled), got: "
+                        + activityIntervalMs);
+            }
+            this.activityIntervalMs = activityIntervalMs;
             return this;
         }
 

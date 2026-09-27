@@ -164,6 +164,53 @@ public class ClientDao {
         }
     }
 
+    /**
+     * Đặt/xóa biệt danh cho thiết bị (Alias).
+     *
+     * @param clientId định danh client
+     * @param alias    biệt danh mới; {@code null} hoặc blank → XÓA biệt danh
+     *                 (về lại hiển thị tên máy gốc); quá 100 ký tự bị cắt
+     * @return {@code true} nếu ghi thành công (client chưa tồn tại → false)
+     */
+    public boolean updateAlias(String clientId, String alias) {
+        if (clientId == null || clientId.isBlank()) {
+            return false;
+        }
+        String normalized = normalizeAlias(alias);
+        String sql = "UPDATE clients SET alias = ? WHERE client_id = ?";
+        try (Connection connection = database.newConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            // normalized null = xóa biệt danh (set NULL)
+            if (normalized == null) {
+                statement.setNull(1, java.sql.Types.VARCHAR);
+            } else {
+                statement.setString(1, normalized);
+            }
+            statement.setString(2, clientId);
+            int updated = statement.executeUpdate();
+            if (updated > 0) {
+                log.info("Client [{}] alias updated: {}", clientId,
+                        normalized == null ? "(cleared)" : "'" + normalized + "'");
+            }
+            return updated > 0;
+        } catch (SQLException e) {
+            log.error("Failed to update alias for client [{}]: {}", clientId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Chuẩn hóa alias: trim + cắt 100 ký tự; rỗng → null (xóa alias). */
+    static String normalizeAlias(String alias) {
+        if (alias == null) {
+            return null;
+        }
+        String trimmed = alias.trim();
+        if (trimmed.isEmpty()) {
+            return null; // nhập rỗng = xóa biệt danh
+        }
+        return trimmed.length() > 100 ? trimmed.substring(0, 100) : trimmed;
+    }
+
     /** Cập nhật last_seen_at = hiện tại (dùng khi nhận HEARTBEAT nếu cần). */
     public boolean touchLastSeen(String clientId) {
         String sql = "UPDATE clients SET last_seen_at = CURRENT_TIMESTAMP WHERE client_id = ?";
@@ -180,20 +227,13 @@ public class ClientDao {
     /** Lấy bản ghi client (null nếu không tồn tại). */
     public ClientRecord get(String clientId) {
         String sql = "SELECT client_id, device_name, device_type, os_version, "
-                + "ip_address, mac_address, status FROM clients WHERE client_id = ?";
+                + "ip_address, mac_address, status, alias FROM clients WHERE client_id = ?";
         try (Connection connection = database.newConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, clientId);
             try (ResultSet rs = statement.executeQuery()) {
                 if (rs.next()) {
-                    return new ClientRecord(
-                            rs.getString("client_id"),
-                            rs.getString("device_name"),
-                            rs.getString("device_type"),
-                            rs.getString("os_version"),
-                            rs.getString("ip_address"),
-                            rs.getString("mac_address"),
-                            rs.getString("status"));
+                    return mapRecord(rs);
                 }
                 return null;
             }
@@ -230,30 +270,111 @@ public class ClientDao {
 
     /**
      * Toàn bộ client trong DB (ONLINE đứng trước, cùng trạng thái xếp theo
-     * tên máy) — dùng cho Dashboard GUI (Task 5.1). Danh sách rỗng nếu lỗi.
+     * biệt danh nếu có rồi tên máy) — dùng cho Dashboard GUI (Task 5.1).
+     * Danh sách rỗng nếu lỗi.
      */
     public List<ClientRecord> getAllClients() {
         String sql = "SELECT client_id, device_name, device_type, os_version, "
-                + "ip_address, mac_address, status FROM clients "
-                + "ORDER BY CASE WHEN status = 'ONLINE' THEN 0 ELSE 1 END, device_name";
+                + "ip_address, mac_address, status, alias FROM clients "
+                + "ORDER BY CASE WHEN status = 'ONLINE' THEN 0 ELSE 1 END, "
+                + "COALESCE(alias, device_name)";
         List<ClientRecord> clients = new ArrayList<>();
         try (Connection connection = database.newConnection();
              Statement statement = connection.createStatement();
              ResultSet rs = statement.executeQuery(sql)) {
             while (rs.next()) {
-                clients.add(new ClientRecord(
-                        rs.getString("client_id"),
-                        rs.getString("device_name"),
-                        rs.getString("device_type"),
-                        rs.getString("os_version"),
-                        rs.getString("ip_address"),
-                        rs.getString("mac_address"),
-                        rs.getString("status")));
+                clients.add(mapRecord(rs));
             }
             return clients;
         } catch (SQLException e) {
             log.error("Failed to list clients: {}", e.getMessage());
             return clients;
+        }
+    }
+
+    /** Map 1 dòng ResultSet → ClientRecord (đọc alias nullable). */
+    private static ClientRecord mapRecord(ResultSet rs) throws SQLException {
+        return new ClientRecord(
+                rs.getString("client_id"),
+                rs.getString("device_name"),
+                rs.getString("device_type"),
+                rs.getString("os_version"),
+                rs.getString("ip_address"),
+                rs.getString("mac_address"),
+                rs.getString("status"),
+                rs.getString("alias"));
+    }
+
+    /**
+     * Xóa SẠCH client khỏi hệ thống (Delete / Unpair Client):
+     * dòng {@code clients} + toàn bộ dữ liệu liên quan trong
+     * {@code metrics_logs}, {@code client_rules}, {@code blocked_domains},
+     * {@code command_logs} trong MỘT TRANSACTION (atomic — all-or-nothing).
+     *
+     * <p>Ghi chú: schema đặt {@code ON DELETE CASCADE} cho các bảng con nên
+     * DELETE từ clients đã tự cascade; tuy nhiên khối transaction này vẫn
+     * xóa tường minh từng bảng con TRƯỚC khi xóa clients để hành vi không phụ
+     * thuộc pragma foreign_keys per-connection (connection DAO mới luôn bật
+     * {@code PRAGMA foreign_keys=ON} nhưng giữ defensive) và rollback hoàn
+     * toàn nếu bất kỳ bước nào lỗi.</p>
+     *
+     * @return {@code true} nếu client tồn tại và xóa thành công toàn bộ
+     */
+    public boolean deleteClient(String clientId) {
+        if (clientId == null || clientId.isBlank()) {
+            return false;
+        }
+        Connection connection = null;
+        try {
+            connection = database.newConnection();
+            connection.setAutoCommit(false); // BEGIN — atomic
+            try (PreparedStatement metrics = connection.prepareStatement(
+                    "DELETE FROM metrics_logs WHERE client_id = ?");
+                 PreparedStatement domains = connection.prepareStatement(
+                         "DELETE FROM blocked_domains WHERE client_id = ?");
+                 PreparedStatement rules = connection.prepareStatement(
+                         "DELETE FROM client_rules WHERE client_id = ?");
+                 PreparedStatement commands = connection.prepareStatement(
+                         "DELETE FROM command_logs WHERE client_id = ?");
+                 PreparedStatement activities = connection.prepareStatement(
+                         "DELETE FROM activity_logs WHERE client_id = ?");
+                 PreparedStatement client = connection.prepareStatement(
+                         "DELETE FROM clients WHERE client_id = ?")) {
+                for (PreparedStatement statement : List.of(metrics, domains, rules, commands,
+                        activities, client)) {
+                    statement.setString(1, clientId);
+                }
+                metrics.executeUpdate();
+                domains.executeUpdate();
+                rules.executeUpdate();
+                commands.executeUpdate();
+                activities.executeUpdate();
+                int deleted = client.executeUpdate();
+                connection.commit();
+                if (deleted > 0) {
+                    log.info("Client [{}] deleted with all related data (transaction committed)", clientId);
+                }
+                return deleted > 0;
+            }
+        } catch (SQLException e) {
+            log.error("Failed to delete client [{}]: {} — rolling back", clientId, e.getMessage());
+            if (connection != null) {
+                try {
+                    connection.rollback();
+                } catch (SQLException rollbackError) {
+                    log.error("Rollback failed for client [{}]: {}", clientId, rollbackError.getMessage());
+                }
+            }
+            return false;
+        } finally {
+            if (connection != null) {
+                try {
+                    connection.setAutoCommit(true);
+                    connection.close();
+                } catch (SQLException e) {
+                    log.debug("Connection close ignored: {}", e.getMessage());
+                }
+            }
         }
     }
 

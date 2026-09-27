@@ -124,15 +124,17 @@ public class DatabaseManager {
                         status        VARCHAR NOT NULL DEFAULT 'OFFLINE',
                         device_token  VARCHAR,
                         is_paired     BOOLEAN NOT NULL DEFAULT 0,
+                        alias         VARCHAR(100),
                         created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         last_seen_at  TIMESTAMP
                     )
                     """);
 
-            // Migration cho DB tạo từ Task 4.1 (chưa có cột token/paired).
+            // Migration cho DB tạo từ Task 4.1 (chưa có cột token/paired/alias).
             addColumnIfMissing(connection, "clients", "device_token", "VARCHAR");
             addColumnIfMissing(connection, "clients", "is_paired",
                     "BOOLEAN NOT NULL DEFAULT 0");
+            addColumnIfMissing(connection, "clients", "alias", "VARCHAR(100)");
 
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS pairing_sessions (
@@ -193,10 +195,25 @@ public class DatabaseManager {
                     )
                     """);
 
+            // Activity Monitoring (PROTOCOL.md Mục 3.9): nhật ký hoạt động —
+            // mỗi dòng = cửa sổ active của client tại 1 thời điểm.
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS activity_logs (
+                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                        client_id     VARCHAR(36) NOT NULL,
+                        process_name  VARCHAR(100),
+                        window_title  TEXT,
+                        recorded_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (client_id) REFERENCES clients(client_id) ON DELETE CASCADE
+                    )
+                    """);
+
             statement.execute("CREATE INDEX IF NOT EXISTS idx_metrics_client_time "
                     + "ON metrics_logs(client_id, recorded_at)");
             statement.execute("CREATE INDEX IF NOT EXISTS idx_metrics_recorded_at "
                     + "ON metrics_logs(recorded_at)");
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_activity_client_time "
+                    + "ON activity_logs(client_id, recorded_at)");
         }
     }
 

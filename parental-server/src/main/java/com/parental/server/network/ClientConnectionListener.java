@@ -20,4 +20,14 @@ public interface ClientConnectionListener {
      */
     default void onClientDisconnected(String clientId, DisconnectReason reason) {
     }
+
+    /**
+     * Client vừa gửi báo cáo hoạt động (ACTIVITY_REPORT — PROTOCOL.md Mục
+     * 3.9, Activity Monitoring): Dashboard dùng để cập nhật "Đang mở: ..."
+     * tức thời. Callback chạy trên handler thread — phải nhanh, không block;
+     * UI tự bọc {@code SwingUtilities.invokeLater}.
+     */
+    default void onActivityReport(ClientSession session,
+            com.parental.common.protocol.payload.ActivityReportPayload activity) {
+    }
 }

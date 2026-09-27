@@ -15,12 +15,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import com.parental.common.protocol.payload.ActivityReportPayload;
 import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.PairRequestPayload;
 import com.parental.common.protocol.payload.PairResponsePayload;
+import com.parental.common.protocol.payload.UnpairPayload;
 
 @DisplayName("JsonProtocolParser (LDJSON Protocol Engine)")
 class JsonProtocolParserTest {
@@ -145,6 +147,59 @@ class JsonProtocolParserTest {
             assertEquals(MessageType.PAIR_RESPONSE, received.getType());
             assertInstanceOf(PairResponsePayload.class, received.getPayload());
             assertEquals(payload, received.getPayload());
+        }
+
+        @Test
+        @DisplayName("UNPAIR round-trip: reason được giữ nguyên (Mục 3.8)")
+        void unpairRoundTrip() throws Exception {
+            UnpairPayload payload = new UnpairPayload("Thiết bị đã bị xóa khỏi danh sách quản lý");
+            BaseMessage<UnpairPayload> sent =
+                    BaseMessage.of(MessageType.UNPAIR, "server", payload);
+
+            BaseMessage<?> received = parser.fromLine(parser.toLine(sent));
+
+            assertEquals(MessageType.UNPAIR, received.getType());
+            assertInstanceOf(UnpairPayload.class, received.getPayload());
+            assertEquals(payload, received.getPayload());
+        }
+
+        @Test
+        @DisplayName("UNPAIR payload rỗng → lenient default (reason null), không ném")
+        void unpairEmptyPayloadIsLenient() throws Exception {
+            BaseMessage<?> received = parser.fromLine(
+                    "{\"type\":\"UNPAIR\",\"clientId\":\"server\",\"timestamp\":1,\"payload\":{}}\n");
+            assertEquals(MessageType.UNPAIR, received.getType());
+            assertInstanceOf(UnpairPayload.class, received.getPayload());
+            assertNull(((UnpairPayload) received.getPayload()).reason());
+        }
+
+        @Test
+        @DisplayName("ACTIVITY_REPORT round-trip: title/process/topProcesses/timestamp (Mục 3.9)")
+        void activityReportRoundTrip() throws Exception {
+            ActivityReportPayload payload = new ActivityReportPayload(
+                    "Giải bài tập Hóa 12 | VietJack - Google Chrome", "chrome.exe",
+                    List.of("chrome.exe", "notepad.exe", "explorer.exe"), 1_727_400_000_000L);
+            BaseMessage<ActivityReportPayload> sent =
+                    BaseMessage.of(MessageType.ACTIVITY_REPORT, "client-01", payload);
+
+            BaseMessage<?> received = parser.fromLine(parser.toLine(sent));
+
+            assertEquals(MessageType.ACTIVITY_REPORT, received.getType());
+            assertInstanceOf(ActivityReportPayload.class, received.getPayload());
+            assertEquals(payload, received.getPayload());
+        }
+
+        @Test
+        @DisplayName("ACTIVITY_REPORT thiếu field → lenient default (null/0/rỗng), không ném")
+        void activityReportLenientDefaults() throws Exception {
+            BaseMessage<?> received = parser.fromLine(
+                    "{\"type\":\"ACTIVITY_REPORT\",\"clientId\":\"c1\",\"timestamp\":1,"
+                            + "\"payload\":{}}\n");
+            assertEquals(MessageType.ACTIVITY_REPORT, received.getType());
+            ActivityReportPayload payload = assertInstanceOf(ActivityReportPayload.class, received.getPayload());
+            assertNull(payload.activeWindowTitle());
+            assertNull(payload.activeProcessName());
+            assertEquals(0L, payload.timestamp());
         }
 
         @Test

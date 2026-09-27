@@ -6,12 +6,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.parental.common.protocol.payload.ActivityReportPayload;
 import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.PairRequestPayload;
 import com.parental.common.protocol.payload.PairResponsePayload;
+import com.parental.common.protocol.payload.UnpairPayload;
 
 /**
  * Protocol Engine của giao thức LDJSON (khớp Mục 1-3 của
@@ -74,9 +76,9 @@ public final class JsonProtocolParser {
      * <ul>     * <li>HANDSHAKE → {@link HandshakePayload}</li>
      *   <li>METRICS_REPORT → {@link MetricsPayload}</li>
      *   <li>COMMAND → {@link CommandPayload}</li>
-     *   <li>CONFIG_SYNC → {@link ConfigSyncPayload}</li>
-     *   <li>PAIR_REQUEST → {@link PairRequestPayload}</li>
-     *   <li>PAIR_RESPONSE → {@link PairResponsePayload}</li>
+     *   <li>CONFIG_SYNC → {@link ConfigSyncPayload}</li>     * <li>PAIR_REQUEST → {@link PairRequestPayload}</li>
+     *   <li>PAIR_RESPONSE → {@link PairResponsePayload}</li>     * <li>UNPAIR → {@link UnpairPayload}</li>
+     *   <li>ACTIVITY_REPORT → {@link ActivityReportPayload}</li>
      *   <li>HEARTBEAT / ACK → {@link Map} rỗng (payload không có field)</li>
      * </ul>
      */
@@ -137,6 +139,8 @@ public final class JsonProtocolParser {
             case CONFIG_SYNC -> ConfigSyncPayload.class;
             case PAIR_REQUEST -> PairRequestPayload.class;
             case PAIR_RESPONSE -> PairResponsePayload.class;
+            case UNPAIR -> UnpairPayload.class;
+            case ACTIVITY_REPORT -> ActivityReportPayload.class;
             case HEARTBEAT, ACK -> Map.class; // payload rỗng: {}
         };
 
