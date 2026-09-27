@@ -110,6 +110,33 @@ class ActivityDaoTest {
     }
 
     @Test
+    @DisplayName("deleteAll: xóa TOÀN BỘ nhật ký của client, trả số dòng; cách ly client khác")
+    void deleteAllRemovesOnlyTargetClientRows() {
+        activityDao.logActivity("client-01", "chrome.exe", "Tab 1");
+        activityDao.logActivity("client-01", "msedge.exe", "Tab 2");
+        activityDao.logActivity("client-01", "notepad.exe", "Ghi chú");
+        clientDao.upsertClient(new ClientRecord(
+                "client-02", "PC 2", "DESKTOP", "Windows 11", "127.0.0.2", "AB", "ONLINE"));
+        activityDao.logActivity("client-02", "chrome.exe", "Của client khác");
+
+        int deleted = activityDao.deleteAll("client-01");
+
+        assertEquals(3, deleted, "Đúng 3 bản ghi của client-01 bị xóa");
+        assertEquals(0, activityDao.countAll("client-01"), "client-01 sạch bóng");
+        assertEquals(1, activityDao.countAll("client-02"),
+                "Dữ liệu client khác phải được GIỮ NGUYÊN (cách ly)");
+    }
+
+    @Test
+    @DisplayName("deleteAll: client lạ/null/blank → 0, không ném exception (defensive)")
+    void deleteAllDefensiveEdges() {
+        assertEquals(0, activityDao.deleteAll("ghost-client"), "Client không tồn tại → 0 dòng");
+        assertEquals(0, activityDao.deleteAll(null));
+        assertEquals(0, activityDao.deleteAll(""));
+        assertEquals(0, activityDao.deleteAll("   "));
+    }
+
+    @Test
     @DisplayName("deleteClient cascade: activity_logs bị xóa sạch cùng client")
     void deleteClientCascadesActivities() {
         activityDao.logActivity("client-01", "app.exe", "title");

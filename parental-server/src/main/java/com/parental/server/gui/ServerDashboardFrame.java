@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Objects;
 
 import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
@@ -33,6 +35,7 @@ import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.RowFilter;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
@@ -117,6 +120,19 @@ public class ServerDashboardFrame extends JFrame {
     private JTable activityTable;
     private java.time.Instant lastActivityTableRefresh = java.time.Instant.EPOCH;
 
+    // --- Bộ lọc + xóa lịch sử hoạt động (Mở rộng nhật ký) ---
+    /** Số bản ghi nhật ký hiển thị trên Dashboard (tăng từ 10 → 30). */
+    static final int ACTIVITY_LOG_LIMIT = 30;
+
+    /** Chỉ số cột JTable nhật ký — dùng cho RowFilter. */
+    private static final int ACTIVITY_COLUMN_TIME = 0;
+    private static final int ACTIVITY_COLUMN_PROCESS = 1;
+    private static final int ACTIVITY_COLUMN_TITLE = 2;
+
+    private JTextField activityFilterField;
+    private javax.swing.table.TableRowSorter<javax.swing.table.TableModel> activitySorter;
+    private JButton clearActivityButton;
+
     // --- Quick actions (Task 5.2) ---
     private JButton pauseButton;
     private JButton resumeButton;
@@ -156,10 +172,10 @@ public class ServerDashboardFrame extends JFrame {
 
     private void initUi() {
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE); // đóng qua windowClosing handler
-        // Hotfix bố cục Activity Monitoring: 1050x750 đủ chỗ cho panel "Giám sát
-        // tức thời" + "Hoạt động người dùng" + JTable nhật ký (trước đây 1000x650
-        // khiến metric cards bị co cụm, đè chữ lên nhau).
-        setSize(1050, 750);
+        // Bố cục v2: 1100x800 thoáng hơn cho cột phải (Hạn mức + Hoạt động
+        // người dùng + JTable nhật ký cao 160px) — các panel không còn co đè
+        // lên nhau ở kích thước mặc định.
+        setSize(1100, 800);
         setMinimumSize(new Dimension(950, 680));
         setLocationRelativeTo(null); // canh giữa màn hình
         setLayout(new BorderLayout());
@@ -570,25 +586,141 @@ public class ServerDashboardFrame extends JFrame {
                         return this;
                     }
                 });
+        // Sắp xếp + lọc dòng JTable ( ô "Lọc tiến trình/tiêu đề" )
+        activitySorter = new javax.swing.table.TableRowSorter<>(activityTable.getModel());
+        activityTable.setRowSorter(activitySorter);
         JScrollPane activityScroll = new JScrollPane(activityTable);
-        // Kích thước cố định hợp lý — JTable luôn nằm trọn trong JScrollPane
-        activityScroll.setPreferredSize(new Dimension(880, 140));
-        activityScroll.setMinimumSize(new Dimension(600, 120));
-        activityScroll.setBorder(BorderFactory.createTitledBorder("Nhật ký hoạt động gần đây (10 bản ghi)"));
+        // Cao 160px cố định định + chặn co hẹp — bảng nhật ký luôn trọn trong JScrollPane,
+        // không bị panel khác đè bẹp (Box.Y_AXIS tôn trọng preferred size).
+        activityScroll.setPreferredSize(new Dimension(880, 160));
+        activityScroll.setMinimumSize(new Dimension(600, 160));
+        activityScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 160));
+        activityScroll.setBorder(BorderFactory.createTitledBorder(
+                "Nhật ký hoạt động gần đây (30 bản ghi — gõ vào ô lọc để tìm nhanh)"));
+
+        // --- Ô lọc tìm kiếm tiến trình/tiêu đề (TableRowSorter) ---
+        JPanel filterPanel = new JPanel(new BorderLayout(6, 0));
+        filterPanel.add(new JLabel("🔍 Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
+        activityFilterField = new JTextField();
+        activityFilterField.setToolTipText("Ví dụ: chrome, edge, youtube — lọc theo tên tiến trình hoặc tiêu đề cửa sổ");
+        activityFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                applyActivityFilter();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                applyActivityFilter();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                applyActivityFilter();
+            }
+        });
+        filterPanel.add(activityFilterField, BorderLayout.CENTER);
+
+        // --- Nút xóa sạch lịch sử hoạt động (activity_logs) của client đang chọn ---
+        clearActivityButton = new JButton("🗑️ Xóa lịch sử hoạt động");
+        clearActivityButton.setToolTipText("Dọn sạch bản ghi nhật ký hoạt động của thiết bị đang chọn trong DB");
+        clearActivityButton.addActionListener(event -> clearActivityHistory());
+
+        JPanel activityControlRow = new JPanel(new BorderLayout(8, 0));
+        activityControlRow.add(filterPanel, BorderLayout.CENTER);
+        activityControlRow.add(clearActivityButton, BorderLayout.EAST);
+
+        // --- Cột phải xếp DỌC bằng BoxLayout (Y-AXIS) + strut chống co đè:
+        // Hạn mức và Hoạt động người dùng không còn bị đè bẹp lên nhau. ---
+        JPanel cardsRow = new JPanel(new GridLayout(1, 1));
+        cardsRow.add(cardsPanel); // bọc để giữ chiều cao preferred của cardsPanel
+        JPanel rulesRow = new JPanel(new GridLayout(1, 1));
+        rulesRow.add(rulesPanel);
+        JPanel activityZone = new JPanel();
+        activityZone.setLayout(new BoxLayout(activityZone, BoxLayout.Y_AXIS));
+        activityZone.add(activityPanel);
+        activityZone.add(Box.createVerticalStrut(6));
+        activityZone.add(activityControlRow);
+        activityZone.add(Box.createVerticalStrut(6));
+        activityZone.add(activityScroll); // preferred 160px được tôn trọng trong Box
+
+        JPanel middle = new JPanel();
+        middle.setLayout(new BoxLayout(middle, BoxLayout.Y_AXIS));
+        middle.add(infoPanel);
+        middle.add(Box.createVerticalStrut(8));
+        middle.add(cardsRow);
+        middle.add(Box.createVerticalStrut(8));
+        middle.add(rulesRow);
+        middle.add(Box.createVerticalStrut(8));
+        middle.add(activityZone);
 
         JPanel center = new JPanel(new BorderLayout(0, 8));
         center.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        center.add(infoPanel, BorderLayout.NORTH);
-        JPanel middle = new JPanel(new BorderLayout());
-        middle.add(cardsPanel, BorderLayout.NORTH);
-        middle.add(rulesPanel, BorderLayout.CENTER);
-        JPanel activityZone = new JPanel(new BorderLayout(0, 6));
-        activityZone.add(activityPanel, BorderLayout.NORTH);
-        activityZone.add(activityScroll, BorderLayout.CENTER);
-        middle.add(activityZone, BorderLayout.SOUTH);
         center.add(middle, BorderLayout.CENTER);
         center.add(buildQuickActionsPanel(), BorderLayout.SOUTH);
         return center;
+    }
+
+    /**
+     * Áp dụng bộ lọc tìm kiếm cho bảng nhật ký hoạt động — so khớp KHÔNG
+     * phân biệt hoa/thường trên cả 3 cột (Thời điểm/Tiến trình/Tiêu đề).
+     */
+    private void applyActivityFilter() {
+        if (activitySorter == null) {
+            return; // bảng chưa khởi tạo xong (trong initUi)
+        }
+        // Logic dựng filter tách vào test hook (pure function — unit test headless)
+        activitySorter.setRowFilter(
+                ServerDashboardFrameTestHook.buildActivityRowFilter(activityFilterField.getText())
+                        .orElse(null));
+    }
+
+    /**
+     * Xóa sạch lịch sử hoạt động của thiết bị đang chọn: confirm dialog →
+     * {@link ActivityDao#deleteAll(String)} trên SwingWorker (DAO blocking) →
+     * reload bảng + log sự kiện.
+     */
+    private void clearActivityHistory() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("⚠ Chưa chọn thiết bị nào để xóa lịch sử hoạt động");
+            return;
+        }
+        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Xóa TOÀN BỘ nhật ký hoạt động của thiết bị '" + deviceDisplay + "'?\n\n"
+                        + "Thao tác không thể hoàn tác!",
+                "Xóa lịch sử hoạt động",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+        String clientId = selected.clientId();
+        new javax.swing.SwingWorker<Integer, Void>() {
+            @Override
+            protected Integer doInBackground() {
+                return serverEngine.getActivityDao() != null
+                        ? serverEngine.getActivityDao().deleteAll(clientId)
+                        : 0;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    int deleted = get();
+                    appendEventLog("🗑️ Đã xóa " + deleted + " bản ghi hoạt động của '"
+                            + deviceDisplay + "'");
+                } catch (Exception e) {
+                    appendEventLog("⚠ Lỗi khi xóa lịch sử hoạt động: " + e.getMessage());
+                    log.error("Clear activity history failed: {}", e.getMessage(), e);
+                }
+                lastActivityTableRefresh = java.time.Instant.EPOCH; // buộc reload bảng
+                refreshNow();
+            }
+        }.execute();
     }
 
     /** Thẻ metric: label trên, giá trị lớn bên dưới. */
@@ -620,8 +752,27 @@ public class ServerDashboardFrame extends JFrame {
      * Renderer dòng thiết bị: icon ● Online/Offline + tên máy + IP + trạng thái.
      * <p>Có alias: {@code ● [Biệt danh] (Tên gốc) — Trạng thái}; không alias →
      * giữ nguyên định dạng cũ {@code ● Tên máy (IP) — Trạng thái}.</p>
+     *
+     * <p><b>Hotfix tương phản khi chọn</b>: mặc định Swing vẽ nền xanh đậm khi
+     * item được chọn → chữ xanh lá (Online) bị "chìm", không đọc được tên máy.
+     * Khi selected: nền xanh xám nhạt {@code #E2E8F0} + toàn bộ chữ (kể cả
+     * chấm trạng thái) chuyển sang đen đậm {@code #0F172A} — luôn sắc nét ở
+     * CẢ HAI trạng thái selected/unselected.</p>
      */
     private static final class DeviceCellRenderer extends DefaultListCellRenderer {
+
+        /** Nền dịu mắt khi dòng được chọn (xanh xám nhạt). */
+        private static final Color SELECTED_BACKGROUND = new Color(0xE2, 0xE8, 0xF0);
+
+        /** Chữ đen đậm tương phản cao khi dòng được chọn. */
+        private static final Color SELECTED_FOREGROUND = new Color(0x0F, 0x17, 0x2A);
+
+        /** Khoảng đệm dòng để chữ không dính mép danh sách. */
+        private static final javax.swing.border.Border CELL_PADDING =
+                BorderFactory.createCompoundBorder(
+                        BorderFactory.createEmptyBorder(4, 8, 4, 8),
+                        BorderFactory.createEmptyBorder());
+
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index,
                                                       boolean selected, boolean focused) {
@@ -638,7 +789,16 @@ public class ServerDashboardFrame extends JFrame {
                     label.setText(String.format("%s %s (%s) — %s", icon, record.deviceName(),
                             record.ipAddress(), statusText));
                 }
-                label.setForeground(online ? new Color(0, 128, 0) : Color.GRAY);
+                if (selected) {
+                    // Selected: nền dịu + chữ đen đậm — TƯƠNG PHẢN CAO, dễ đọc.
+                    label.setBackground(SELECTED_BACKGROUND);
+                    label.setForeground(SELECTED_FOREGROUND);
+                    label.setOpaque(true);
+                } else {
+                    // Unselected: giữ màu trạng thái gốc (xanh lá Online / xám Offline).
+                    label.setForeground(online ? new Color(0, 128, 0) : Color.GRAY);
+                }
+                label.setBorder(CELL_PADDING);
             }
             return component;
         }
@@ -827,20 +987,20 @@ public class ServerDashboardFrame extends JFrame {
         uploadSpeedField.setText("—");
         todayTrafficField.setText("—");
         activeAppField.setText("—");
-        activityTableModel.setRowCount(0); // xóa trắng nhật ký
+        clearActivityTable(); // xóa trắng + bỏ lọc (thay cho setRowCount(0) trực tiếp)
         quotaBar.setValue(0);
         quotaBar.setString("Chưa chọn thiết bị");
         usageBar.setValue(0);
         usageBar.setString("Chưa chọn thiết bị");
     }
 
-    /** Nạp 10 bản ghi hoạt động gần nhất của client vào JTable (EDT, DAO blocking nhẹ). */
+    /** Nạp 30 bản ghi hoạt động gần nhất của client vào JTable (EDT, DAO blocking nhẹ). */
     private void reloadActivityTable(String clientId) {
         if (serverEngine.getActivityDao() == null) {
             return; // chạy không DB — không có nhật ký
         }
         List<ActivityDao.ActivityRecord> records =
-                serverEngine.getActivityDao().getRecentActivities(clientId, 10);
+                serverEngine.getActivityDao().getRecentActivities(clientId, ACTIVITY_LOG_LIMIT);
         activityTableModel.setRowCount(0);
         java.time.format.DateTimeFormatter timeFormat =
                 java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
@@ -853,6 +1013,14 @@ public class ServerDashboardFrame extends JFrame {
             });
         }
         activityTable.repaint();
+    }
+
+    /** Xóa trắng bảng nhật ký + bỏ bộ lọc (khi không chọn thiết bị). */
+    private void clearActivityTable() {
+        activityTableModel.setRowCount(0);
+        if (activityFilterField != null && !activityFilterField.getText().isEmpty()) {
+            activityFilterField.setText(""); // reset DocumentListener → setRowFilter(null)
+        }
     }
 
     private static String orDash(String text) {

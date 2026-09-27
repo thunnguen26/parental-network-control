@@ -1,6 +1,7 @@
 package com.parental.client.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,13 +16,18 @@ import com.parental.common.protocol.payload.ActivityReportPayload;
  * defensive với output rỗng/hỏng/chuỗi lỗi PowerShell (hotfix: lỗi tuyệt đối
  * không được parse thành payload), giới hạn 5 tiến trình, non-Windows →
  * payload rỗng không ném exception.
+ *
+ * <p><b>Mở rộng (Foreground Window thật)</b>: dòng ĐẦU TIÊN của stdout là
+ * Foreground Window từ Win32 API (GetForegroundWindow) — luôn là active
+ * window; các dòng sau là top processes (fallback). Script P/Invoke được
+ * test theo contract cấu trúc (xem {@code psScriptUsesWin32ForegroundApi}).</p>
  */
 class WindowsActivityCollectorTest {
 
     private final WindowsActivityCollector collector = new WindowsActivityCollector(false);
 
     @Test
-    @DisplayName("parseOutput: format 'process<TAB>title' — dòng đầu = ACTIVE, các dòng sau = top")
+    @DisplayName("parseOutput: format 'process<TAB>title' — dòng ĐẦU = Foreground/Active (Win32 API)")
     void parsesProcessTitleLines() {
         String output = "chrome\tGiải bài tập Hóa 12 | VietJack - Google Chrome\n"
                 + "notepad\tBài tập Toán - Notepad\n"
@@ -29,10 +35,22 @@ class WindowsActivityCollectorTest {
 
         ActivityReportPayload payload = collector.parseOutput(output);
 
-        assertEquals("chrome.exe", payload.activeProcessName(), "Dòng đầu (CPU cao nhất) = active");
+        assertEquals("chrome.exe", payload.activeProcessName(),
+                "Dòng đầu (Foreground Window từ Win32 API) = active");
         assertEquals("Giải bài tập Hóa 12 | VietJack - Google Chrome", payload.activeWindowTitle());
         assertEquals(java.util.List.of("chrome", "notepad", "explorer"), payload.topProcesses());
         assertTrue(payload.timestamp() > 0, "timestamp epoch millis phải > 0");
+    }
+
+    @Test
+    @DisplayName("parseOutput: Foreground KHÔNG lấy được (stdout chỉ có ROW) → dòng CPU cao nhất là active (fallback)")
+    void foregroundFallbackToTopProcess() {
+        // Script Foreground lỗi (return rỗng) → stdout chỉ còn danh sách Get-Process
+        ActivityReportPayload payload = collector.parseOutput(
+                "msedge\tMicrosoft Edge – Trang chủ\nexplorer\tDocuments");
+
+        assertEquals("msedge.exe", payload.activeProcessName(), "Fallback: tiến trình đầu = active");
+        assertEquals("Microsoft Edge – Trang chủ", payload.activeWindowTitle());
     }
 
     @Test
@@ -63,11 +81,15 @@ class WindowsActivityCollectorTest {
     }
 
     @Test
-    @DisplayName("parseOutput: title chứa TAB sâu (title có nhiều TAB) → giữ nguyên phần title")
-    void titleWithTabsKeepsRest() {
-        ActivityReportPayload payload = collector.parseOutput("chrome\tA\tB\tC");
-        assertEquals("A\tB\tC", payload.activeWindowTitle(),
-                "Phần sau TAB đầu tiên là title nguyên vẹn");
+    @DisplayName("parseOutput: Foreground trả 'NoWindow'/'none' (màn hình khóa) → BỎ dòng đó, fallback danh sách")
+    void foregroundPlaceholderLineIsSkipped() {
+        // Foreground lấy được handle nhưng không có window text → sentinel,
+        // phải bị bỏ; active = tiến trình đầu trong danh sách ROW.
+        ActivityReportPayload payload = collector.parseOutput(
+                "none\t\nmsedge\tMicrosoft Edge – Trang chủ");
+
+        assertEquals("msedge.exe", payload.activeProcessName(), "Sentinel/Foreground rỗng bị bỏ qua");
+        assertEquals("Microsoft Edge – Trang chủ", payload.activeWindowTitle());
     }
 
     @Test
@@ -111,16 +133,28 @@ class WindowsActivityCollectorTest {
     }
 
     @Test
-    @DisplayName("Windows collect() trên môi trường test (PowerShell thật có thể có) → không ném exception")
-    void windowsCollectNeverThrows() {
-        // Trên Windows thật: PowerShell chạy (hoặc timeout 3s) → vẫn phải trả
-        // payload không null. Trên CI không Windows: không spawn gì.
-        WindowsActivityCollector realCollector = new WindowsActivityCollector(true);
-        ActivityReportPayload payload = realCollector.collect();
-        assertNotNull(payload, "collect() không bao giờ trả null");
-        assertNotNull(payload.topProcesses(), "topProcesses không bao giờ null");
-        // Hotfix: payload KHÔNG BAO GIỜ chứa chuỗi lỗi PowerShell
-        assertTrue(!payload.activeProcessName().contains("not recognized"),
-                "Không được gửi chuỗi lỗi PowerShell lên Server");
+    @DisplayName("PS_SCRIPT: dùng Win32 P/Invoke GetForegroundWindow (không Add-Type C# multi-line dễ vỡ)")
+    void psScriptUsesWin32ForegroundApi() {
+        String script = WindowsActivityCollector.PS_SCRIPT;
+
+        assertTrue(script.contains("GetForegroundWindow"), "Phải P/Invoke GetForegroundWindow");
+        assertTrue(script.contains("GetWindowText"), "Phải đọc tiêu đề cửa sổ");
+        assertTrue(script.contains("GetWindowThreadProcessId"), "Phải suy PID cửa sổ foreground");
+        assertTrue(script.contains("MainWindowTitle -ne ''"),
+                "Bộ lọc top processes: chỉ ứng dụng CÓ tiêu đề cửa sổ thực (loại tiến trình nền)");
+        assertTrue(script.contains("MainWindowHandle -ne 0"),
+                "Chỉ nhận tiến trình có cửa sổ thật (bỏ tiến trình nền hệ thống)");
+        assertFalse(script.contains("@\""),
+                "KHÔNG dùng here-string C# multi-line (nguyên nhân lỗi escape của hotfix trước)");
+        assertTrue(script.contains("-MemberDefinition"),
+                "P/Invoke trực tiếp trong PS (Add-Type -MemberDefinition) — syntax-safe qua ProcessBuilder");
+    }
+
+    @Test
+    @DisplayName("parseOutput: title chứa TAB sâu (title có nhiều TAB) → giữ nguyên phần title")
+    void titleWithTabsKeepsRest() {
+        ActivityReportPayload payload = collector.parseOutput("chrome\tA\tB\tC");
+        assertEquals("A\tB\tC", payload.activeWindowTitle(),
+                "Phần sau TAB đầu tiên là title nguyên vẹn");
     }
 }

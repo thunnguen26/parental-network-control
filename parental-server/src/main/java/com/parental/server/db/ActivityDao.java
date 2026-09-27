@@ -135,6 +135,29 @@ public class ActivityDao {
         }
     }
 
+    /**
+     * Xóa TOÀN BỘ nhật ký hoạt động của một client (nút "🗑️ Xóa lịch sử hoạt
+     * động" trên Dashboard).
+     *
+     * @param clientId định danh client
+     * @return số dòng đã xóa; 0 nếu client không tồn tại/lỗi/null (defensive)
+     */
+    public int deleteAll(String clientId) {
+        if (clientId == null || clientId.isBlank()) {
+            return 0;
+        }
+        String sql = "DELETE FROM activity_logs WHERE client_id = ?";
+        try (Connection connection = database.newConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, clientId);
+            return statement.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to delete all activities for client [{}]: {}",
+                    clientId, e.getMessage());
+            return 0;
+        }
+    }
+
     /** Cắt chuỗi an toàn (process_name VARCHAR(100) — window_title TEXT 2.000). */
     private static String truncate(String value, int maxLength) {
         if (value == null) {

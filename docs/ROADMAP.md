@@ -6,6 +6,7 @@
 > **✅ MỞ RỘNG HOÀN THÀNH: Quản trị thiết bị — Alias & Delete/Unpair (2026-09-27)** — nút ✏️ Đổi tên + 🗑️ Xóa thiết bị trên Dashboard, `MessageType.UNPAIR`, xóa cascade atomic — 223/223 test pass.
 > **✅ MỞ RỘNG HOÀN THÀNH: Activity Monitoring (2026-09-27)** — giám sát hoạt động thời gian thực (Active Window + Top Processes), `MessageType.ACTIVITY_REPORT`, bảng `activity_logs`, Dashboard hiển thị "Đang mở" + nhật ký — 245/245 test pass.
 > **✅ HOTFIX Activity Monitoring (2026-09-27)** — PowerShell tách stderr + exitCode fallback (không gửi lỗi lên Server), bố cục Dashboard 1050x750 + cắt chuỗi dài — 251/251 test pass.
+> **✅ MỞ RỘNG HOÀN THÀNH: GUI Tương phản + Bố cục v2 + Foreground Window + Nhật ký mở rộng (2026-09-27)** — renderer thiết bị tương phản khi chọn (#E2E8F0/#0F172A), bố cục BoxLayout Y-AXIS 1100x800 + nhật ký 160px không co đè, P/Invoke `GetForegroundWindow` lấy cửa sổ active thật (hết "—"), nhật ký 30 bản ghi + ô lọc 🔍 realtime + nút xóa lịch sử — 279/279 test pass.
 > **✅ MỞ RỘNG HOÀN THÀNH: Domain Blacklist Management & Hosts Enforcement (2026-09-27)** — `BlockedDomainDao` (normalize + transactional set), hosts file marker BEGIN/END PARENTAL BLOCK + mapping 0.0.0.0/127.0.0.1 cho domain & www.variant + flush DNS cache, `PolicyConfigDialog` preset chặn nhanh (web người lớn/độc hại, MXH & video), `pushConfigSync` đẩy realtime qua TCP — 268/268 test pass.
 
 ## Phase 1: Foundation & Common Protocol Engine

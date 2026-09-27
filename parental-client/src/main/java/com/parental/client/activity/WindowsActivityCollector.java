@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -16,21 +17,25 @@ import com.parental.common.protocol.payload.ActivityReportPayload;
 
 /**
  * Triển khai {@link ActivityCollector} trên Windows KHÔNG cần thư viện ngoài:
- * gọi PowerShell qua {@link ProcessBuilder} — thu tiêu đề + tiến trình cửa sổ
- * đang focus và danh sách tiến trình có cửa sổ giao diện.
+ * gọi PowerShell qua {@link ProcessBuilder} — thu <b>cửa sổ Foreground thật</b>
+ * (Win32 P/Invoke {@code GetForegroundWindow}) + danh sách tiến trình có cửa
+ * sổ giao diện.
  *
- * <p><b>Hotfix lỗi gửi chuỗi lỗi PowerShell lên Server</b>: phiên bản cũ dùng
- * {@code redirectErrorStream(true)} — nội dung lỗi (stderr) bị trộn vào stdout
- * rồi parse thành "tiến trình" gửi về Server (vd chuỗi
- * {@code "The term '...' is not recognized..."}). Phiên bản mới:</p>
- * <ul>
- *   <li>Script đơn giản chuẩn hóa: 1 dòng ACTIVE {@code name<TAB>title} +
- *       các dòng ROW, dùng {@code MainWindowHandle -ne 0} để chỉ lấy cửa sổ
- *       thật (giống gợi ý yêu cầu);</li>
- *   <li><b>TÁCH RIÊNG stdout và stderr</b> — KHÔNG redirectErrorStream;</li>
- *   <li>{@code exitCode != 0} HOẶC stderr có nội dung → fallback trả payload
- *       rỗng. <b>Tuyệt đối không đưa nội dung lỗi vào payload.</b></li>
- * </ul>
+ * <p><b>Cửa sổ Foreground thật (không còn "—")</b>: script khai báo WIN32 API
+ * bằng {@code Add-Type -MemberDefinition} (P/Invoke trực tiếp trong PowerShell
+ * — không dùng chuỗi C# multi-line vốn dễ vỡ cú pháp escape qua ProcessBuilder,
+ * nguyên nhân hotfix trước): {@code GetForegroundWindow} → {@code GetWindowText}
+ * (tiêu đề) + {@code GetWindowThreadProcessId} → {@code Process.GetProcessById}
+ * (tên tiến trình). Xuất dòng ACTIVE dạng {@code process<TAB>title}.</p>
+ *
+ * <p><b>Bộ lọc tiến trình (theo yêu cầu)</b>: danh sách top chỉ ghi nhận ứng
+ * dụng có tiêu đề cửa sổ THỰC ({@code MainWindowTitle -ne ''}) — tiến trình
+ * nền hệ thống (svchost, services, csrss...) không có cửa sổ tương tác bị loại
+ * sẵn tại script, không bao giờ xuất hiện trong payload.</p>
+ *
+ * <p><b>Hotfix giữ nguyên (không tái diễn)</b>: stdout/stderr tách RIÊNG
+ * (không redirectErrorStream); {@code exitCode != 0} HOẶC stderr có nội dung →
+ * fallback payload rỗng — chuỗi lỗi PowerShell TUYỆT ĐỐI không thành payload.</p>
  *
  * <p><b>Defensive (AGENTS.md)</b>: non-Windows → payload rỗng ngay; timeout 3s
  * + {@code destroyForcibly}; mọi lỗi (IOException/InterruptedException/
@@ -45,19 +50,38 @@ public class WindowsActivityCollector implements ActivityCollector {
     static final int POWERSHELL_TIMEOUT_SECONDS = 3;
 
     /**
-     * Script PowerShell thu thập hoạt động (đã sửa cú pháp escape):
-     * <ul>
-     *   <li>Chỉ lấy tiến trình có cửa sổ thật: {@code MainWindowHandle -ne 0}
-     *       và {@code MainWindowTitle -ne ''};</li>
-     *   <li>Sắp xếp theo CPU giảm dần, lấy tối đa 8;</li>
-     *   <li>Dòng đầu: {@code ACTIVE<TAB>process<TAB>title} (tiến trình CPU cao
-     *       nhất = khả năng cao đang focus);</li>
-     *   <li>Các dòng sau: {@code ROW<TAB>process<TAB>title}.</li>
-     * </ul>
-     * Dùng TAB làm phân tách — không gặp lỗi escape dấu backtick của phiên bản cũ.
+     * Script PowerShell thu thập hoạt động — 2 phần:
+     * <ol>
+     *   <li><b>Foreground window thật</b> qua Win32 P/Invoke (Add-Type
+     *       -MemberDefinition, single-line syntax-safe qua ProcessBuilder — KHÔNG
+     *       dùng chuỗi C# multi-line với @"..."@ dễ vỡ escape): GetForegroundWindow →
+     *       GetWindowText (tiêu đề) + GetWindowThreadProcessId → tên tiến trình;
+     *       xuất {@code process<TAB>title}. Lấy foreground không phân biệt PID
+     *       — cửa sổ đang focus luôn là tương tác người dùng thực.</li>
+     *   <li><b>Top tiến trình có cửa sổ</b>: {@code MainWindowHandle -ne 0} +
+     *       {@code MainWindowTitle -ne ''} (bộ lọc loại tiến trình nền) — sắp
+     *       theo CPU giảm dần, tối đa 8, dòng {@code ROW<TAB>process<TAB>title}.</li>
+     * </ol>
+     * Phân tách TAB (không gặp lỗi escape dấu backtick của phiên bản cũ);
+     * title có thể chứa nhiều TAB — parse split("\t", 2) giữ nguyên phần sau.
      */
     static final String PS_SCRIPT =
-            "$p = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 "
+            "Add-Type -MemberDefinition '\n"
+            + "[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();\n"
+            + "[DllImport(\"user32.dll\")] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);\n"
+            + "[DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);\n"
+            + "' -Name WinApi -Namespace Parental | Out-Null\n"
+            + "$h = [Parental.WinApi]::GetForegroundWindow()\n"
+            + "if ($h -ne [IntPtr]::Zero) {\n"
+            + "  $sb = New-Object System.Text.StringBuilder 256\n"
+            + "  if ([Parental.WinApi]::GetWindowText($h, $sb, 256) -gt 0) {\n"
+            + "    $procId = 0\n"
+            + "    [void][Parental.WinApi]::GetWindowThreadProcessId($h, [ref]$procId)\n"
+            + "    try { $p = Get-Process -Id $procId -ErrorAction Stop } catch { $p = $null }\n"
+            + "    if ($p) { Write-Output ($p.ProcessName + \"`t\" + $sb.ToString()) }\n"
+            + "  }\n"
+            + "}\n"
+            + "$p = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 "
             + "-and $_.MainWindowTitle -ne '' } | Sort-Object CPU -Descending | Select-Object -First 8; "
             + "if ($p) { $p | ForEach-Object { Write-Output ($_.ProcessName + \"`t\" + $_.MainWindowTitle) } }";
 
@@ -102,7 +126,7 @@ public class WindowsActivityCollector implements ActivityCollector {
             }
             int exitCode = process.exitValue();
             // LỖI PowerShell → KHÔNG BAO GIỜ parse stdout lỗi làm payload;
-            // fallback rỗng thay vì gửi chuỗi lỗi lên Server (hotfix).
+            // fallback rỗng thay vì gửi chuỗi lỗi lên Server (hotfix giữ nguyên).
             if (exitCode != 0 || (stderr != null && !stderr.isBlank())) {
                 log.warn("PowerShell activity probe failed (exitCode={}, stderr={}) "
                         + "— returning empty payload, error is NEVER sent to server",
@@ -164,13 +188,16 @@ public class WindowsActivityCollector implements ActivityCollector {
     }
 
     /**
-     * Parse đầu ra PowerShell: mỗi dòng {@code process<TAB>title}; dòng đầu
-     * (CPU cao nhất) là cửa sổ ACTIVE.
+     * Parse đầu ra PowerShell: các dòng {@code process<TAB>title}. Dòng
+     * <b>đầu tiên là Foreground Window thật</b> (Win32 API — đang focus);
+     * nếu script lỗi phần Foreground (return riêng) thì dòng đầu tiên trong
+     * danh sách ROW vẫn là fallback hợp lệ (CPU cao nhất).
      */
     ActivityReportPayload parseOutput(String output) {
         String activeProcess = UNKNOWN;
         String activeTitle = UNKNOWN;
         Set<String> topProcesses = new LinkedHashSet<>();
+        List<String> orderedTitles = new ArrayList<>();
 
         if (output != null) {
             for (String line : output.split("\\R")) {
@@ -185,13 +212,16 @@ public class WindowsActivityCollector implements ActivityCollector {
                 if (processName.isEmpty() || !processName.matches("[A-Za-z0-9._-]+")) {
                     continue;
                 }
-                if (activeProcess.isEmpty()) {
-                    activeProcess = processName + ".exe";
-                    activeTitle = title;
+                // Sentinel Foreground rỗng (màn hình khóa / không có window text):
+                // dòng 'none<TAB>' phải bị bỏ — hoạt động luôn kèm tiêu đề thực.
+                if (title.isEmpty()) {
+                    continue;
                 }
-                if (topProcesses.add(processName)
-                        && topProcesses.size() >= ActivityReportPayload.MAX_TOP_PROCESSES) {
-                    break;
+                if (topProcesses.add(processName)) {
+                    orderedTitles.add(title);
+                    if (topProcesses.size() >= ActivityReportPayload.MAX_TOP_PROCESSES) {
+                        break;
+                    }
                 }
             }
         }
@@ -199,10 +229,9 @@ public class WindowsActivityCollector implements ActivityCollector {
         if (topProcesses.isEmpty()) {
             return emptyPayload();
         }
-        // Fallback: không xác định được active → lấy tiến trình đầu tiên.
-        if (activeProcess.isEmpty()) {
-            activeProcess = topProcesses.iterator().next() + ".exe";
-        }
+        // Foreground thật = dòng đầu tiên (Win32 API); fallback = CPU cao nhất.
+        activeProcess = topProcesses.iterator().next() + ".exe";
+        activeTitle = orderedTitles.get(0);
         return new ActivityReportPayload(activeTitle, activeProcess,
                 List.copyOf(topProcesses), System.currentTimeMillis());
     }
