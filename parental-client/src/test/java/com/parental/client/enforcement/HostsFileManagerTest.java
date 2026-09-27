@@ -70,13 +70,65 @@ class HostsFileManagerTest {
         // Marker block đúng định dạng
         assertTrue(content.contains(HostsFileManager.MARKER_START));
         assertTrue(content.contains(HostsFileManager.MARKER_END));
-        assertTrue(content.contains("127.0.0.1  tiktok.com"));
-        assertTrue(content.contains("0.0.0.0  tiktok.com"));
-        assertTrue(content.contains("127.0.0.1  facebook.com"));
+        assertTrue(content.contains("0.0.0.0  tiktok.com"), "IP đen 0.0.0.0 phải được ghi");
+        assertTrue(content.contains("0.0.0.0  facebook.com"));
+        assertTrue(content.contains("127.0.0.1  tiktok.com"), "IP phụ 127.0.0.1 cũng ghi");
 
         // Thứ tự: START trước END
         assertTrue(content.indexOf(HostsFileManager.MARKER_START)
                 < content.indexOf(HostsFileManager.MARKER_END));
+    }
+
+    @Test
+    @DisplayName("www mapping: mỗi domain được chặn kèm biến thể www.domain (0.0.0.0)")
+    void applyBlocksWwwSubdomainToo() throws Exception {
+        HostsFileManager manager = newManager(OS_LIKE_CONTENT);
+
+        assertTrue(manager.applyBlockedDomains(List.of("facebook.com")));
+        String content = read(hostsPathOf(manager));
+
+        assertTrue(content.contains("0.0.0.0  facebook.com"), "Domain gốc phải bị chặn");
+        assertTrue(content.contains("0.0.0.0  www.facebook.com"),
+                "Subdomain www phải bị chặn kèm theo");
+        assertTrue(content.contains("127.0.0.1  www.facebook.com"));
+
+        // Idempotent với www: apply lại không nhân bản dòng www
+        manager.applyBlockedDomains(List.of("facebook.com"));
+        assertEquals(1, countOccurrences(read(hostsPathOf(manager)), "0.0.0.0  www.facebook.com"));
+    }
+
+    @Test
+    @DisplayName("Domain đã có www. đầu → không ghi biến thể www.www lặp")
+    void wwwPrefixedDomainDoesNotDuplicate() throws Exception {
+        HostsFileManager manager = newManager(OS_LIKE_CONTENT);
+
+        assertTrue(manager.applyBlockedDomains(List.of("www.tiktok.com")));
+        String content = read(hostsPathOf(manager));
+
+        assertTrue(content.contains("0.0.0.0  www.tiktok.com"));
+        assertFalse(content.contains("www.www.tiktok.com"),
+                "Không được sinh biến thể www.www lặp");
+    }
+
+    @Test
+    @DisplayName("Legacy marker cũ được nhận diện và nâng cấp: block cũ dọn sạch, block mới dùng marker mới")
+    void legacyMarkersAreStrippedAndUpgraded() throws Exception {
+        String legacyContent = OS_LIKE_CONTENT + "\n"
+                + HostsFileManager.LEGACY_MARKER_START + "\n"
+                + "127.0.0.1  old-blocked.com\n"
+                + "0.0.0.0  old-blocked.com\n"
+                + HostsFileManager.LEGACY_MARKER_END + "\n";
+        HostsFileManager manager = newManager(legacyContent);
+
+        assertTrue(manager.applyBlockedDomains(List.of("facebook.com")));
+        String content = read(hostsPathOf(manager));
+
+        assertFalse(content.contains("old-blocked.com"), "Block cũ phải bị gỡ sạch");
+        assertFalse(content.contains(HostsFileManager.LEGACY_MARKER_START),
+                "Marker legacy phải bị dọn");
+        assertTrue(content.contains(HostsFileManager.MARKER_START), "Block mới dùng marker mới");
+        assertTrue(content.contains("0.0.0.0  facebook.com"));
+        assertTrue(content.contains("127.0.0.1  localhost"), "Nội dung gốc vẫn còn");
     }
 
     @Test
@@ -110,6 +162,7 @@ class HostsFileManagerTest {
 
         assertFalse(content.contains("tiktok.com"), "Domain cũ phải bị gỡ");
         assertFalse(content.contains("facebook.com"), "Domain cũ phải bị gỡ");
+        assertFalse(content.contains("www.tiktok.com"), "Biến thể www cũ cũng phải bị gỡ");
         assertTrue(content.contains("instagram.com"), "Domain mới phải xuất hiện");
         assertEquals(countOccurrences(content, HostsFileManager.MARKER_START), 1);
         assertEquals(countOccurrences(content, "127.0.0.1  localhost"), 1,
@@ -184,8 +237,8 @@ class HostsFileManagerTest {
         // Danh sách có null/blank element: chỉ domain hợp lệ được ghi
         manager.applyBlockedDomains(java.util.Arrays.asList("TIKTOK.Com", "  ", null, "tiktok.com"));
         String content = read(hostsPathOf(manager));
-        assertTrue(content.contains("127.0.0.1  tiktok.com"), "Domain hợp lệ phải được ghi");
-        assertEquals(countOccurrences(content, "127.0.0.1  tiktok.com"), 1,
+        assertTrue(content.contains("0.0.0.0  tiktok.com"), "Domain hợp lệ phải được ghi");
+        assertEquals(1, countOccurrences(content, "0.0.0.0  tiktok.com"),
                 "Trùng lặp (sau lowercase/trim) phải bị khử");
         assertFalse(content.contains("null"), "Không được ghi dòng 'null'");
     }
@@ -198,7 +251,7 @@ class HostsFileManagerTest {
         assertTrue(manager.applyBlockedDomains(List.of("tiktok.com")));
         String content = read(hostsPathOf(manager));
         assertTrue(content.contains(HostsFileManager.MARKER_START));
-        assertTrue(content.contains("127.0.0.1  tiktok.com"));
+        assertTrue(content.contains("0.0.0.0  tiktok.com"));
 
         assertTrue(manager.clearBlocks());
         assertTrue(read(hostsPathOf(manager)).isBlank() || read(hostsPathOf(manager)).isEmpty(),

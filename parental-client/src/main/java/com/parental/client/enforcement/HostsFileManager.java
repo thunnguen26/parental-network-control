@@ -19,14 +19,21 @@ import org.slf4j.LoggerFactory;
 /**
  * Domain Blocking Engine qua file {@code hosts} (Task 3.2).
  *
- * <p><b>Marker Block</b>: mọi domain ứng dụng chặn nằm giữa 2 dòng đánh dấu,
- * không bao giờ đụng cấu hình sẵn có của người dùng:
+ * <p><b>Marker Block</b> (Domain Blacklist Management): mọi domain ứng dụng
+ * chặn nằm giữa 2 dòng đánh dấu, không bao giờ đụng cấu hình sẵn có của người
+ * dùng. Mỗi domain được ghi cả biến thể {@code www} với cả 2 IP đen:
  * <pre>
- * # &gt;&gt;&gt; PARENTAL_CONTROL_BLOCK_START &gt;&gt;&gt;
- * 127.0.0.1  example1.com
- * 127.0.0.1  example2.com
- * # &lt;&lt;&lt; PARENTAL_CONTROL_BLOCK_END &lt;&lt;&lt;
+ * # BEGIN PARENTAL BLOCK
+ * 0.0.0.0  example.com
+ * 0.0.0.0  www.example.com
+ * 127.0.0.1  example.com
+ * 127.0.0.1  www.example.com
+ * # END PARENTAL BLOCK
  * </pre></p>
+ *
+ * <p>Sau khi ghi hosts thành công trên Windows, tự động chạy
+ * {@code ipconfig /flushdns} ({@link #flushDnsCache()}) để cache DNS trình
+ * duyệt làm mới ngay — thay đổi có hiệu lực tức thời không cần restart.</p>
  *
  * <p><b>Defensive OS Interfacing</b> (AGENTS.md): kiểm tra {@code canWrite()}
  * trước khi ghi; bắt {@code AccessDeniedException}/{@code IOException} và ghi
@@ -40,11 +47,23 @@ import org.slf4j.LoggerFactory;
  */
 public class HostsFileManager {
 
-    public static final String MARKER_START = "# >>> PARENTAL_CONTROL_BLOCK_START >>>";
-    public static final String MARKER_END = "# <<< PARENTAL_CONTROL_BLOCK_END <<<";
+    /** Marker khối chặn hiện hành (Domain Blacklist Management). */
+    public static final String MARKER_START = "# BEGIN PARENTAL BLOCK";
+    public static final String MARKER_END = "# END PARENTAL BLOCK";
+
+    /**
+     * Marker CŨ (trước Domain Blacklist) — vẫn được {@link #stripMarkerBlock}
+     * nhận diện và dọn sạch để nâng cấp trong suốt: máy đã dùng bản cũ sẽ bị
+     * xóa block cũ rồi ghi block mới với marker chuẩn hiện hành.
+     */
+    public static final String LEGACY_MARKER_START = "# >>> PARENTAL_CONTROL_BLOCK_START >>>";
+    public static final String LEGACY_MARKER_END = "# <<< PARENTAL_CONTROL_BLOCK_END <<<";
+
     public static final String BACKUP_SUFFIX = ".parental.bak";
-    public static final String BLOCK_IP = "127.0.0.1";
-    public static final String BLOCK_IP_EXTRA = "0.0.0.0";
+    public static final String BLOCK_IP = "0.0.0.0";
+    public static final String BLOCK_IP_EXTRA = "127.0.0.1";
+    /** Tiền tố subdomain được chặn kèm theo mỗi domain gốc. */
+    public static final String WWW_PREFIX = "www.";
 
     private static final Logger log = LoggerFactory.getLogger(HostsFileManager.class);
 
@@ -98,9 +117,10 @@ public class HostsFileManager {
 
     /**
      * Cập nhật danh sách domain bị chặn (idempotent): xóa block cũ giữa 2
-     * marker, ghi block mới với danh sách {@code domains} trỏ về
-     * {@code 127.0.0.1} (và {@code 0.0.0.0} để triệt để). Tạo backup trước
-     * khi ghi lần đầu. Danh sách rỗng tương đương {@link #clearBlocks()}.
+     * marker (kể cả marker legacy), ghi block mới — mỗi domain trỏ về
+     * {@code 0.0.0.0} (và {@code 127.0.0.1}) kèm biến thể {@code www}. Tạo
+     * backup trước khi ghi lần đầu; Windows tự flush DNS cache sau khi ghi
+     * thành công. Danh sách rỗng tương đương {@link #clearBlocks()}.
      *
      * @return {@code true} nếu ghi thành công; {@code false} nếu thiếu quyền
      *         hoặc I/O lỗi (đã log WARN, không ném exception)
@@ -121,6 +141,9 @@ public class HostsFileManager {
 
             atomicWrite(updated);
             log.info("Hosts file updated: {} domain(s) blocked via {}", sanitized.size(), hostsFilePath);
+            // Windows: flush DNS cache — thay đổi hosts có hiệu lực ngay trong
+            // trình duyệt không cần restart (defensive: lỗi chỉ log, không fail).
+            flushDnsCache();
             return true;
         } catch (AccessDeniedException e) {
             log.warn("Lacking Administrator/root privileges to modify hosts file. "
@@ -233,20 +256,30 @@ public class HostsFileManager {
         log.info("Hosts backup created at {}", backupFilePath);
     }
 
-    /** Xóa toàn bộ nội dung giữa 2 marker (kể cả marker) khỏi nội dung. */
+    /**
+     * Xóa toàn bộ nội dung giữa 2 marker (kể cả marker) khỏi nội dung —
+     * nhận diện CẢ marker hiện hành lẫn marker legacy (phiên bản cũ).
+     */
     static String stripMarkerBlock(String content) {
-        if (content == null || !content.contains(MARKER_START)) {
-            return content == null ? "" : content;
+        if (content == null) {
+            return "";
+        }
+        boolean hasCurrent = content.contains(MARKER_START);
+        boolean hasLegacy = content.contains(LEGACY_MARKER_START);
+        if (!hasCurrent && !hasLegacy) {
+            return content;
         }
         StringBuilder sb = new StringBuilder(content.length());
         boolean inBlock = false;
         for (String line : content.split("\n", -1)) {
             String trimmed = line.trim();
-            if (trimmed.equals(MARKER_START)) {
+            boolean isStart = trimmed.equals(MARKER_START) || trimmed.equals(LEGACY_MARKER_START);
+            boolean isEnd = trimmed.equals(MARKER_END) || trimmed.equals(LEGACY_MARKER_END);
+            if (isStart) {
                 inBlock = true;
                 continue;
             }
-            if (trimmed.equals(MARKER_END)) {
+            if (isEnd) {
                 inBlock = false;
                 continue;
             }
@@ -257,13 +290,22 @@ public class HostsFileManager {
         return sb.toString();
     }
 
-    /** Dựng khối marker mới từ danh sách domain đã sanitize. */
+    /**
+     * Dựng khối marker mới từ danh sách domain đã sanitize: mỗi domain được
+     * ghi với CẢ địa chỉ {@code 0.0.0.0} và {@code 127.0.0.1}, và CẢ domain
+     * gốc lẫn subdomain {@code www.domain} (chặn triệt để cả subdomain;
+     * domain đã bắt đầu bằng {@code www.} thì bỏ qua biến thể lặp).
+     */
     static String buildMarkerBlock(List<String> domains) {
         StringBuilder sb = new StringBuilder();
         sb.append(MARKER_START).append('\n');
         for (String domain : domains) {
-            sb.append(BLOCK_IP).append("  ").append(domain).append('\n');
-            sb.append(BLOCK_IP_EXTRA).append("  ").append(domain).append('\n');
+            String wwwVariant = domain.startsWith(WWW_PREFIX) ? null : WWW_PREFIX + domain;
+            for (String entry : wwwVariant != null
+                    ? new String[]{domain, wwwVariant} : new String[]{domain}) {
+                sb.append(BLOCK_IP).append("  ").append(entry).append('\n');
+                sb.append(BLOCK_IP_EXTRA).append("  ").append(entry).append('\n');
+            }
         }
         sb.append(MARKER_END);
         return sb.toString();
@@ -325,6 +367,55 @@ public class HostsFileManager {
             return Files.isWritable(hostsFilePath);
         } catch (RuntimeException e) {
             log.debug("canWrite check failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Xóa cache DNS Windows ({@code ipconfig /flushdns}) sau khi hosts thay
+     * đổi — trình duyệt giải mã lại tên miền theo hosts mới ngay, không cần
+     * restart. Non-Windows là no-op an toàn; lỗi (thiếu quyền, timeout,
+     * IOException) chỉ log WARN — KHÔNG BAO GIỜ coi flush thất bại là lỗi
+     * apply (hosts file đã ghi thành công, cache sẽ tự hết hạn).
+     *
+     * @return {@code true} nếu flush thành công (hoặc không cần flush);
+     *         {@code false} nếu flush thất bại
+     */
+    public boolean flushDnsCache() {
+        if (!isWindows()) {
+            log.debug("Not Windows — DNS flush skipped");
+            return true; // không cần flush trên Linux/macOS (systemd-resolved tự đọc lại)
+        }
+        try {
+            Process process = new ProcessBuilder("ipconfig", "/flushdns")
+                    .redirectErrorStream(false)
+                    .start();
+            boolean finished = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                log.warn("ipconfig /flushdns timed out — DNS cache sẽ tự hết hạn");
+                return false;
+            }
+            if (process.exitValue() == 0) {
+                log.info("DNS cache flushed (ipconfig /flushdns) — hosts changes are live");
+                return true;
+            }
+            log.warn("ipconfig /flushdns exitCode={} — DNS cache sẽ tự hết hạn", process.exitValue());
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (IOException | RuntimeException e) {
+            log.warn("Cannot flush DNS cache ({}): {} — hosts changes vẫn được áp dụng",
+                    e.getClass().getSimpleName(), e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean isWindows() {
+        try {
+            return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        } catch (RuntimeException e) {
             return false;
         }
     }

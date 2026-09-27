@@ -50,6 +50,17 @@ final class PolicyConfigDialog extends JDialog {
     /** Số byte trong 1 GB (chuyển đổi spinner GB ↔ bytes, nhị phân). */
     static final long BYTES_PER_GB = 1024L * 1024 * 1024;
 
+    /** Danh mục mẫu: Web người lớn / Độc hại (Domain Blacklist Management). */
+    static final java.util.List<String> PRESET_ADULT_HARMFUL = java.util.List.of(
+            "xvideos.com", "pornhub.com", "xhamster.com", "xnxx.com",
+            "bet88.com", "f8bet.com", "sunwin.com", "789bet.com",
+            "shbet.com", "hello88.com");
+
+    /** Danh mục mẫu: Mạng xã hội & Video. */
+    static final java.util.List<String> PRESET_SOCIAL_VIDEO = java.util.List.of(
+            "tiktok.com", "facebook.com", "youtube.com", "instagram.com",
+            "snapchat.com", "x.com", "reddit.com");
+
     private final RuleDao ruleDao;
     private final ClientRecord client;
     private final Runnable afterSaveCallback;
@@ -114,7 +125,7 @@ final class PolicyConfigDialog extends JDialog {
     private void initUi() {
         setLayout(new BorderLayout(0, 8));
 
-        // --- Blocked domains ---
+        // --- Blocked domains (Domain Blacklist Management) ---
         domainListModel = new DefaultListModel<>();
         for (String domain : ruleDao.getBlockedDomains(client.clientId())) {
             domainListModel.addElement(domain);
@@ -122,15 +133,9 @@ final class PolicyConfigDialog extends JDialog {
         JList<String> domainList = new JList<>(domainListModel);
         domainList.setVisibleRowCount(6);
         domainField = new JTextField(18);
-        JButton addButton = new JButton("Thêm");
-        JButton removeButton = new JButton("Xóa");
-        addButton.addActionListener(event -> {
-            String domain = domainField.getText().trim().toLowerCase();
-            if (!domain.isEmpty() && !domainListModel.contains(domain)) {
-                domainListModel.addElement(domain);
-            }
-            domainField.setText("");
-        });
+        JButton addButton = new JButton("\u2795 Th\u00EAm");
+        JButton removeButton = new JButton("\uD83D\uDDD1 X\u00F3a");
+        addButton.addActionListener(event -> addDomainFromField());
         removeButton.addActionListener(event -> {
             int index = domainList.getSelectedIndex();
             if (index >= 0) {
@@ -138,14 +143,30 @@ final class PolicyConfigDialog extends JDialog {
             }
         });
 
+        // Nút tiện ích: nạp danh mục mẫu (preset blacklist)
+        JButton presetAdultButton = new JButton("N\u1EA1p: Web ng\u01B0\u1EDDi l\u1EDBn / \u0110\u1ED9c h\u1EA1i");
+        presetAdultButton.addActionListener(event ->
+                mergePresetIntoList(PRESET_ADULT_HARMFUL));
+        JButton presetSocialButton = new JButton("N\u1EA1p: M\u1EA1ng x\u00E3 h\u1ED9i & Video");
+        presetSocialButton.addActionListener(event ->
+                mergePresetIntoList(PRESET_SOCIAL_VIDEO));
+
         JPanel domainsPanel = new JPanel(new BorderLayout(0, 4));
-        domainsPanel.setBorder(BorderFactory.createTitledBorder("Danh sách website bị chặn"));
+        domainsPanel.setBorder(BorderFactory.createTitledBorder(
+                "Qu\u1EA3n l\u00FD Ch\u1EB7n T\u00EAn Mi\u1EC1n (Blacklist)"));
         domainsPanel.add(new JScrollPane(domainList), BorderLayout.CENTER);
         JPanel domainEditPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
         domainEditPanel.add(domainField);
         domainEditPanel.add(addButton);
         domainEditPanel.add(removeButton);
-        domainsPanel.add(domainEditPanel, BorderLayout.SOUTH);
+        JPanel presetPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+        presetPanel.add(new JLabel("Danh m\u1EE5c m\u1EABu:"));
+        presetPanel.add(presetAdultButton);
+        presetPanel.add(presetSocialButton);
+        JPanel domainsSouth = new JPanel(new BorderLayout(0, 2));
+        domainsSouth.add(domainEditPanel, BorderLayout.NORTH);
+        domainsSouth.add(presetPanel, BorderLayout.SOUTH);
+        domainsPanel.add(domainsSouth, BorderLayout.SOUTH);
 
         // --- Hạn mức + khung giờ ---
         JPanel limitsPanel = new JPanel(new GridBagLayout());
@@ -195,6 +216,32 @@ final class PolicyConfigDialog extends JDialog {
         add(domainsPanel, BorderLayout.NORTH);
         add(limitsPanel, BorderLayout.CENTER);
         add(buttonPanel, BorderLayout.SOUTH);
+    }
+
+    /**
+     * Thêm domain từ ô nhập vào danh sách: chuẩn hóa (trim + lowercase + bỏ
+     * {@code http://}/{@code https://}/{@code /}/{port}/{www.}) qua quy tắc
+     * của {@code BlockedDomainDao.normalizeDomain}; không hợp lệ → dialog nhẹ.
+     */
+    private void addDomainFromField() {
+        String normalized = BlockedDomainDialogHelper.normalize(domainField.getText());
+        if (normalized != null && !domainListModel.contains(normalized)) {
+            domainListModel.addElement(normalized);
+        } else if (normalized == null) {
+            javax.swing.JOptionPane.showMessageDialog(this,
+                    "Tên miền không hợp lệ. Ví dụ: facebook.com hoặc https://www.facebook.com/",
+                    "Domain không hợp lệ", javax.swing.JOptionPane.WARNING_MESSAGE);
+        }
+        domainField.setText("");
+    }
+
+    /** Gộp danh mục mẫu vào danh sách hiện hành (khử trùng lặp, giữ domain đã có). */
+    private void mergePresetIntoList(java.util.List<String> preset) {
+        for (String domain : preset) {
+            if (!domainListModel.contains(domain)) {
+                domainListModel.addElement(domain);
+            }
+        }
     }
 
     /** Lưu rule + domains vào DB, đẩy CONFIG_SYNC qua callback, đóng dialog. */
