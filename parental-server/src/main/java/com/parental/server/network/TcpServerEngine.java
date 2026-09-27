@@ -19,6 +19,7 @@ import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.payload.UnpairPayload;
 import com.parental.server.db.ActivityDao;
+import com.parental.server.db.BlockedDomainDao;
 import com.parental.server.db.ClientDao;
 import com.parental.server.db.CommandLogDao;
 import com.parental.server.db.DatabaseManager;
@@ -59,6 +60,8 @@ public class TcpServerEngine {
     private PairingDao pairingDao;
     /** Nhật ký hoạt động (Activity Monitoring) — null khi chạy không database. */
     private ActivityDao activityDao;
+    /** Quản lý danh sách tên miền bị chặn (Blacklist) — null khi chạy không DB. */
+    private BlockedDomainDao blockedDomainDao;
 
     /** Rule Engine (Task 4.2) — null khi chạy không database. */
     private RuleEvaluationEngine ruleEvaluationEngine;
@@ -111,6 +114,7 @@ public class TcpServerEngine {
             this.ruleDao = new RuleDao(databaseManager);
             this.pairingDao = new PairingDao(databaseManager);
             this.activityDao = new ActivityDao(databaseManager);
+            this.blockedDomainDao = new BlockedDomainDao(databaseManager);
         }
     }
 
@@ -269,6 +273,26 @@ public class TcpServerEngine {
     /** DAO nhật ký hoạt động (null nếu engine chạy không DB). */
     public ActivityDao getActivityDao() {
         return activityDao;
+    }
+
+    /** DAO danh sách tên miền bị chặn (null nếu engine chạy không DB). */
+    public BlockedDomainDao getBlockedDomainDao() {
+        return blockedDomainDao;
+    }
+
+    /**
+     * Đẩy CONFIG_SYNC (kèm danh sách blockedDomains mới nhất từ DB) xuống
+     * client đang online (Domain Blacklist Management): GUI gọi ngay sau khi
+     * lưu cấu hình. Client offline → không gửi được, trả false.
+     *
+     * @return {@code true} nếu đẩy thành công
+     */
+    public boolean pushConfigSync(String clientId) {
+        if (ruleEvaluationEngine == null) {
+            log.warn("Cannot push CONFIG_SYNC to [{}]: no rule engine (no DB)", clientId);
+            return false;
+        }
+        return ruleEvaluationEngine.syncConfigToClient(clientId);
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.parental.server.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -81,5 +82,44 @@ class GuiFormatTest {
         assertEquals(0, GuiFormat.clampPercent(100, -5));
         assertEquals(0, GuiFormat.clampPercent(-10, 100));
         assertEquals(100, GuiFormat.clampPercent(100, 100));
+    }
+
+    // ------------------------------------------------------------------
+    // truncateForDisplay (hotfix Activity Monitoring — chống phình panel)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("truncateForDisplay: chuỗi ngắn hơn giới hạn → nguyên vẹn")
+    void truncateShortStringUnchanged() {
+        assertEquals("chrome.exe — Title", GuiFormat.truncateForDisplay("chrome.exe — Title", 60));
+        assertEquals("", GuiFormat.truncateForDisplay("", 60));
+        assertEquals("", GuiFormat.truncateForDisplay(null, 60));
+    }
+
+    @Test
+    @DisplayName("truncateForDisplay: chuỗi dài → cắt còn maxLength-3 + '...'")
+    void truncateLongStringAddsEllipsis() {
+        String longTitle = "x".repeat(80);
+        String result = GuiFormat.truncateForDisplay(longTitle, 60);
+        assertEquals(60, result.length(), "Kết quả đúng bằng maxLength");
+        assertTrue(result.endsWith("..."), "Kết thúc bằng dấu ...");
+        assertEquals("x".repeat(57) + "...", result);
+    }
+
+    @Test
+    @DisplayName("truncateForDisplay: đúng biên — length == maxLength → nguyên vẹn")
+    void truncateBoundary() {
+        String exact = "y".repeat(60);
+        assertEquals(exact, GuiFormat.truncateForDisplay(exact, 60),
+                "Đúng độ dài giới hạn không bị cắt");
+    }
+
+    @Test
+    @DisplayName("truncateForDisplay: maxLength nhỏ bất thường (≤ 3, âm) không ném, không rơi vô hạn")
+    void truncateTinyLimits() {
+        assertEquals("abc", GuiFormat.truncateForDisplay("abcdef", 3));
+        assertEquals("ab", GuiFormat.truncateForDisplay("abcdef", 2));
+        assertEquals("abcdef", GuiFormat.truncateForDisplay("abcdef", -1), "Âm → nguyên vẹn");
+        assertEquals("", GuiFormat.truncateForDisplay(null, -1));
     }
 }

@@ -86,4 +86,28 @@ public final class GuiFormat {
         double percent = (used * 100.0) / limit;
         return (int) Math.max(0, Math.min(100, Math.round(percent)));
     }
+
+    /**
+     * Cắt ngắn chuỗi hiển thị nếu vượt {@code maxLength} ký tự — thêm dấu
+     * "..." ở cuối để không làm phình chiều ngang panel (Activity Monitoring:
+     * tiêu đề cửa sổ trình duyệt có thể rất dài). Chuỗi ngắn hơn hoặc bằng
+     * giới hạn → nguyên vẹn; {@code null} → chuỗi rỗng.
+     *
+     * <p>Ví dụ với maxLength = 60: tiêu đề 80 ký tự → 57 ký tự đầu + "...".</p>
+     */
+    public static String truncateForDisplay(String text, int maxLength) {
+        if (text == null) {
+            return "";
+        }
+        if (maxLength < 0) {
+            return text;
+        }
+        if (text.length() <= maxLength) {
+            return text;
+        }
+        if (maxLength <= 3) {
+            return text.substring(0, Math.max(0, maxLength));
+        }
+        return text.substring(0, maxLength - 3) + "...";
+    }
 }

@@ -156,8 +156,11 @@ public class ServerDashboardFrame extends JFrame {
 
     private void initUi() {
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE); // đóng qua windowClosing handler
-        setSize(1000, 650);
-        setMinimumSize(new Dimension(860, 560));
+        // Hotfix bố cục Activity Monitoring: 1050x750 đủ chỗ cho panel "Giám sát
+        // tức thời" + "Hoạt động người dùng" + JTable nhật ký (trước đây 1000x650
+        // khiến metric cards bị co cụm, đè chữ lên nhau).
+        setSize(1050, 750);
+        setMinimumSize(new Dimension(950, 680));
         setLocationRelativeTo(null); // canh giữa màn hình
         setLayout(new BorderLayout());
 
@@ -555,8 +558,22 @@ public class ServerDashboardFrame extends JFrame {
         activityTable.getColumnModel().getColumn(1).setPreferredWidth(120);
         activityTable.getColumnModel().getColumn(2).setPreferredWidth(420);
         activityTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
+        // Title cửa sổ dài → cắt trong cell (chuỗi dài không phá bố cục cột)
+        activityTable.getColumnModel().getColumn(2).setCellRenderer(
+                new javax.swing.table.DefaultTableCellRenderer() {
+                    @Override
+                    public java.awt.Component getTableCellRendererComponent(JTable table,
+                            Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                        setText(value == null ? "" : GuiFormat.truncateForDisplay(value.toString(), 80));
+                        setToolTipText(value == null ? null : value.toString());
+                        return this;
+                    }
+                });
         JScrollPane activityScroll = new JScrollPane(activityTable);
-        activityScroll.setPreferredSize(new Dimension(0, 130));
+        // Kích thước cố định hợp lý — JTable luôn nằm trọn trong JScrollPane
+        activityScroll.setPreferredSize(new Dimension(880, 140));
+        activityScroll.setMinimumSize(new Dimension(600, 120));
         activityScroll.setBorder(BorderFactory.createTitledBorder("Nhật ký hoạt động gần đây (10 bản ghi)"));
 
         JPanel center = new JPanel(new BorderLayout(0, 8));
@@ -744,13 +761,15 @@ public class ServerDashboardFrame extends JFrame {
             sessionDurationField.setText("—");
         }
 
-        // Hoạt động tức thời từ phiên (Activity Monitoring — Mục 3.9)
+        // Hoạt động tức thời từ phiên (Activity Monitoring — Mục 3.9);
+        // cắt ngắn tiêu đề dài để không phình chiều ngang panel (hotfix bố cục).
         com.parental.common.protocol.payload.ActivityReportPayload activity =
                 session != null ? session.getLastActivity() : null;
         if (activity != null && !activity.activeProcessName().isEmpty()) {
             String title = activity.activeWindowTitle();
-            activeAppField.setText(activity.activeProcessName()
-                    + (title.isEmpty() ? "" : " — " + title));
+            String display = activity.activeProcessName()
+                    + (title.isEmpty() ? "" : " — " + title);
+            activeAppField.setText(GuiFormat.truncateForDisplay(display, 90));
         } else {
             activeAppField.setText("—");
         }
@@ -833,6 +852,7 @@ public class ServerDashboardFrame extends JFrame {
                     orDash(record.windowTitle())
             });
         }
+        activityTable.repaint();
     }
 
     private static String orDash(String text) {

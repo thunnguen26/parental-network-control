@@ -5,6 +5,8 @@
 > **✅ HOTFIX: deadlock EDT trong ClientPairingFrame (2026-09-27)** — frame không tự đóng sau ghép đôi; callback engine bootstrap chuyển sang thread nền + hành vi nút X — 210/210 test pass.
 > **✅ MỞ RỘNG HOÀN THÀNH: Quản trị thiết bị — Alias & Delete/Unpair (2026-09-27)** — nút ✏️ Đổi tên + 🗑️ Xóa thiết bị trên Dashboard, `MessageType.UNPAIR`, xóa cascade atomic — 223/223 test pass.
 > **✅ MỞ RỘNG HOÀN THÀNH: Activity Monitoring (2026-09-27)** — giám sát hoạt động thời gian thực (Active Window + Top Processes), `MessageType.ACTIVITY_REPORT`, bảng `activity_logs`, Dashboard hiển thị "Đang mở" + nhật ký — 245/245 test pass.
+> **✅ HOTFIX Activity Monitoring (2026-09-27)** — PowerShell tách stderr + exitCode fallback (không gửi lỗi lên Server), bố cục Dashboard 1050x750 + cắt chuỗi dài — 251/251 test pass.
+> **🚧 ĐANG LÀM: Domain Blacklist Management** — BlockedDomainDao + pushConfigSync xong; còn lại Hosts www/flushdns + GUI preset + test.
 
 ## Phase 1: Foundation & Common Protocol Engine
 - [x] Task 1.1: Setup Maven Multi-module (`parental-network-control`, `parental-common`, `parental-server`, `parental-client`).
