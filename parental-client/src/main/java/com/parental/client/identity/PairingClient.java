@@ -40,6 +40,14 @@ public class PairingClient {
     private final JsonProtocolParser parser = new JsonProtocolParser();
 
     /**
+     * Socket của phiên ghép đôi đang chạy (nếu có) — cho phép hủy NGAY lập
+     * tức ({@link #close()}) thay vì chờ {@code soTimeout} 10s đánh thức
+     * {@code readLine()}. Không rò rỉ socket: try-with-resources trong
+     * {@link #pair} luôn đóng socket dù thành công/thất bại/bị ngắt.
+     */
+    private volatile Socket activeSocket;
+
+    /**
      * Kết quả một lần thử ghép đôi.
      *
      * @param success     server xác nhận ghép đôi thành công
@@ -61,6 +69,7 @@ public class PairingClient {
     public PairingResult pair(String serverHost, int serverPort, String clientId,
                               String pin, PairRequestPayload request) {
         try (Socket socket = new Socket()) {
+            activeSocket = socket;
             socket.connect(new InetSocketAddress(serverHost, serverPort), CONNECT_TIMEOUT_MS);
             socket.setTcpNoDelay(true);
             socket.setSoTimeout(RESPONSE_TIMEOUT_MS);
@@ -99,6 +108,25 @@ public class PairingClient {
         } catch (ProtocolParseException e) {
             log.warn("Malformed PAIR_RESPONSE: {}", e.getMessage());
             return new PairingResult(false, null, "Phản hồi ghép đôi hỏng (JSON sai schema)");
+        } finally {
+            activeSocket = null; // try-with-resources đã đóng socket ở mọi đường đi
+        }
+    }
+
+    /**
+     * Đóng NGAY socket ghép đôi đang chạy (nếu có) — dùng khi người dùng hủy
+     * ghép đôi giữa chừng: {@code readLine()} đang block được đánh thức tức
+     * thì thay vì chờ hết {@code soTimeout} 10s. Idempotent, không ném exception.
+     */
+    public void close() {
+        Socket socket = activeSocket;
+        if (socket != null && !socket.isClosed()) {
+            try {
+                socket.close();
+                log.info("Active pairing socket closed (pairing cancelled)");
+            } catch (IOException e) {
+                log.debug("Pairing socket close ignored: {}", e.getMessage());
+            }
         }
     }
 }

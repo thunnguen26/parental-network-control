@@ -123,7 +123,10 @@ public class ClientApp {
             ClientPairingFrame frame = new ClientPairingFrame(
                     identityManager, deviceInfoCollector, host,
                     () -> {
-                        // Được gọi trên EDT sau khi token đã lưu vào file.
+                        // Contract (hotfix deadlock EDT): callback CHẠY TRÊN THREAD NỀN
+                        // ("parental-client-engine-bootstrap"), KHÔNG BAO GIỜ trên EDT —
+                        // hàm này kết thúc bằng keepMainThreadAlive() (park vô hạn) và
+                        // nếu chạy trên EDT sẽ block toàn bộ UI vĩnh viễn.
                         log.info("Pairing completed — switching to background engine");
                         ClientIdentity paired = identityManager.load();
                         if (paired == null || paired.deviceToken() == null) {
