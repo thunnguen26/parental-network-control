@@ -23,3 +23,14 @@ client_identity.json
 # OS generated files
 Thumbs.db
 .DS_Store
+
+# ---- Android module (parental-android) ----
+parental-android/.gradle/
+parental-android/build/
+parental-android/app/build/
+parental-android/local.properties
+*.apk
+*.aab
+parental-android/.idea/
+parental-android/captures/
+.kotlin/
