@@ -133,8 +133,8 @@ final class PolicyConfigDialog extends JDialog {
         JList<String> domainList = new JList<>(domainListModel);
         domainList.setVisibleRowCount(6);
         domainField = new JTextField(18);
-        JButton addButton = new JButton("\u2795 Th\u00EAm");
-        JButton removeButton = new JButton("\uD83D\uDDD1 X\u00F3a");
+        JButton addButton = new JButton("+ Thêm");
+        JButton removeButton = new JButton("Xóa");
         addButton.addActionListener(event -> addDomainFromField());
         removeButton.addActionListener(event -> {
             int index = domainList.getSelectedIndex();
@@ -207,7 +207,7 @@ final class PolicyConfigDialog extends JDialog {
         limitsPanel.add(schedulePanel, gbc);
 
         // --- Nút lưu ---
-        JButton saveButton = new JButton("💾 Lưu & Đồng bộ ngay");
+        JButton saveButton = new JButton("Lưu & Đồng bộ ngay");
         saveButton.addActionListener(event -> saveAndSync());
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));

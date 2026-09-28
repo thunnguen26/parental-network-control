@@ -1,12 +1,18 @@
 # CURRENT PROJECT STATE & TASK LOG
 
 ## 1. Project Snapshot
-- **Current Phase:** **Chặn domain triệt để (DoH/QUIC/Alias) + Dedup nhật ký + Gõ tiếng Việt GUI (2026-09-28)**.
-- **Current Status:** `mvn clean test` BUILD SUCCESS toàn reactor — **328/328 test pass** (25 common + 169 server + 134 client). Quy tắc môi trường đã kiểm chứng: `mvn clean` bị Windows ghost-lock file `.class` (không có process java) → chạy `mv target target-del` cho từng module rồi xóa, sau đó clean pass bình thường.
+- **Current Phase:** **Hotfix GUI: Icon ô vuông + Idempotent Quick-Block (2026-09-28)**.
+- **Current Status:** `mvn test` BUILD SUCCESS toàn reactor — **329/329 test pass** (25 common + 170 server + 134 client). Quy tắc môi trường đã kiểm chứng: `mvn clean` bị Windows ghost-lock file `.class` → `mv target target-del` từng module rồi xóa; GUI SERVER ĐÃ SẠCH EMOJI (chỉ dùng ký tự BMP cơ bản + văn bản) — thêm icon mới phải theo quy ước này.
 - **Active Task:** Không có dở dang.
-- **Next Action:** Chạy thực tế Server + Client với quyền Administrator: (1) chặn youtube.com → xác nhận trình duyệt Chromium KHÔNG còn vào được qua DoH/QUIC (Secure DNS hiện "Managed by organization" là dấu hiệu registry policy ăn), (2) ở yên 1 video 1 phút → activity_logs KHÔNG tăng dòng (dedup), (3) gõ tiếng Việt Unikey/EVKey vào ô lọc/ô domain → có dấu đúng; sau đó commit.
+- **Next Action:** Chạy thực tế Server + Client với quyền Administrator xác nhận 4 điểm: (1) mọi nút/menu hiển thị chữ rõ ràng KHÔNG còn ô vuông, (2) chặn youtube.com → trình duyệt Chromium không vào được qua DoH/QUIC, (3) ở yên 1 video 1 phút → activity_logs không tăng dòng, (4) gõ tiếng Việt Unikey/EVKey có dấu đúng; sau đó commit.
 
 ## 2. Completed Tasks
+- [x] **Hotfix GUI: Icon ô vuông + Idempotent Quick-Block (2026-09-28)** — 2 lỗi thực tế xử lý dứt điểm:
+    - **1. Icon ô vuông (emoji bị mất glyph)**: nguyên nhân — ép font Segoe UI (fix gõ tiếng Việt trước đó) làm Swing Windows không còn font fallback cho emoji ngoài BMP → `⛶🗑️✏️💾🔍🚫⏸▶🔄🎉⚠➕` thành ô vuông. Fix: rửa TOÀN BỘ emoji khỏi GUI (chọn phương án "đơn giản hóa nhãn" — chuẩn BMP/ký tự ASCII + văn bản rõ ràng) chứ không dùng Segoe UI Emoji fallback (Swing không tự fallback giữa fonts):
+        - `ServerDashboardFrame`: nút `+ Thêm thiết bị mới`, `Xóa thiết bị`, `Cấu hình chính sách...`, `Đổi tên`, `Tạm dừng mạng`, `Khôi phục mạng`, `Xóa lịch sử hoạt động`, `Xem toàn bộ / Mở rộng`, `Làm mới`; label `Lọc tiến trình/tiêu đề:` (2 chỗ); Event Log prefix `[!]` (cảnh báo) / `[OK]` (thành công) / văn bản thường thay ⚠🗑️🎉; cả chuỗi escape `\uD83D\uDDD1` lẫn emoji trực tiếp.
+        - `PolicyConfigDialog` (`+ Thêm`, `Xóa`, `Lưu & Đồng bộ ngay`), `PairingDialog` (`Đổi mã PIN`), `ServerDashboardFrameTestHook.buildQuickBlockLabel` (`Chặn tên miền này (gợi ý: domain)`), `ClientPairingFrame` status label bỏ ⚠ + javadoc.
+    - **2. Quick-Block idempotent khi domain đã tồn tại**: `BlockedDomainDao.addDomain` đổi trả `AddResult` enum {ADDED, ALREADY_PRESENT, FAILED} + `isSuccess()`; `INSERT OR IGNORE` giữ nguyên — trùng → `ALREADY_PRESENT` (log "idempotent, re-syncing") thay vì `false`. GUI `quickBlockDomainForClient`: FAILED → log lỗi DB; isSuccess → BẮT BUỘC `pushConfigSync` — ALREADY_PRESENT → "Tên miền '...' đã có trong danh sách chặn — đang đồng bộ lại xuống client", ADDED → "Đã chặn '...'". Fix lỗi cũ: trùng → false → báo sai "lỗi DB hoặc đã có sẵn" và BỎ QUA push → client không được cập nhật trạng thái chặn.
+    - **Test**: `BlockedDomainDaoTest` cập nhật + thêm test idempotent (thêm trùng 5 lần không ném, luôn ALREADY_PRESENT, DB không nhân bản; FAILED cho input hỏng/FK). Kết quả: **329/329 test pass** (`mvn test` toàn reactor: 25 common + 170 server + 134 client).
 - [x] **Chặn domain triệt để + Dedup nhật ký + Gõ tiếng Việt GUI (2026-09-28)** — 3 yêu cầu xử lý dứt điểm:
     - **1. Vô hiệu hóa đường lách hosts (`BrowserBypassEnforcer` — file mới client enforcement)**:
         - **DoH/Secure DNS**: 6 lệnh `reg add HKLM\SOFTWARE\Policies\{Chromium,Google\\Chrome,Microsoft\\Edge} /v {DnsOverHttpsMode=off, BuiltInDnsClientEnabled=0} /f` — Cốc Cốc (browser.exe) build Chromium đọc chung key Chromium; trình duyệt hiện "Managed by organization" khi policy ăn.

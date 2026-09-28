@@ -33,6 +33,25 @@ public class BlockedDomainDao {
 
     private static final Logger log = LoggerFactory.getLogger(BlockedDomainDao.class);
 
+    /**
+     * Kết quả thêm domain vào danh sách chặn — phân biệt 3 trạng thái để GUI
+     * phản hồi đúng (idempotent add: trùng không phải lỗi, vẫn phải đẩy
+     * CONFIG_SYNC để client áp dụng lại quy tắc chặn mới nhất).
+     */
+    public enum AddResult {
+        /** Đã thêm domain MỚI vào danh sách. */
+        ADDED,
+        /** Domain ĐÃ CÓ SẴN trong danh sách — không đổi DB (idempotent). */
+        ALREADY_PRESENT,
+        /** Thất bại: domain không hợp lệ, client lạ (FK) hoặc lỗi DB. */
+        FAILED;
+
+        /** Thuận tiện cho GUI/test: thành công khi ADDED hoặc ALREADY_PRESENT. */
+        public boolean isSuccess() {
+            return this == ADDED || this == ALREADY_PRESENT;
+        }
+    }
+
     private final DatabaseManager database;
 
     public BlockedDomainDao(DatabaseManager database) {
@@ -108,16 +127,23 @@ public class BlockedDomainDao {
     }
 
     /**
-     * Thêm 1 domain vào danh sách chặn (chuẩn hóa qua {@link #normalizeDomain}).
+     * Thêm 1 domain vào danh sách chặn (chuẩn hóa qua {@link #normalizeDomain})
+     * — <b>IDEMPOTENT</b>: dùng {@code INSERT OR IGNORE}, domain trùng KHÔNG
+     * phải lỗi mà là trạng thái riêng ({@link AddResult#ALREADY_PRESENT})
+     * để GUI vẫn đẩy CONFIG_SYNC đồng bộ lại client (fix: trước đây trả
+     * {@code false} khi trùng → GUI báo sai "lỗi DB hoặc đã có sẵn" và bỏ
+     * qua push, client không được cập nhật trạng thái chặn mới nhất).
      *
-     * @return {@code true} nếu thêm mới thành công; {@code false} nếu domain
-     *         không hợp lệ, đã tồn tại, client chưa tồn tại (FK) hoặc lỗi
+     * @return {@link AddResult#ADDED} nếu thêm mới; {@link
+     *         AddResult#ALREADY_PRESENT} nếu đã tồn tại; {@link
+     *         AddResult#FAILED} nếu domain không hợp lệ, client chưa tồn tại
+     *         (FK) hoặc lỗi DB
      */
-    public boolean addDomain(String clientId, String domain) {
+    public AddResult addDomain(String clientId, String domain) {
         String normalized = normalizeDomain(domain);
         if (normalized == null || clientId == null || clientId.isBlank()) {
             log.warn("Cannot add invalid domain '{}' for client [{}]", domain, clientId);
-            return false;
+            return AddResult.FAILED;
         }
         String sql = "INSERT OR IGNORE INTO blocked_domains (client_id, domain) VALUES (?, ?)";
         try (Connection connection = database.newConnection();
@@ -127,11 +153,13 @@ public class BlockedDomainDao {
             boolean added = statement.executeUpdate() > 0;
             if (added) {
                 log.info("Domain '{}' blocked for client [{}]", normalized, clientId);
+                return AddResult.ADDED;
             }
-            return added;
+            log.info("Domain '{}' already blocked for client [{}] — idempotent, re-syncing", normalized, clientId);
+            return AddResult.ALREADY_PRESENT;
         } catch (SQLException e) {
             log.error("Failed to add domain '{}' for client [{}]: {}", domain, clientId, e.getMessage());
-            return false;
+            return AddResult.FAILED;
         }
     }
 

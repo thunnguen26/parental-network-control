@@ -52,7 +52,7 @@ public class PairingDialog extends JDialog {
     private final JLabel pinLabel = new JLabel("—");
     private final JLabel countdownLabel = new JLabel();
     private final JLabel statusLabel = new JLabel(" ");
-    private final JButton regenerateButton = new JButton("\uD83D\uDD01 \u0110\u1ED5i m\u00E3 PIN");
+    private final JButton regenerateButton = new JButton("Đổi mã PIN");
 
     /** Mã PIN hiện hành đang hiển thị. */
     private volatile String currentPin;

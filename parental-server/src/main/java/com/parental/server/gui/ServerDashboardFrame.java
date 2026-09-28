@@ -172,7 +172,7 @@ public class ServerDashboardFrame extends JFrame {
         if (serverEngine.getActivityDao() != null) {
             int purged = serverEngine.getActivityDao().purgeCorruptedRows();
             if (purged > 0) {
-                appendEventLog("\uD83E\uDDF9 \u0110\u00E3 d\u1ECDn " + purged
+                appendEventLog("[OK] Đã dọn " + purged
                         + " b\u1EA3n ghi ho\u1EA1t \u0111\u1ED9ng r\u00E1c t\u1EEB era l\u1ED7i PowerShell");
             }
         }
@@ -217,14 +217,14 @@ public class ServerDashboardFrame extends JFrame {
         scrollPane.setBorder(BorderFactory.createTitledBorder("Thiết bị đang quản lý"));
 
         // Nút ghép đôi thiết bị mới (Device Pairing) + xóa thiết bị + dialog cấu hình chính sách (Task 5.2)
-        JButton addDeviceButton = new JButton("\u2795 Th\u00EAm thi\u1EBFt b\u1ECB m\u1EDBi");
+        JButton addDeviceButton = new JButton("+ Thêm thiết bị mới");
         addDeviceButton.addActionListener(event -> openPairingDialog());
 
-        deleteDeviceButton = new JButton("\uD83D\uDDD1 X\u00F3a thi\u1EBFt b\u1ECB");
+        deleteDeviceButton = new JButton("Xóa thiết bị");
         deleteDeviceButton.setEnabled(false); // chỉ bật khi có thiết bị đang chọn
         deleteDeviceButton.addActionListener(event -> deleteSelectedDevice());
 
-        JButton policyButton = new JButton("\u2699 C\u1EA5u h\u00ECnh ch\u00EDnh s\u00E1ch...");
+        JButton policyButton = new JButton("Cấu hình chính sách...");
         policyButton.addActionListener(event -> openPolicyDialog());
 
         JPanel buttonPanel = new JPanel(new GridLayout(3, 1, 0, 4));
@@ -247,7 +247,7 @@ public class ServerDashboardFrame extends JFrame {
     private void deleteSelectedDevice() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("\u26A0 Ch\u01B0a ch\u1ECDn thi\u1EBFt b\u1ECB n\u00E0o \u0111\u1EC3 x\u00F3a");
+            appendEventLog("[!] Chưa chọn thiết bị nào để xóa");
             return;
         }
         String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
@@ -276,7 +276,7 @@ public class ServerDashboardFrame extends JFrame {
                 }
                 // 2. Xóa sạch DB (transaction: clients + rules + metrics + commands + domains)
                 return clientDao.deleteClient(clientId)
-                        ? "\uD83D\uDDD1 \u0110\u00E3 x\u00F3a thi\u1EBFt b\u1ECB '" + deviceDisplay
+                        ? "[OK] Đã xóa thiết bị '" + deviceDisplay
                                 + "' kh\u1ECFi danh s\u00E1ch qu\u1EA3n l\u00FD"
                                 + (wasOnline ? " (\u0111\u00E3 g\u1EEDi UNPAIR + ng\u1EAFt k\u1EBFt n\u1ED1i)" : " (offline)")
                         : null;
@@ -289,10 +289,10 @@ public class ServerDashboardFrame extends JFrame {
                     if (successMessage != null) {
                         appendEventLog(successMessage);
                     } else {
-                        appendEventLog("\u26A0 X\u00F3a thi\u1EBFt b\u1ECB th\u1EA5t b\u1EA1i (l\u1ED7i c\u01A1 s\u1EDF d\u1EEF li\u1EC7u)");
+                        appendEventLog("[!] Xóa thiết bị thất bại (lỗi cơ sở dữ liệu)");
                     }
                 } catch (Exception e) {
-                    appendEventLog("\u26A0 L\u1ED7i khi x\u00F3a thi\u1EBFt b\u1ECB: " + e.getMessage());
+                    appendEventLog("[!] Lỗi khi xóa thiết bị: " + e.getMessage());
                     log.error("Delete device failed: {}", e.getMessage(), e);
                 }
                 refreshNow();
@@ -308,13 +308,13 @@ public class ServerDashboardFrame extends JFrame {
     private void renameSelectedDevice() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("\u26A0 Ch\u01B0a ch\u1ECDn thi\u1EBFt b\u1ECB n\u00E0o \u0111\u1EC3 \u0111\u1ED5i t\u00EAn");
+            appendEventLog("[!] Chưa chọn thiết bị nào để đổi tên");
             return;
         }
         String input = (String) JOptionPane.showInputDialog(this,
                 "Nh\u1EADp bi\u1EC7t danh m\u1EDBi cho '" + selected.deviceName() + "':\n"
                         + "(\u0111\u1EC3 tr\u1ED1ng r\u1ED3i b\u1EA5m OK \u2192 x\u00F3a bi\u1EC7t danh, v\u1EC1 t\u00EAn m\u00E1y g\u1ED1c)",
-                "\u270F\uFE0F \u0110\u1ED5i t\u00EAn thi\u1EBFt b\u1ECB",
+                "Đổi tên thiết bị",
                 JOptionPane.PLAIN_MESSAGE, null, null,
                 selected.alias() != null ? selected.alias() : selected.deviceName());
         if (input == null) {
@@ -345,14 +345,14 @@ public class ServerDashboardFrame extends JFrame {
                 try {
                     String savedAlias = get();
                     if (savedAlias == null) {
-                        appendEventLog("\u26A0 Kh\u00F4ng l\u01B0u \u0111\u01B0\u1EE3c bi\u1EC7t danh (thi\u1EBFt b\u1ECB kh\u00F4ng t\u1ED3n t\u1EA1i trong DB)");
+                        appendEventLog("[!] Không lưu được biệt danh (thiết bị không tồn tại trong DB)");
                         return;
                     }
                     appendEventLog(savedAlias.isEmpty()
-                            ? "\u270F\uFE0F \u0110\u00E3 x\u00F3a bi\u1EC7t danh c\u1EE7a '" + deviceName + "' — v\u1EC1 t\u00EAn m\u00E1y g\u1ED1c"
-                            : "\u270F\uFE0F \u0110\u1EB7t bi\u1EC7t danh '" + savedAlias + "' cho thi\u1EBFt b\u1ECB '" + deviceName + "'");
+                            ? "Đã xóa biệt danh của '" + deviceName + "' — về tên máy gốc"
+                            : "Đã đặt biệt danh '" + savedAlias + "' cho thiết bị '" + deviceName + "'");
                 } catch (Exception e) {
-                    appendEventLog("\u26A0 L\u1ED7i khi \u0111\u1ED5i t\u00EAn: " + e.getMessage());
+                    appendEventLog("[!] Lỗi khi đổi tên: " + e.getMessage());
                 }
                 refreshNow(); // cập nhật JList + chi tiết ngay trên EDT
             }
@@ -367,11 +367,11 @@ public class ServerDashboardFrame extends JFrame {
      */
     private void openPairingDialog() {
         if (serverEngine.getPairingDao() == null) {
-            appendEventLog("\u26A0 Server \u0111ang ch\u1EA1y kh\u00F4ng database \u2014 kh\u00F4ng th\u1EC3 gh\u00E9p \u0111\u00F4i thi\u1EBFt b\u1ECB");
+            appendEventLog("[!] Server đang chạy không database — không thể ghép đôi thiết bị");
             return;
         }
         PairingDialog dialog = new PairingDialog(this, serverEngine.getPairingDao(), () -> {
-            appendEventLog("\uD83C\uDF89 M\u1ED9t thi\u1EBFt b\u1ECB m\u1EDBi \u0111\u00E3 gh\u00E9p \u0111\u00F4i th\u00E0nh c\u00F4ng \u2014 c\u00F3 th\u1EC3 k\u1EBFt n\u1ED1i b\u1EB1ng deviceToken");
+            appendEventLog("Một thiết bị mới đã ghép đôi thành công — có thể kết nối bằng deviceToken");
             refreshNow();
         });
         dialog.open();
@@ -382,8 +382,8 @@ public class ServerDashboardFrame extends JFrame {
      * cảnh báo — gọi thẳng manual API của {@link RuleEvaluationEngine}.
      */
     private JPanel buildQuickActionsPanel() {
-        pauseButton = new JButton("⏸ Tạm dừng mạng");
-        resumeButton = new JButton("▶ Khôi phục mạng");
+        pauseButton = new JButton("Tạm dừng mạng");
+        resumeButton = new JButton("Khôi phục mạng");
         alertMessageField = new JTextField(18);
         sendAlertButton = new JButton("Gửi cảnh báo");
 
@@ -396,7 +396,7 @@ public class ServerDashboardFrame extends JFrame {
         sendAlertButton.addActionListener(event -> {
             String message = alertMessageField.getText().trim();
             if (message.isEmpty()) {
-                appendEventLog("⚠ Tin nhắn cảnh báo rỗng — bỏ qua");
+                appendEventLog("[!] Tin nhắn cảnh báo rỗng — bỏ qua");
                 return;
             }
             runQuickAction(() -> ruleEngine.sendAlert(selectedClientId(), message),
@@ -417,7 +417,7 @@ public class ServerDashboardFrame extends JFrame {
     private void runQuickAction(java.util.function.Supplier<String> action, String successMessage) {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("⚠ Chưa chọn thiết bị nào");
+            appendEventLog("[!] Chưa chọn thiết bị nào");
             return;
         }
         String clientId = selected.clientId();
@@ -436,11 +436,11 @@ public class ServerDashboardFrame extends JFrame {
                         appendEventLog("Client '" + deviceName + "' (" + commandId.substring(0, 8) + "...) "
                                 + successMessage);
                     } else {
-                        appendEventLog("⚠ Thao tác thất bại với client '" + deviceName
+                        appendEventLog("[!] Thao tác thất bại với client '" + deviceName
                                 + "' (offline hoặc gửi lỗi)");
                     }
                 } catch (Exception e) {
-                    appendEventLog("⚠ Lỗi thao tác: " + e.getMessage());
+                    appendEventLog("[!] Lỗi thao tác: " + e.getMessage());
                 }
                 updateQuickActionButtons();
             }
@@ -476,7 +476,7 @@ public class ServerDashboardFrame extends JFrame {
         sessionDurationField.setEditable(false);
 
         // Nút Đổi tên đặt ngay cạnh trường Tên máy
-        renameButton = new JButton("\u270F\uFE0F \u0110\u1ED5i t\u00EAn");
+        renameButton = new JButton("Đổi tên");
         renameButton.addActionListener(event -> renameSelectedDevice());
         renameButton.setEnabled(false); // bật khi có thiết bị đang chọn
 
@@ -614,7 +614,7 @@ public class ServerDashboardFrame extends JFrame {
 
         // --- Ô lọc tìm kiếm tiến trình/tiêu đề (TableRowSorter) ---
         JPanel filterPanel = new JPanel(new BorderLayout(6, 0));
-        filterPanel.add(new JLabel("🔍 Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
+        filterPanel.add(new JLabel("Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
         activityFilterField = new JTextField();
         activityFilterField.setToolTipText("Ví dụ: chrome, edge, youtube — lọc theo tên tiến trình hoặc tiêu đề cửa sổ");
         activityFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
@@ -636,12 +636,12 @@ public class ServerDashboardFrame extends JFrame {
         filterPanel.add(activityFilterField, BorderLayout.CENTER);
 
         // --- Nút xóa sạch lịch sử hoạt động (activity_logs) của client đang chọn ---
-        clearActivityButton = new JButton("🗑️ Xóa lịch sử hoạt động");
+        clearActivityButton = new JButton("Xóa lịch sử hoạt động");
         clearActivityButton.setToolTipText("Dọn sạch bản ghi nhật ký hoạt động của thiết bị đang chọn trong DB");
         clearActivityButton.addActionListener(event -> clearActivityHistory());
 
         // --- Nút mở rộng: xem 100 bản ghi gần nhất trong dialog lớn (title full) ---
-        JButton expandButton = new JButton("⛶ Xem toàn bộ / Mở rộng");
+        JButton expandButton = new JButton("Xem toàn bộ / Mở rộng");
         expandButton.setToolTipText("Mở cửa sổ lớn hiển thị tối đa 200 bản ghi gần nhất — tiêu đề đầy đủ, có lọc tìm kiếm");
         expandButton.addActionListener(event -> openExpandedActivityDialog());
 
@@ -705,7 +705,7 @@ public class ServerDashboardFrame extends JFrame {
     private void clearActivityHistory() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("⚠ Chưa chọn thiết bị nào để xóa lịch sử hoạt động");
+            appendEventLog("[!] Chưa chọn thiết bị nào để xóa lịch sử hoạt động");
             return;
         }
         String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
@@ -743,13 +743,13 @@ public class ServerDashboardFrame extends JFrame {
             protected void done() {
                 try {
                     if (get()) {
-                        appendEventLog("🗑️ Đã xóa toàn bộ lịch sử hoạt động của '"
+                        appendEventLog("[OK] Đã xóa toàn bộ lịch sử hoạt động của '"
                                 + deviceDisplay + "'");
                     } else {
-                        appendEventLog("⚠ Xóa lịch sử hoạt động thất bại (lỗi cơ sở dữ liệu)");
+                        appendEventLog("[!] Xóa lịch sử hoạt động thất bại (lỗi cơ sở dữ liệu)");
                     }
                 } catch (Exception e) {
-                    appendEventLog("⚠ Lỗi khi xóa lịch sử hoạt động: " + e.getMessage());
+                    appendEventLog("[!] Lỗi khi xóa lịch sử hoạt động: " + e.getMessage());
                     log.error("Clear activity history failed: {}", e.getMessage(), e);
                 }
                 lastActivityTableRefresh = java.time.Instant.EPOCH; // buộc reload bảng
@@ -1046,20 +1046,20 @@ public class ServerDashboardFrame extends JFrame {
     }
 
     /**
-     * Mở dialog "⛶ Xem toàn bộ / Mở rộng" — tối đa 200 bản ghi hoạt động gần
+     * Mở dialog "Xem toàn bộ / Mở rộng" — tối đa 200 bản ghi hoạt động gần
      * nhất: bảng lớn 1000x650 resizable canh giữa, cột Tiêu đề hiển thị ĐẦY
      * ĐỦ (không cắt, scroll ngang/dọc thoải mái), ô lọc thời gian thực riêng,
-     * nút 🔄 Làm mới + Đóng.
+     * nút Làm mới + Đóng.
      */
     private void openExpandedActivityDialog() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("⚠ Chưa chọn thiết bị nào để xem nhật ký");
+            appendEventLog("[!] Chưa chọn thiết bị nào để xem nhật ký");
             return;
         }
         ActivityDao activityDao = serverEngine.getActivityDao();
         if (activityDao == null) {
-            appendEventLog("⚠ Server đang chạy không database — không có nhật ký hoạt động");
+            appendEventLog("[!] Server đang chạy không database — không có nhật ký hoạt động");
             return;
         }
         String clientId = selected.clientId();
@@ -1128,14 +1128,14 @@ public class ServerDashboardFrame extends JFrame {
             }
         });
 
-        JButton refreshButton = new JButton("🔄 Làm mới");
+        JButton refreshButton = new JButton("Làm mới");
         refreshButton.addActionListener(event -> reloadFullTable.run());
         JButton closeButton = new JButton("Đóng");
         closeButton.addActionListener(event -> dialog.dispose());
 
         JPanel controlRow = new JPanel(new BorderLayout(8, 0));
         controlRow.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
-        controlRow.add(new JLabel("🔍 Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
+        controlRow.add(new JLabel("Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
         controlRow.add(fullFilterField, BorderLayout.CENTER);
         JPanel dialogButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         dialogButtons.add(refreshButton);
@@ -1162,7 +1162,7 @@ public class ServerDashboardFrame extends JFrame {
     // ------------------------------------------------------------------
 
     /**
-     * Gắn menu chuột phải "🚫 Chặn tên miền này" cho 1 bảng nhật ký hoạt động
+     * Gắn menu chuột phải "Chặn tên miền này" cho 1 bảng nhật ký hoạt động
      * (dùng chung cho bảng Dashboard lẫn dialog "Xem toàn bộ"): trích domain
      * gợi ý từ tiêu đề → confirm → {@code addDomain} + đẩy CONFIG_SYNC tức thì.
      */
@@ -1211,13 +1211,13 @@ public class ServerDashboardFrame extends JFrame {
     private void quickBlockDomainForClient(String windowTitle) {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("⚠ Chưa chọn thiết bị nào để chặn tên miền");
+            appendEventLog("[!] Chưa chọn thiết bị nào để chặn tên miền");
             return;
         }
         ActivityDao activityDao = serverEngine.getActivityDao();
         BlockedDomainDao blockedDomainDao = serverEngine.getBlockedDomainDao();
         if (blockedDomainDao == null) {
-            appendEventLog("⚠ Server đang chạy không database — không chặn tên miền được");
+            appendEventLog("[!] Server đang chạy không database — không chặn tên miền được");
             return;
         }
         String suggestion = WindowTitleDomainExtractor.suggestDomain(windowTitle);
@@ -1225,7 +1225,7 @@ public class ServerDashboardFrame extends JFrame {
         // Ô nhập cho phép sửa gợi ý hoặc nhập tay khi không trích được
         String input = (String) JOptionPane.showInputDialog(this,
                 "Tên miền cần chặn cho thiết bị '" + selected.deviceName() + "':",
-                "🚫 Chặn tên miền này",
+                "Chặn tên miền này",
                 JOptionPane.PLAIN_MESSAGE, null, null,
                 suggestion != null ? suggestion : "");
         if (input == null || input.isBlank()) {
@@ -1251,16 +1251,27 @@ public class ServerDashboardFrame extends JFrame {
         String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
                 ? selected.alias() + " (" + selected.deviceName() + ")"
                 : selected.deviceName();
-        boolean added = activityDao != null && blockedDomainDao.addDomain(clientId, domain);
-        if (!added) {
-            appendEventLog("⚠ Không chặn được '" + domain + "' cho '"
-                    + deviceDisplay + "' (lỗi DB hoặc đã có sẵn)");
+        // IDEMPOTENT ADD: domain trùng KHÔNG phải lỗi — vẫn BẮT BUỘC đẩy
+        // CONFIG_SYNC để client áp dụng lại quy tắc chặn mới nhất (fix: trước
+        // đây trùng → false → báo sai "lỗi DB" và bỏ qua push).
+        BlockedDomainDao.AddResult result = activityDao != null
+                ? blockedDomainDao.addDomain(clientId, domain)
+                : BlockedDomainDao.AddResult.FAILED;
+        if (result == BlockedDomainDao.AddResult.FAILED) {
+            appendEventLog("[!] Không chặn được '" + domain + "' cho '"
+                    + deviceDisplay + "' (lỗi cơ sở dữ liệu)");
             return;
         }
         boolean pushed = serverEngine.pushConfigSync(clientId);
-        appendEventLog("🚫 Đã chặn '" + domain + "' cho '" + deviceDisplay + "'"
-                + (pushed ? " — CONFIG_SYNC đã đẩy xuống client"
-                          : " — client offline, sẽ nhận khi kết nối lại"));
+        if (result == BlockedDomainDao.AddResult.ALREADY_PRESENT) {
+            appendEventLog("Tên miền '" + domain + "' đã có trong danh sách chặn của '"
+                    + deviceDisplay + "' — đang đồng bộ lại xuống client "
+                    + (pushed ? "thành công" : "THẤT BẠI (client offline — sẽ nhận khi kết nối lại)"));
+        } else {
+            appendEventLog("Đã chặn '" + domain + "' cho '" + deviceDisplay + "'"
+                    + (pushed ? " — CONFIG_SYNC đã đẩy xuống client"
+                              : " — client offline, sẽ nhận khi kết nối lại"));
+        }
     }
 
     /** null/rỗng → "—" (dòng "—" trên UI thay cho dữ liệu thiếu). */
@@ -1289,7 +1300,7 @@ public class ServerDashboardFrame extends JFrame {
     private void openPolicyDialog() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("⚠ Chưa chọn thiết bị nào để cấu hình");
+            appendEventLog("[!] Chưa chọn thiết bị nào để cấu hình");
             return;
         }
         PolicyConfigDialog dialog = new PolicyConfigDialog(this, selected, ruleDao,
@@ -1298,7 +1309,7 @@ public class ServerDashboardFrame extends JFrame {
                             && ruleEngine.syncConfigToClient(selected.clientId());
                     appendEventLog(pushed
                             ? "Đã đẩy CONFIG_SYNC xuống client '" + selected.deviceName() + "'"
-                            : "⚠ Không đồng bộ được tới client '" + selected.deviceName()
+                            : "[!] Không đồng bộ được tới client '" + selected.deviceName()
                                     + "' (offline) — cấu hình đã lưu trong DB");
                     refreshNow();
                 });

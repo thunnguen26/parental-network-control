@@ -7,7 +7,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Helper trích xuất TÊN MIỀN từ tiêu đề cửa sổ (tính năng "🚫 Chặn nhanh tên
+ * Helper trích xuất TÊN MIỀN từ tiêu đề cửa sổ (tính năng "Chặn nhanh tên
  * miền" từ Nhật ký hoạt động) — thuần Java, không Swing → test headless được
  * (AGENTS.md: separation of concerns).
  *

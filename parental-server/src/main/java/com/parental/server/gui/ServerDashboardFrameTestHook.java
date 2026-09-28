@@ -13,7 +13,7 @@ import com.parental.server.db.ActivityDao;
 /**
  * Test hook chứa LOGIC THUẦN của bảng nhật ký hoạt động trong
  * {@link ServerDashboardFrame} (cả bảng nhỏ 30 dòng lẫn dialog
- * "⛶ Xem toàn bộ / Mở rộng") — tách khỏi Swing để unit test được trên môi
+ * "Xem toàn bộ / Mở rộng") — tách khỏi Swing để unit test được trên môi
  * trường headless (AGENTS.md: separation of concerns, không spaghetti trong
  * UI handler).
  *
@@ -35,14 +35,15 @@ final class ServerDashboardFrameTestHook {
     }
 
     /**
-     * Nhãn menu chuột phải "🚫 Chặn tên miền này" kèm domain gợi ý trích từ
-     * tiêu đề (nếu có) — pure function, test headless được.
+     * Nhãn menu chuột phải "Chặn tên miền này" kèm domain gợi ý trích từ
+     * tiêu đề (nếu có) — pure function, test headless được. CHỈ dùng ký tự
+     * BMP cơ bản (không emoji — tránh glyph ô vuông trên Swing Windows).
      */
     static String buildQuickBlockLabel(String windowTitle) {
         String suggestion = WindowTitleDomainExtractor.suggestDomain(windowTitle);
         return suggestion != null
-                ? "🚫 Chặn tên miền này (gợi ý: " + suggestion + ")"
-                : "🚫 Chặn tên miền này (nhập tay)";
+                ? "Chặn tên miền này (gợi ý: " + suggestion + ")"
+                : "Chặn tên miền này (nhập tay)";
     }
 
     /**

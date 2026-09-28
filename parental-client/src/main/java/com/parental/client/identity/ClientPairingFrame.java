@@ -193,11 +193,11 @@ public class ClientPairingFrame extends JFrame {
         String host = serverHostField.getText().trim();
         String pin = pinField.getText().replaceAll("\\D", "");
         if (host.isEmpty()) {
-            statusLabel.setText("⚠ Vui lòng nhập IP máy chủ");
+            statusLabel.setText("Vui lòng nhập IP máy chủ");
             return;
         }
         if (pin.length() != 6) {
-            statusLabel.setText("⚠ Mã PIN phải đủ 6 chữ số");
+            statusLabel.setText("Mã PIN phải đủ 6 chữ số");
             return;
         }
         int port = ClientConfig.DEFAULT_SERVER_PORT; // 8888
@@ -225,7 +225,7 @@ public class ClientPairingFrame extends JFrame {
                 try {
                     handlePairingResult(host, port, get());
                 } catch (Exception e) {
-                    statusLabel.setText("⚠ Lỗi ghép đôi: " + e.getMessage());
+                    statusLabel.setText("Lỗi ghép đôi: " + e.getMessage());
                     log.error("Pairing worker failed: {}", e.getMessage(), e);
                 }
             }
@@ -247,7 +247,7 @@ public class ClientPairingFrame extends JFrame {
      */
     private void handlePairingResult(String host, int port, PairingResult result) {
         if (!result.success()) {
-            statusLabel.setText("⚠ Ghép đôi thất bại: " + result.message());
+            statusLabel.setText("Ghép đôi thất bại: " + result.message());
             return;
         }
         // Đặt cờ TRƯỚC TIÊN: từ đây nút X chỉ dispose, không exit app.

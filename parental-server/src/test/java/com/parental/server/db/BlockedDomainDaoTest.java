@@ -73,24 +73,48 @@ class BlockedDomainDaoTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("addDomain: URL thô được chuẩn hóa; đọc lại sorted; trùng → false")
+    @DisplayName("addDomain: URL thô được chuẩn hóa; đọc lại sorted; trùng → ALREADY_PRESENT (idempotent)")
     void addDomainNormalizesAndDeduplicates() {
-        assertTrue(dao.addDomain("client-01", "https://www.Facebook.com/"));
-        assertTrue(dao.addDomain("client-01", "TikTok.Com"));
+        assertTrue(dao.addDomain("client-01", "https://www.Facebook.com/").isSuccess());
+        assertTrue(dao.addDomain("client-01", "TikTok.Com").isSuccess());
 
         assertEquals(List.of("facebook.com", "tiktok.com"), dao.getBlockedDomains("client-01"),
                 "Đọc lại sorted A-Z, đã chuẩn hóa lowercase");
 
-        assertFalse(dao.addDomain("client-01", "facebook.com"), "Trùng → false (INSERT OR IGNORE)");
-        assertEquals(2, dao.getBlockedDomains("client-01").size());
+        assertEquals(BlockedDomainDao.AddResult.ALREADY_PRESENT,
+                dao.addDomain("client-01", "facebook.com"),
+                "Trùng → ALREADY_PRESENT (idempotent — KHÔNG phải lỗi)");
+        assertTrue(dao.addDomain("client-01", "facebook.com").isSuccess(),
+                "Trùng vẫn là thành công (thêm idempotent)");
+        assertEquals(2, dao.getBlockedDomains("client-01").size(),
+                "Trùng không được nhân bản dòng trong DB");
     }
 
     @Test
-    @DisplayName("addDomain: đầu vào không hợp lệ/client lạ (FK) → false")
+    @DisplayName("addDomain idempotent: thêm trùng không ném exception, trạng thái phân biệt rõ 3 TH")
+    void addDomainDuplicateIsIdempotentNotError() {
+        assertEquals(BlockedDomainDao.AddResult.ADDED,
+                dao.addDomain("client-01", "youtube.com"), "Lần đầu → ADDED");
+        for (int i = 0; i < 5; i++) {
+            // Thêm lặp 5 lần — tuyệt đối không ném, luôn ALREADY_PRESENT
+            assertEquals(BlockedDomainDao.AddResult.ALREADY_PRESENT,
+                    dao.addDomain("client-01", "youtube.com"),
+                    "Lần lặp " + (i + 1) + " → ALREADY_PRESENT");
+        }
+        assertEquals(1, dao.getBlockedDomains("client-01").size(), "Vẫn đúng 1 dòng");
+
+        // FAILED cho input hỏng/client lạ — isSuccess() = false
+        assertFalse(dao.addDomain("client-01", "không hợp lệ!!!").isSuccess());
+        assertFalse(dao.addDomain("ghost", "youtube.com").isSuccess(), "FK client lạ → FAILED");
+    }
+
+    @Test
+    @DisplayName("addDomain: đầu vào không hợp lệ/client lạ (FK) → FAILED")
     void addDomainRejectsInvalidOrMissingClient() {
-        assertFalse(dao.addDomain("client-01", "not a domain"));
-        assertFalse(dao.addDomain("client-01", null));
-        assertFalse(dao.addDomain("ghost", "facebook.com"), "FK từ chối client lạ");
+        assertEquals(BlockedDomainDao.AddResult.FAILED, dao.addDomain("client-01", "not a domain"));
+        assertEquals(BlockedDomainDao.AddResult.FAILED, dao.addDomain("client-01", null));
+        assertEquals(BlockedDomainDao.AddResult.FAILED, dao.addDomain("ghost", "facebook.com"),
+                "FK từ chối client lạ");
         assertTrue(dao.getBlockedDomains("client-01").isEmpty());
     }
 
@@ -179,7 +203,7 @@ class BlockedDomainDaoTest {
         String[] rawInputs = {"https://www.Facebook.com/", "HTTP://X.COM/path", "TikTok.Com"};
         for (String raw : rawInputs) {
             // DAO là nguồn chuẩn: addDomain rồi đọc lại
-            assertTrue(dao.addDomain("client-01", raw));
+            assertTrue(dao.addDomain("client-01", raw).isSuccess());
             List<String> stored = dao.getBlockedDomains("client-01");
             assertFalse(stored.isEmpty(), "addDomain với input '" + raw + "' phải thành công");
             dao.removeDomain("client-01", raw); // dọn cho lần lặp sau
