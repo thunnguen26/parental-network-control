@@ -133,6 +133,14 @@ final class PolicyConfigDialog extends JDialog {
         JList<String> domainList = new JList<>(domainListModel);
         domainList.setVisibleRowCount(6);
         domainField = new JTextField(18);
+        domainField.setToolTipText("Mẹo gõ tiếng Việt: Chạy Unikey bằng Run as Administrator "
+                + "và bật 'Sử dụng clipboard cho Unicode'");
+        domainField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent event) {
+                domainField.selectAll(); // select-all khi focus — dễ paste/sửa domain
+            }
+        });
         JButton addButton = new JButton("+ Thêm");
         JButton removeButton = new JButton("Xóa");
         addButton.addActionListener(event -> addDomainFromField());

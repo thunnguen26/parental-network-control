@@ -38,11 +38,13 @@ final class WindowTitleDomainExtractor {
 
     /**
      * Từ khóa thương hiệu quen thuộc → tên miền gợi ý (không phân biệt hoa/
-     * thường). Bổ sung dần theo nhu cầu; KHÔNG bắt buộc — title có URL thật
-     * luôn được ưu tiên trước bảng này.
+     * thường). Bổ sung dần theo nhu cầu; KHÔNG bắt buộc — URL/domain tường
+     * minh (class 1 + payload UIA) luôn được ưu tiên trước bảng này.
      */
     private static final Pattern KEYWORD_DOMAINS = Pattern.compile(
-            "(youtube|facebook|instagram|tiktok|twitter|reddit|netflix|zalo|twitch|discord)",
+            "(youtube|facebook|instagram|tiktok|twitter|reddit|netflix|zalo|twitch|discord"
+            + "|gemini|chatgpt|copilot|bing|duckduckgo|grok|claude|perplexity"
+            + "|google|shopee|lazada|tiki|tikivn|nettruyen|motchill|phimmoi)",
             Pattern.CASE_INSENSITIVE);
 
     private WindowTitleDomainExtractor() {
@@ -101,10 +103,78 @@ final class WindowTitleDomainExtractor {
                 case "zalo" -> "zalo.me";
                 case "twitch" -> "twitch.tv";
                 case "discord" -> "discord.com";
+                // Mở rộng 10: AI chat + tìm kiếm + TMĐT + web phim Việt
+                case "gemini" -> "gemini.google.com";
+                case "chatgpt" -> "chatgpt.com";
+                case "copilot" -> "copilot.microsoft.com";
+                case "bing" -> "bing.com";
+                case "duckduckgo" -> "duckduckgo.com";
+                case "grok" -> "grok.com";
+                case "claude" -> "claude.ai";
+                case "perplexity" -> "perplexity.ai";
+                case "google" -> "google.com";
+                case "shopee" -> "shopee.vn";
+                case "lazada" -> "lazada.vn";
+                case "tiki", "tikivn" -> "tiki.vn";
+                case "nettruyen" -> "nettruyen.com";
+                case "motchill" -> "motchill.tv";
+                case "phimmoi" -> "phimmoi.net";
                 default -> null;
             };
         }
         return null;
+    }
+
+    /**
+     * Chấp nhận cả URL/domain từ payload UIA (trường {@code activeUrlOrDomain})
+     * — ưu tiên CAO NHẤT trước tiêu đề: lấy domain sạch từ URL/UIA, không có
+     * → suy luận từ tiêu đề như cũ.
+     *
+     * @param urlOrDomain    URL/domain bóc tách từ thanh địa chỉ (rỗng/null nếu không có)
+     * @param windowTitle    tiêu đề cửa sổ (fallback suy luận)
+     * @return domain gợi ý, hoặc {@code null} nếu không tìm ra gì
+     */
+    static String suggestDomain(String urlOrDomain, String windowTitle) {
+        // Ưu tiên tuyệt đối: UIA đã bóc URL từ address bar → dùng luôn
+        if (urlOrDomain != null && !urlOrDomain.isBlank()) {
+            String cleaned = normalizeUrlToDomain(urlOrDomain.trim());
+            if (cleaned != null) {
+                return cleaned;
+            }
+        }
+        return suggestDomain(windowTitle);
+    }
+
+    /**
+     * Bóc domain sạch từ URL đầy đủ thanh địa chỉ: bỏ scheme, bỏ path/query,
+     * bỏ port, bỏ {@code www.} — khớp quy tắc chuẩn hóa của
+     * {@code BlockedDomainDao.normalizeDomain} (nhất quán khi lưu DB).
+     *
+     * @return domain sạch (lowercase), hoặc {@code null} nếu không giống domain
+     */
+    static String normalizeUrlToDomain(String urlOrDomain) {
+        if (urlOrDomain == null || urlOrDomain.isBlank()) {
+            return null;
+        }
+        String domain = urlOrDomain.trim().toLowerCase(Locale.ROOT);
+        domain = domain.replaceFirst("^https?://", "");
+        int slash = domain.indexOf('/');
+        if (slash >= 0) {
+            domain = domain.substring(0, slash);
+        }
+        int colon = domain.indexOf(':');
+        if (colon >= 0) {
+            domain = domain.substring(0, colon);
+        }
+        if (domain.startsWith("www.") && domain.length() > 4) {
+            domain = domain.substring(4);
+        }
+        if (domain.isEmpty() || !domain.contains(".") || domain.startsWith(".")
+                || domain.endsWith(".") || domain.contains(" ")
+                || !domain.matches("[a-z0-9.-]+")) {
+            return null;
+        }
+        return domain;
     }
 
     /** Domain có vẻ hợp lệ: có TLD quen thuộc hoặc ≥ 2 nhãn, không toàn số. */

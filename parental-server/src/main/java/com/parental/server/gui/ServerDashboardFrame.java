@@ -127,7 +127,7 @@ public class ServerDashboardFrame extends JFrame {
     /** Số bản ghi nhật ký hiển thị trên Dashboard (tăng từ 10 → 30). */
     static final int ACTIVITY_LOG_LIMIT = 30;
 
-    /** Chỉ số cột JTable nhật ký — dùng cho RowFilter. */
+    /** Chỉ số cột JTable nhật ký — dùng cho RowFilter + menu chặn nhanh. */
     private static final int ACTIVITY_COLUMN_TIME = 0;
     private static final int ACTIVITY_COLUMN_PROCESS = 1;
     private static final int ACTIVITY_COLUMN_TITLE = 2;
@@ -573,9 +573,9 @@ public class ServerDashboardFrame extends JFrame {
         activeAppField.setFont(activeAppField.getFont().deriveFont(Font.BOLD, 13f));
         activityPanel.add(activeAppField, BorderLayout.CENTER);
 
-        // --- Nhật ký hoạt động gần đây (JTable 10 bản ghi mới nhất) ---
+        // --- Nhật ký hoạt động gần đây (JTable 30 bản ghi mới nhất, 4 cột) ---
         activityTableModel = new javax.swing.table.DefaultTableModel(
-                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ"}, 0) {
+                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ", "URL / Domain"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false; // chỉ đọc
@@ -583,8 +583,9 @@ public class ServerDashboardFrame extends JFrame {
         };
         activityTable = new JTable(activityTableModel);
         activityTable.getColumnModel().getColumn(0).setPreferredWidth(90);
-        activityTable.getColumnModel().getColumn(1).setPreferredWidth(120);
-        activityTable.getColumnModel().getColumn(2).setPreferredWidth(420);
+        activityTable.getColumnModel().getColumn(1).setPreferredWidth(110);
+        activityTable.getColumnModel().getColumn(2).setPreferredWidth(330);
+        activityTable.getColumnModel().getColumn(3).setPreferredWidth(160);
         activityTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
         // Title cửa sổ dài → cắt trong cell (chuỗi dài không phá bố cục cột)
         activityTable.getColumnModel().getColumn(2).setCellRenderer(
@@ -617,6 +618,7 @@ public class ServerDashboardFrame extends JFrame {
         filterPanel.add(new JLabel("Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
         activityFilterField = new JTextField();
         activityFilterField.setToolTipText("Ví dụ: chrome, edge, youtube — lọc theo tên tiến trình hoặc tiêu đề cửa sổ");
+        attachSelectAllOnFocus(activityFilterField);
         activityFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
@@ -1073,9 +1075,9 @@ public class ServerDashboardFrame extends JFrame {
         dialog.setLocationRelativeTo(this);
         dialog.setLayout(new BorderLayout(8, 8));
 
-        // --- Mô hình bảng riêng: title HIỂN THỊ ĐẦY ĐỦ (không cắt) ---
+        // --- Mô hình bảng riêng: title HIỂN THỊ ĐẦY ĐỦ (không cắt), 4 cột ---
         javax.swing.table.DefaultTableModel fullModel = new javax.swing.table.DefaultTableModel(
-                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ"}, 0) {
+                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ", "URL / Domain"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -1083,8 +1085,9 @@ public class ServerDashboardFrame extends JFrame {
         };
         JTable fullTable = new JTable(fullModel);
         fullTable.getColumnModel().getColumn(0).setPreferredWidth(140);
-        fullTable.getColumnModel().getColumn(1).setPreferredWidth(120);
-        fullTable.getColumnModel().getColumn(2).setPreferredWidth(680);
+        fullTable.getColumnModel().getColumn(1).setPreferredWidth(110);
+        fullTable.getColumnModel().getColumn(2).setPreferredWidth(500);
+        fullTable.getColumnModel().getColumn(3).setPreferredWidth(190);
         // AUTO_RESIZE_OFF → cột title giữ nguyên độ rộng, tràn thì scroll ngang
         fullTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         javax.swing.table.TableRowSorter<javax.swing.table.TableModel> fullSorter =
@@ -1111,6 +1114,7 @@ public class ServerDashboardFrame extends JFrame {
         // --- Ô lọc thời gian thực (dùng chung logic buildActivityRowFilter) ---
         JTextField fullFilterField = new JTextField();
         fullFilterField.setToolTipText("Ví dụ: chrome, browser (Cốc Cốc), youtube — lọc theo tiến trình hoặc tiêu đề");
+        attachSelectAllOnFocus(fullFilterField);
         fullFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
@@ -1148,6 +1152,20 @@ public class ServerDashboardFrame extends JFrame {
         content.add(fullScroll, BorderLayout.CENTER);
         dialog.setContentPane(content);
         dialog.setVisible(true); // modal — đóng bằng nút Đóng hoặc Esc qua X
+    }
+
+    /**
+     * Bật "select all khi focus" cho ô nhập liệu — dễ paste/sửa domain gõ tay.
+     * Dùng {@code FocusAdapter} (không dùng {@code FocusListener} lambda đa
+     * phương thức) và chỉ select khi focus đến từ chuột/tab (focusGained).
+     */
+    private static void attachSelectAllOnFocus(javax.swing.text.JTextComponent field) {
+        field.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent event) {
+                field.selectAll();
+            }
+        });
     }
 
     /** Áp filter cho bảng dialog mở rộng (dùng chung logic test hook). */
@@ -1191,16 +1209,154 @@ public class ServerDashboardFrame extends JFrame {
         }
         table.setRowSelectionInterval(viewRow, viewRow); // click dòng nào chặn dòng đó
         int modelRow = table.convertRowIndexToModel(viewRow);
+        String processName = String.valueOf(table.getModel().getValueAt(modelRow,
+                ServerDashboardFrameTestHook.ACTIVITY_COLUMN_PROCESS));
         String title = String.valueOf(table.getModel().getValueAt(modelRow,
                 ServerDashboardFrameTestHook.ACTIVITY_COLUMN_TITLE));
-
-        JMenuItem blockItem = new JMenuItem(ServerDashboardFrameTestHook
-                .buildQuickBlockLabel(title));
-        blockItem.addActionListener(actionEvent -> quickBlockDomainForClient(title));
+        String urlOrDomain = ServerDashboardFrameTestHook.valueOfCell(table.getModel(),
+                modelRow, ServerDashboardFrameTestHook.ACTIVITY_COLUMN_URL);
 
         JPopupMenu popup = new JPopupMenu();
-        popup.add(blockItem);
-        popup.show(table, event.getX(), event.getY());
+        String suggestedDomain = WindowTitleDomainExtractor.suggestDomain(urlOrDomain, title);
+
+        if (suggestedDomain != null) {
+            // 1-CLICK CHẶN DOMAIN: đã có domain sạch (từ address bar UIA hoặc
+            // suy luận từ tiêu đề) — bấm là confirm chặn ngay, KHÔNG bắt gõ tay.
+            JMenuItem blockDomainItem = new JMenuItem(
+                    ServerDashboardFrameTestHook.buildQuickBlockLabel(suggestedDomain));
+            blockDomainItem.addActionListener(actionEvent ->
+                    quickBlockDomainForClient(suggestedDomain, true));
+            popup.add(blockDomainItem);
+            JMenuItem editDomainItem = new JMenuItem("Chặn tên miền khác (sửa gợi ý)...");
+            editDomainItem.addActionListener(actionEvent ->
+                    quickBlockDomainForClient(suggestedDomain, false));
+            popup.add(editDomainItem);
+        }
+        // KHÔNG có mục "(nhập tay)" — khi không trích được domain, phụ huynh
+        // vẫn chặn được qua mục tiến trình bên dưới hoặc dialog Cấu hình
+        // chính sách (nhập tay tập trung 1 chỗ, tránh menu rối).
+
+        // 1-CLICK CHẶN APP .EXE: mọi dòng (kể cả trình duyệt) đều cho phép
+        // chặn tiến trình — game/tool đứng riêng thì đây là lựa chọn chính.
+        if (processName != null && !processName.isBlank() && !processName.equals("—")) {
+            JMenuItem blockProcessItem = new JMenuItem(
+                    ServerDashboardFrameTestHook.buildQuickBlockProcessLabel(processName));
+            blockProcessItem.addActionListener(actionEvent ->
+                    quickBlockProcessForClient(processName));
+            popup.add(blockProcessItem);
+        }
+
+        if (popup.getComponentCount() > 0) {
+            popup.show(table, event.getX(), event.getY());
+        }
+    }
+
+    /**
+     * Luồng chặn nhanh DOMAIN cho client đang chọn.
+     *
+     * @param suggestedDomain domain gợi ý điền sẵn (null = nhập tay hoàn toàn)
+     * @param directConfirm   {@code true} = 1-click: bỏ qua ô nhập, điền luôn
+     *                        gợi ý vào confirm; {@code false} = hiện ô nhập
+     *                        cho sửa gợi ý/nhập tay
+     */
+    private void quickBlockDomainForClient(String suggestedDomain, boolean directConfirm) {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để chặn tên miền");
+            return;
+        }
+        BlockedDomainDao blockedDomainDao = serverEngine.getBlockedDomainDao();
+        if (blockedDomainDao == null) {
+            appendEventLog("[!] Server đang chạy không database — không chặn tên miền được");
+            return;
+        }
+        String input = suggestedDomain;
+        if (!directConfirm || input == null || input.isBlank()) {
+            // Ô nhập cho phép sửa gợi ý hoặc nhập tay khi không trích được
+            input = (String) JOptionPane.showInputDialog(this,
+                    "Tên miền cần chặn cho thiết bị '" + selected.deviceName() + "':",
+                    "Chặn tên miền này",
+                    JOptionPane.PLAIN_MESSAGE, null, null,
+                    suggestedDomain != null ? suggestedDomain : "");
+            if (input == null || input.isBlank()) {
+                return; // hủy
+            }
+        }
+        String domain = BlockedDomainDialogHelper.normalize(input);
+        if (domain == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Tên miền không hợp lệ: " + input
+                            + "\n(ví dụ hợp lệ: youtube.com, facebook.com)",
+                    "Tên miền không hợp lệ", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Bạn có chắc muốn chặn tên miền [" + domain + "] cho thiết bị này?",
+                "Xác nhận chặn tên miền",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+        String clientId = selected.clientId();
+        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+        // IDEMPOTENT ADD: domain trùng KHÔNG phải lỗi — vẫn BẮT BUỘC đẩy
+        // CONFIG_SYNC để client áp dụng lại quy tắc chặn mới nhất.
+        BlockedDomainDao.AddResult result = blockedDomainDao.addDomain(clientId, domain);
+        if (result == BlockedDomainDao.AddResult.FAILED) {
+            appendEventLog("[!] Không chặn được '" + domain + "' cho '"
+                    + deviceDisplay + "' (lỗi cơ sở dữ liệu)");
+            return;
+        }
+        boolean pushed = serverEngine.pushConfigSync(clientId);
+        if (result == BlockedDomainDao.AddResult.ALREADY_PRESENT) {
+            appendEventLog("Tên miền '" + domain + "' đã có trong danh sách chặn của '"
+                    + deviceDisplay + "' — đang đồng bộ lại xuống client "
+                    + (pushed ? "thành công" : "THẤT BẠI (client offline — sẽ nhận khi kết nối lại)"));
+        } else {
+            appendEventLog("Đã chặn '" + domain + "' cho '" + deviceDisplay + "'"
+                    + (pushed ? " — CONFIG_SYNC đã đẩy xuống client"
+                              : " — client offline, sẽ nhận khi kết nối lại"));
+        }
+    }
+
+    /**
+     * Luồng chặn nhanh TIẾN TRÌNH (app .exe) cho client đang chọn — 1-click:
+     * confirm gửi COMMAND {@code BLOCK_PROCESS}; client lưu danh sách +
+     * taskkill tức thì + quét 60s chống mở lại app.
+     */
+    private void quickBlockProcessForClient(String processName) {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để chặn tiến trình");
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Bạn có chắc muốn chặn tiến trình [" + processName + "] cho thiết bị này?\n\n"
+                        + "Tiến trình sẽ bị kết thúc ngay và bị chặn vĩnh viễn "
+                        + "(tự mở lại sẽ bị đóng).",
+                "Xác nhận chặn tiến trình",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+        String clientId = selected.clientId();
+        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+        String commandId = ruleEngine != null
+                ? ruleEngine.blockProcess(clientId, processName)
+                : null;
+        if (commandId != null) {
+            appendEventLog("Đã gửi lệnh chặn tiến trình '" + processName + "' cho '"
+                    + deviceDisplay + "' (client sẽ kill ngay và chặn vĩnh viễn)");
+        } else {
+            appendEventLog("[!] Không gửi được lệnh chặn tiến trình '" + processName
+                    + "' cho '" + deviceDisplay + "' (client offline)");
+        }
     }
 
     /**

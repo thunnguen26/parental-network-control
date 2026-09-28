@@ -325,6 +325,33 @@ public class RuleEvaluationEngine {
     }
 
     /**
+     * Chặn vĩnh viễn 1 tiến trình trên máy con (Mở rộng 10 — "Chặn app .exe
+     * 1-click"): gửi COMMAND {@code BLOCK_PROCESS} với {@code reason} = tên
+     * tiến trình. Client lưu vào {@code blocked_processes.json} + taskkill
+     * tức thì + daemon quét 60s chống mở lại app.
+     *
+     * @param clientId    định danh client
+     * @param processName tên tiến trình (vd {@code "somegame.exe"} hoặc
+     *                    {@code "somegame"} — client tự chuẩn hóa)
+     * @return commandId nếu gửi thành công; {@code null} nếu offline/gửi hỏng
+     *         (không ghi DB, không có trạng thái cần dọn)
+     */
+    public String blockProcess(String clientId, String processName) {
+        if (processName == null || processName.isBlank()) {
+            log.warn("Block process skipped: empty process name for client [{}]", clientId);
+            return null;
+        }
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || session.isClosed()) {
+            log.warn("Block process skipped: client [{}] not online", clientId);
+            return null;
+        }
+        String safeName = processName.trim();
+        return sendCommand(session, ActionType.BLOCK_PROCESS,
+                safeName, false); // không mark enforced — lệnh chặn app, không khóa mạng
+    }
+
+    /**
      * Gỡ cờ cưỡng chế KHÔNG gửi lệnh — client được coi là tự do; lượt quét
      * Rule Engine kế tiếp sẽ tự đánh giá lại từ đầu (vi phạm kéo dài sẽ bị
      * PAUSE lại). Dùng khi muốn reset trạng thái khóa mà không can thiệp mạng.

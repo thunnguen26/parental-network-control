@@ -44,7 +44,8 @@ class ActivityDialogRowSupportTest {
         Object[] row = ServerDashboardFrameTestHook.buildActivityTableRow(
                 record("browser.exe", longTitle, Instant.now()));
 
-        assertEquals(3, row.length);
+        assertEquals(4, row.length,
+                "4 cột sau Mở rộng 10: Thời điểm / Tiến trình / Tiêu đề / URL-Domain");
         assertEquals(longTitle, row[2],
                 "Cột 'Tiêu đề cửa sổ' phải giữ nguyên văn, KHÔNG bị cắt ngắn");
     }

@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +40,7 @@ class WindowsActivityCollectorTest {
         assertEquals("browser.exe", payload.activeProcessName(),
                 "Dòng đầu = ứng dụng đang tương tác — KHÔNG bị Code.exe CPU cao lấn át");
         assertEquals("YouTube - Cốc Cốc", payload.activeWindowTitle());
+        assertEquals("", payload.activeUrlOrDomain(), "Không có URL → payload URL rỗng");
         assertEquals(java.util.List.of("browser", "code", "notepad"), payload.topProcesses());
         assertTrue(payload.timestamp() > 0, "timestamp epoch millis phải > 0");
     }
@@ -123,11 +126,97 @@ class WindowsActivityCollectorTest {
     }
 
     @Test
-    @DisplayName("parseOutput: title chứa nhiều dấu | → giữ nguyên phần title sau dấu | đầu")
+    @DisplayName("parseOutput: title chứa nhiều dấu | KHÔNG giống URL → title nguyên vẹn, URL rỗng")
     void titleWithPipesKeepsRest() {
         ActivityReportPayload payload = collector.parseOutput("chrome|A|B|C");
         assertEquals("A|B|C", payload.activeWindowTitle(),
-                "Phần sau dấu | đầu tiên là title nguyên vẹn");
+                "Phần sau dấu | đầu tiên là title nguyên vẹn (A|B|C không giống URL)");
+        assertEquals("", payload.activeUrlOrDomain(),
+                "Trường cuối không giống URL → KHÔNG được nhầm thành domain");
+    }
+
+    @Test
+    @DisplayName("parseOutput: title có | VÀ trường cuối là domain thật → tách đúng 2 phần")
+    void titleWithPipesAndRealDomain() {
+        ActivityReportPayload payload = collector.parseOutput(
+                "chrome|Bài Hóa | VietJack - Chrome|vietjack.com");
+
+        assertEquals("Bài Hóa | VietJack - Chrome", payload.activeWindowTitle(),
+                "Title chứa | giữ nguyên vẹn");
+        assertEquals("vietjack.com", payload.activeUrlOrDomain(),
+                "Trường cuối giống domain → được nhận là URL");
+    }
+
+    @Test
+    @DisplayName("parseOutput format 3 TRƯỜNG (Mở rộng 10): process|title|url → payload có domain")
+    void parsesExtendedThreeFieldFormat() {
+        String output = "chrome|Nhập câu lệnh cho Gemini - Google Chrome|gemini.google.com"
+                + "\nnotepad|Ghi chú";
+
+        ActivityReportPayload payload = collector.parseOutput(output);
+
+        assertEquals("chrome.exe", payload.activeProcessName());
+        assertEquals("Nhập câu lệnh cho Gemini - Google Chrome", payload.activeWindowTitle());
+        assertEquals("gemini.google.com", payload.activeUrlOrDomain(),
+                "URL bóc tách từ address bar phải vào payload — 1-click chặn được");
+    }
+
+    @Test
+    @DisplayName("parseOutput: URL rỗng (trường 3 trống) → activeUrlOrDomain rỗng, title nguyên vẹn")
+    void emptyUrlFieldIsSafe() {
+        ActivityReportPayload payload = collector.parseOutput("browser|Trang chủ - Cốc Cốc|");
+
+        assertEquals("", payload.activeUrlOrDomain(), "URL trống → chuỗi rỗng");
+        assertEquals("Trang chủ - Cốc Cốc", payload.activeWindowTitle(),
+                "Title giữ nguyên khi trường URL trống");
+    }
+
+    @Test
+    @DisplayName("parseOutput: format 2 trường (fallback không phải trình duyệt) → URL rỗng")
+    void twoFieldFormatStillWorks() {
+        ActivityReportPayload payload = collector.parseOutput("somegame|Elden Ring");
+
+        assertEquals("somegame.exe", payload.activeProcessName());
+        assertEquals("", payload.activeUrlOrDomain(),
+                "Game/app không có URL → payload URL rỗng (tương thích ngược)");
+    }
+
+    @Test
+    @DisplayName("URL đầy đủ (https + path) giữ nguyên trong payload — server bóc domain trước khi chặn")
+    void fullUrlKeptInPayload() {
+        ActivityReportPayload payload = collector.parseOutput(
+                "chrome|YouTube - Google Chrome|https://www.youtube.com/watch?v=abc");
+
+        assertEquals("https://www.youtube.com/watch?v=abc", payload.activeUrlOrDomain(),
+                "URL nguyên bản giữ trong payload (payload là data thô)");
+    }
+
+    @Test
+    @DisplayName("isBrowserProcess: chrome/msedge/browser(Cốc Cốc)/firefox/brave/opera/vivaldi/arc")
+    void browserProcessDetection() {
+        assertTrue(WindowsActivityCollector.isBrowserProcess("chrome"));
+        assertTrue(WindowsActivityCollector.isBrowserProcess("MSedge"));
+        assertTrue(WindowsActivityCollector.isBrowserProcess("browser"), "Cốc Cốc = browser.exe");
+        assertTrue(WindowsActivityCollector.isBrowserProcess("firefox"));
+        assertTrue(WindowsActivityCollector.isBrowserProcess("vivaldi"));
+        assertFalse(WindowsActivityCollector.isBrowserProcess("somegame"));
+        assertFalse(WindowsActivityCollector.isBrowserProcess(null));
+        assertFalse(WindowsActivityCollector.isBrowserProcess(""));
+    }
+
+    @Test
+    @DisplayName("PS_SCRIPT: tìm Edit control + ValuePattern đọc URL khi là trình duyệt")
+    void psScriptReadsAddressBarViaUia() {
+        String script = WindowsActivityCollector.PS_SCRIPT;
+
+        assertTrue(script.contains("ControlType]::Edit"),
+                "Tìm Edit control = thanh địa chỉ");
+        assertTrue(script.contains("ValuePattern"),
+                "Đọc URL qua ValuePattern.Value");
+        assertTrue(script.contains("FindFirst"), "Duyệt tìm control trong cây UIA");
+        assertTrue(script.contains("$isBrowser"), "Chỉ đục address bar khi là trình duyệt");
+        assertTrue(script.contains("$pn + '|' + $name + '|' + $url"),
+                "Xuất 3 trường khi có URL");
     }
 
     @Test
@@ -232,16 +321,18 @@ class WindowsActivityCollectorTest {
     }
 
     @Test
-    @DisplayName("PS_SCRIPT: KHÔNG hardcode danh sách trình duyệt — nhận diện tự động mọi app")
-    void psScriptHasNoBrowserWhitelist() {
+    @DisplayName("PS_SCRIPT: danh sách trình duyệt CHỈ để đục address bar — detection vẫn tự động")
+    void browserListOnlyForAddressBarExtraction() {
         String script = WindowsActivityCollector.PS_SCRIPT;
 
-        // Không nhắc tên trình duyệt/app cụ thể trong script
-        for (String banned : new String[] {"chrome", "msedge", "coccoc", "firefox",
-                "brave", "opera", "browser", "arc"}) {
-            assertFalse(script.toLowerCase().contains(banned),
-                    "Script không được hardcode tên app: " + banned);
-        }
+        // Mở rộng 10: danh sách browser dùng để quyết định CÓ tìm address bar,
+        // KHÔNG dùng để chọn active (active luôn là FocusedElement UIA)
+        assertTrue(script.contains("$browsers ="),
+                "Danh sách browser chỉ phục vụ đục URL thanh địa chỉ");
+        assertTrue(script.contains("$isBrowser"),
+                "Điều kiện isBrowser chỉ gated việc tìm Edit control");
+        assertTrue(script.contains("FocusedElement"),
+                "Detection foreground vẫn qua UIA FocusedElement — KHÔNG phụ thuộc danh sách");
         // Java filter cũng không ưu tiên theo nhóm app (không USER_APP_HINTS)
         assertFalse(WindowsActivityCollector.SYSTEM_PROCESSES.contains("chrome"),
                 "SYSTEM_PROCESSES chỉ chứa tiến trình NỀN, không chứa app người dùng");

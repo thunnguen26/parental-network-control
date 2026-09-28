@@ -27,23 +27,43 @@ final class ServerDashboardFrameTestHook {
      */
     static final int DIALOG_ROW_LIMIT = 200;
 
+    /** Chỉ số cột "Tiến trình" trong JTable nhật ký (cho popup chặn nhanh app). */
+    static final int ACTIVITY_COLUMN_PROCESS = 1;
+
     /** Chỉ số cột "Tiêu đề cửa sổ" trong JTable nhật ký (cho popup chặn nhanh). */
     static final int ACTIVITY_COLUMN_TITLE = 2;
+
+    /** Chỉ số cột "URL / Domain" trong JTable nhật ký (Mở rộng 10). */
+    static final int ACTIVITY_COLUMN_URL = 3;
 
     private ServerDashboardFrameTestHook() {
         // utility class — không khởi tạo
     }
 
+    /** Đọc ô JTable an toàn: null/out-of-range → chuỗi rỗng. */
+    static String valueOfCell(javax.swing.table.TableModel model, int row, int column) {
+        if (model == null || row < 0 || column < 0 || row >= model.getRowCount()
+                || column >= model.getColumnCount()) {
+            return "";
+        }
+        Object value = model.getValueAt(row, column);
+        return value == null ? "" : String.valueOf(value);
+    }
+
     /**
-     * Nhãn menu chuột phải "Chặn tên miền này" kèm domain gợi ý trích từ
-     * tiêu đề (nếu có) — pure function, test headless được. CHỈ dùng ký tự
-     * BMP cơ bản (không emoji — tránh glyph ô vuông trên Swing Windows).
+     * Nhãn menu 1-CLICK chặn domain (domain đã bóc tách sẵn) — pure function.
+     * CHỈ dùng ký tự BMP cơ bản (không emoji — tránh glyph ô vuông).
      */
-    static String buildQuickBlockLabel(String windowTitle) {
-        String suggestion = WindowTitleDomainExtractor.suggestDomain(windowTitle);
-        return suggestion != null
-                ? "Chặn tên miền này (gợi ý: " + suggestion + ")"
-                : "Chặn tên miền này (nhập tay)";
+    static String buildQuickBlockLabel(String suggestedDomain) {
+        return "Chặn tên miền [" + suggestedDomain + "]";
+    }
+
+    /**
+     * Nhãn menu 1-CLICK chặn tiến trình (app .exe) — pure function.
+     * CHỈ dùng ký tự BMP cơ bản.
+     */
+    static String buildQuickBlockProcessLabel(String processName) {
+        return "Chặn tiến trình [" + processName + "]";
     }
 
     /**
@@ -56,11 +76,13 @@ final class ServerDashboardFrameTestHook {
     }
 
     /**
-     * Dựng 1 dòng JTable nhật ký từ bản ghi DB — CỘT "TIÊU ĐỀ CỬA SỔ" GIỮ
-     * NGUYÊN VĂN (không truncate; dialog dùng AUTO_RESIZE_OFF + scroll ngang
-     * để xem đầy đủ).
+     * Dựng 1 dòng JTable nhật ký từ bản ghi DB — 4 cột: Thời điểm / Tiến
+     * trình / Tiêu đề cửa sổ / URL-Domain (Mở rộng 10). CỘT "TIÊU ĐỀ CỬA SỔ"
+     * GIỮ NGUYÊN VĂN (không truncate; dialog dùng AUTO_RESIZE_OFF + scroll
+     * ngang để xem đầy đủ).
      *
-     * <p>Defensive: recordedAt null → "—"; process/title null/rỗng → "—".</p>
+     * <p>Defensive: recordedAt null → "—"; process/title null/rỗng → "—";
+     * URL rỗng → "—".</p>
      */
     static Object[] buildActivityTableRow(ActivityDao.ActivityRecord record) {
         DateTimeFormatter formatter = activityTimestampFormatter();
@@ -68,7 +90,8 @@ final class ServerDashboardFrameTestHook {
         return new Object[] {
                 recordedAt != null ? formatter.format(recordedAt) : "—",
                 orDash(record.processName()),
-                orDash(record.windowTitle())
+                orDash(record.windowTitle()),
+                orDash(record.activeUrlOrDomain())
         };
     }
 

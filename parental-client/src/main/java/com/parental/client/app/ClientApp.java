@@ -179,6 +179,11 @@ public class ClientApp {
         WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer();
         SystemTrayAlertNotifier notifier = new SystemTrayAlertNotifier();
         OshiNetworkMetricsCollector metricsCollector = new OshiNetworkMetricsCollector();
+        // Chặn app .exe 1-click (Mở rộng 10): lưu danh sách + taskkill tức thì
+        // + daemon quét 60s chống mở lại app
+        com.parental.client.enforcement.ProcessBlockerManager processBlocker =
+                new com.parental.client.enforcement.ProcessBlockerManager();
+        processBlocker.startRescanScheduler();
         // Vô hiệu hóa DoH/QUIC của trình duyệt — hosts enforcement có hiệu lực thật:
         // mỗi lần áp/clear danh sách chặn, khóa/mở đường lách (DoH registry + QUIC UDP 443)
         // rồi flush DNS/NetBIOS cache để kết nối MỚI giải mã lại qua hosts.
@@ -197,7 +202,8 @@ public class ClientApp {
                 return super.clearBlocks();
             }
         };
-        ActionDispatcher actionDispatcher = new ActionDispatcher(enforcer, notifier, metricsCollector);
+        ActionDispatcher actionDispatcher = new ActionDispatcher(
+                enforcer, notifier, metricsCollector, processBlocker);
 
         return new TcpClientEngine(
                 config,

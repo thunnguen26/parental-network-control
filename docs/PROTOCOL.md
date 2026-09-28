@@ -70,8 +70,8 @@ Every packet must contain:
 | Field | Type | Mô tả |
 |---|---|---|
 | `commandId` | String | UUID định danh lệnh |
-| `action` | ActionType | `PAUSE_NETWORK`, `RESUME_NETWORK` hoặc `ALERT` |
-| `reason` | String | Lý do khóa hoặc thông điệp cảnh báo |
+| `action` | ActionType | `PAUSE_NETWORK`, `RESUME_NETWORK`, `ALERT` hoặc `BLOCK_PROCESS` |
+| `reason` | String | Lý do khóa, thông điệp cảnh báo, hoặc tên tiến trình cần chặn (khi action = `BLOCK_PROCESS`) |
 
 ```json
 {
@@ -80,6 +80,14 @@ Every packet must contain:
   "reason": "Da vuot gioi han thoi gian su dung trong ngay"
 }
 ```
+
+> **BLOCK_PROCESS (Mở rộng 10)**: Server yêu cầu client chặn vĩnh viễn 1 tiến trình
+> — `reason` mang TÊN TIẾN TRÌNH (vd `"somegame.exe"`, không phân biệt hoa/thường,
+> có/không đuôi .exe đều được). Client lưu vào `blocked_processes.json` (persist qua
+> restart) và tự động `taskkill /F /IM <name>` ngay khi nhận lệnh + mỗi 60s quét và
+> kết thúc bất kỳ instance nào đang chạy. Lệnh này KHÔNG đụng firewall/hosts — hủy
+> chặn bằng xóa file/entry `blocked_processes.json` (phiên bản tương lai sẽ có UI).
+> ACK hành vi giống PAUSE_NETWORK (thực thi xong mới ACK).
 
 ### 3.4 CONFIG_SYNC → `ConfigSyncPayload` (Server gửi cấu hình chính sách cho Client)
 | Field | Type | Mô tả |
@@ -173,16 +181,22 @@ Every packet must contain:
 |---|---|---|
 | `activeWindowTitle` | String | Tiêu đề cửa sổ đang active/focus, ví dụ `"Google Chrome - Bài tập Toán"`; rỗng/không xác định → chuỗi rỗng |
 | `activeProcessName` | String | Tên tiến trình của cửa sổ active, ví dụ `"chrome.exe"`; không xác định → chuỗi rỗng |
+| `activeUrlOrDomain` | String | **(Mở rộng 10)** URL/domain bóc tách từ thanh địa chỉ trình duyệt qua UIA ValuePattern (vd `"gemini.google.com"`, `"youtube.com"`); không phải trình duyệt hoặc không lấy được → chuỗi rỗng. Server lưu vào bảng `activity_logs` để menu "Chặn nhanh" điền sẵn domain 1-click |
 | `topProcesses` | List&lt;String&gt; | Tối đa 5 tiến trình ứng dụng tiêu biểu đang chạy |
 | `timestamp` | long | Thời điểm thu thập, **epoch millis** |
 
 ```json
 {
-  "activeWindowTitle": "Giải bài tập Hóa 12 | VietJack - Google Chrome",
+  "activeWindowTitle": "Nhập câu lệnh cho Gemini - Google Chrome",
   "activeProcessName": "chrome.exe",
-  "topProcesses": ["chrome.exe", "notepad.exe", "explorer.exe"],
+  "activeUrlOrDomain": "gemini.google.com",
+  "topProcesses": ["chrome.exe", "notepad.exe"],
   "timestamp": 1727400000000
 }
 ```
+
+> **Tương thích ngược (lenient)**: field `activeUrlOrDomain` thêm vào GIỮA payload —
+> server cũ bỏ qua field lạ (FAIL_ON_UNKNOWN_PROPERTIES=false), client cũ không gửi →
+> server nhận chuỗi rỗng/mặc định. Cả hai hướng đều không vỡ protocol.
 
 > **Chu kỳ gửi**: mặc định 10 giây/lần (cấu hình được qua `ClientConfig.activityIntervalMs`), chạy scheduler RIÊNG trên client — không block heartbeat/COMMAND. Server lưu mỗi báo cáo vào bảng `activity_logs` (process + title của cửa sổ active) và cập nhật `session.lastActivity` cho Dashboard hiển thị tức thời ("Đang mở: ..."). Bảng `activity_logs` có FK cascade — xóa client (`deleteClient`) cũng xóa sạch nhật ký hoạt động. Thu thập phía client là best-effort: môi trường không hỗ trợ (headless/test/hệ không Windows) trả về payload rỗng, KHÔNG BAO GIỜ ném exception làm chết scheduler.

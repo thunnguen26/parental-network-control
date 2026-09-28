@@ -80,4 +80,64 @@ class WindowTitleDomainExtractorTest {
         assertEquals(suggestion, BlockedDomainDialogHelper.normalize(suggestion),
                 "Gợi ý phải đi qua normalize không đổi — nhất quán với DAO");
     }
+
+    @Test
+    @DisplayName("Mở rộng 10: URL từ payload UIA ĐƯỢC ƯU TIÊN tuyệt đối trước title")
+    void uiaUrlBeatsTitle() {
+        // Title nói YouTube nhưng address bar đang ở gemini.google.com → URL thắng
+        assertEquals("gemini.google.com", WindowTitleDomainExtractor.suggestDomain(
+                "gemini.google.com/search",
+                "Nhập câu lệnh cho Gemini - Google Chrome"));
+        // URL đầy đủ https + path + port
+        assertEquals("youtube.com", WindowTitleDomainExtractor.suggestDomain(
+                "https://www.youtube.com:443/watch?v=abc", "YouTube - Chrome"));
+    }
+
+    @Test
+    @DisplayName("Mở rộng 10: URL rỗng/null → fallback suy luận từ title như cũ")
+    void emptyUrlFallsBackToTitle() {
+        assertEquals("youtube.com", WindowTitleDomainExtractor.suggestDomain(
+                "", "YouTube - Cốc Cốc"));
+        assertEquals("youtube.com", WindowTitleDomainExtractor.suggestDomain(
+                null, "YouTube - Cốc Cốc"));
+    }
+
+    @Test
+    @DisplayName("Mở rộng 10: từ khóa mới Gemini/ChatGPT/Copilot/Google/Tikivn...")
+    void newBrandKeywords() {
+        assertEquals("gemini.google.com", WindowTitleDomainExtractor.suggestDomain(
+                "Nhập câu lệnh cho Gemini"));
+        assertEquals("chatgpt.com", WindowTitleDomainExtractor.suggestDomain(
+                "ChatGPT - Conversations"));
+        assertEquals("copilot.microsoft.com", WindowTitleDomainExtractor.suggestDomain(
+                "Microsoft Copilot"));
+        assertEquals("google.com", WindowTitleDomainExtractor.suggestDomain(
+                "Google Tìm kiếm"));
+        assertEquals("tiki.vn", WindowTitleDomainExtractor.suggestDomain(
+                "Tiki - Mua sắm online"));
+        assertEquals("claude.ai", WindowTitleDomainExtractor.suggestDomain(
+                "Claude \u2014 Anthropic"));
+    }
+
+    @Test
+    @DisplayName("normalizeUrlToDomain: scheme/path/port/www — khớp DAO normalize")
+    void normalizeUrlToDomainMatchesDao() {
+        assertEquals("gemini.google.com", WindowTitleDomainExtractor.normalizeUrlToDomain(
+                "https://gemini.google.com/app"));
+        assertEquals("facebook.com", WindowTitleDomainExtractor.normalizeUrlToDomain(
+                "http://www.Facebook.COM/profile?id=1"));
+        assertEquals("x.com", WindowTitleDomainExtractor.normalizeUrlToDomain("x.com/home"));
+        assertNull(WindowTitleDomainExtractor.normalizeUrlToDomain("not a domain"));
+        assertNull(WindowTitleDomainExtractor.normalizeUrlToDomain(""));
+        assertNull(WindowTitleDomainExtractor.normalizeUrlToDomain(null));
+    }
+
+    @Test
+    @DisplayName("Kết quả từ URL payload cũng nhất quán với DAO normalize")
+    void uiaUrlResultNormalizable() {
+        String suggestion = WindowTitleDomainExtractor.suggestDomain(
+                "https://www.YouTube.com/watch?v=x", "anything");
+        assertEquals("youtube.com", suggestion);
+        assertEquals(suggestion, BlockedDomainDialogHelper.normalize(suggestion));
+    }
 }

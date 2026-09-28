@@ -52,16 +52,44 @@ public class WindowsActivityCollector implements ActivityCollector {
     static final int POWERSHELL_TIMEOUT_SECONDS = 2;
 
     /**
-     * Script PowerShell — 3 phần:
+     * Tên tiến trình TRÌNH DUYỆT (lowercase) — khi cửa sổ active thuộc nhóm
+     * này, script tìm Edit control thanh địa chỉ để bóc tách URL/domain.
+     * So khớp prefix — không dùng để ưu tiên/nhận diện app (detection vẫn
+     * tự động qua UIA), chỉ quyết định CÓ đục address bar hay không.
+     */
+    static final List<String> BROWSER_PROCESS_HINTS = List.of(
+            "chrome", "msedge", "browser", "firefox", "brave", "opera", "vivaldi", "arc");
+
+    /** Có phải tiến trình trình duyệt (so khớp prefix {@link #BROWSER_PROCESS_HINTS})? */
+    static boolean isBrowserProcess(String processName) {
+        if (processName == null || processName.isBlank()) {
+            return false;
+        }
+        String lower = processName.toLowerCase(Locale.ROOT);
+        for (String hint : BROWSER_PROCESS_HINTS) {
+            if (lower.startsWith(hint)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Script PowerShell — 4 phần:
      * <ol>
      *   <li><b>UTF-8</b>: {@code [Console]::OutputEncoding = UTF8} — stdout
      *       xuất tiếng Việt có dấu đúng chuẩn (Java đọc bằng UTF-8).</li>
      *   <li><b>UIA Foreground thật</b>: {@code FocusedElement} → tên + PID
-     *       (tên rỗng → đi ngược cây cha ≤ 6 cấp) → xuất dòng duy nhất
-     *       {@code process|title} rồi {@code exit 0} (không chạy fallback).</li>
+     *       (tên rỗng → đi ngược cây cha ≤ 6 cấp).</li>
+     *   <li><b>Address Bar (Mở rộng 10)</b>: nếu tiến trình là trình duyệt,
+     *       tìm Edit control của thanh địa chỉ (đi ngược lên window gốc rồi
+     *       {@code FindFirst(TreeScope.Descendants, ControlType.Edit)}) — đọc
+     *       URL qua {@code ValuePattern.Value}. Xuất 3 trường
+     *       {@code process|title|urlOrDomain} khi có URL; 2 trường
+     *       {@code process|title} khi không.</li>
      *   <li><b>Fallback Get-Process</b>: UIA lỗi/không xác định được → tiến
-     *       trình đầu tiên có cửa sổ thật + tiêu đề thật (loại explorer/dwm/
-     *       svchost/conhost/taskhostw), xuất {@code process|title}.</li>
+     *       trình đầu tiên có cửa sổ thật (loại nền hệ thống), xuất
+     *       {@code process|title}.</li>
      * </ol>
      * Không lấy được gì (màn hình khóa...) → không xuất dòng nào → payload rỗng.
      */
@@ -85,7 +113,38 @@ public class WindowsActivityCollector implements ActivityCollector {
             + "    }\n"
             + "    $p = Get-Process -Id $procId -ErrorAction SilentlyContinue\n"
             + "    if ($p -and -not [string]::IsNullOrEmpty($name)) {\n"
-            + "      Write-Output ($p.ProcessName + '|' + $name)\n"
+            + "      $pn = $p.ProcessName\n"
+            + "      $browsers = 'chrome','msedge','browser','firefox','brave','opera','vivaldi','arc'\n"
+            + "      $isBrowser = $false\n"
+            + "      foreach ($b in $browsers) { if ($pn.ToLower().StartsWith($b)) { $isBrowser = $true; break } }\n"
+            + "      $url = ''\n"
+            + "      if ($isBrowser) {\n"
+            + "        try {\n"
+            + "          $root = $f\n"
+            + "          $depth2 = 0\n"
+            + "          while ($depth2 -lt 6) {\n"
+            + "            $parent = $walker.GetParent($root)\n"
+            + "            if ($null -eq $parent) { break }\n"
+            + "            $root = $parent\n"
+            + "            $depth2++\n"
+            + "          }\n"
+            + "          $cond = New-Object System.Windows.Automation.PropertyCondition(" 
+            + "[System.Windows.Automation.AutomationElement]::ControlTypeProperty, " 
+            + "[System.Windows.Automation.ControlType]::Edit)\n"
+            + "          $edit = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)\n"
+            + "          if ($edit) {\n"
+            + "            $vp = $null\n"
+            + "            if ($edit.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {\n"
+            + "              $url = $vp.Value\n"
+            + "            }\n"
+            + "          }\n"
+            + "        } catch { }\n"
+            + "      }\n"
+            + "      if (-not [string]::IsNullOrEmpty($url)) {\n"
+            + "        Write-Output ($pn + '|' + $name + '|' + $url)\n"
+            + "      } else {\n"
+            + "        Write-Output ($pn + '|' + $name)\n"
+            + "      }\n"
             + "      exit 0\n"
             + "    }\n"
             + "  }\n"
@@ -234,8 +293,8 @@ public class WindowsActivityCollector implements ActivityCollector {
     // Windowed App Filter (thuần Java — unit test headless được)
     // ------------------------------------------------------------------
 
-    /** 1 ứng dụng người dùng thu được từ stdout PowerShell. */
-    record UserApp(String processName, String title) {
+    /** 1 ứng dụng người dùng thu được từ stdout PowerShell (url rỗng nếu không có). */
+    record UserApp(String processName, String title, String url) {
     }
 
     /** Có phải tiến trình nền hệ thống (theo {@link #SYSTEM_PROCESSES})? */
@@ -255,29 +314,55 @@ public class WindowsActivityCollector implements ActivityCollector {
     }
 
     /**
-     * Parse đầu ra PowerShell (dòng {@code process|title}):
+     * Parse đầu ra PowerShell — dòng {@code process|title} hoặc
+     * {@code process|title|urlOrDomain} (Mở rộng 10: trình duyệt có URL từ
+     * thanh địa chỉ):
      * <ul>
      *   <li>Dòng ĐẦU TIÊN hợp lệ = <b>Foreground UIA</b> (cửa sổ/tab người
      *       dùng đang tương tác; UIA thành công script chỉ xuất ĐÚNG 1 dòng
-     *       rồi exit — fallback First-1 khi UIA trượt); KHÔNG đoán theo CPU,
-     *       KHÔNG hardcode tên trình duyệt;</li>
+     *       rồi exit — fallback First-1 khi UIA trượt); KHÔNG đoán theo CPU;</li>
      *   <li>Áp Windowed App Filter phía Java (phòng thủ 2 lớp): bỏ tiến trình
      *       hệ thống + tiêu đề rác/rỗng;</li>
-     *   <li>Mọi ứng dụng khác (trình duyệt/game/IDE bất kỳ) đều được nhận diện
-     *       tự động qua ProcessName — không phụ thuộc danh sách nào.</li>
+     *   <li>URL/domain (trường 3) giữ nguyên — server bóc tách domain trước
+     *       khi chặn; URL rỗng/không có trường 3 → chuỗi rỗng.</li>
      * </ul>
      */
     ActivityReportPayload parseOutput(String output) {
         List<UserApp> validApps = new ArrayList<>();
+        UserApp active = null;
 
         if (output != null) {
             for (String line : output.split("\\R")) {
                 if (line == null || line.isBlank() || !line.contains("|")) {
                     continue; // dòng lỗi/nội dung lạ — bỏ qua, KHÔNG đưa vào payload
                 }
-                String[] parts = line.split("\\|", 2);
+                // Trường 3 (URL) RỖNG ở cuối dòng (browser|Title|) → strip để
+                // không nuốt dấu | vào title; script chỉ xuất 3 trường khi URL
+                // KHÁC rỗng, dòng có trailing pipe rỗng là bất thường — an toàn.
+                String normalizedLine = line.replaceAll("\\|+\\s*$", "").trim();
+                if (!normalizedLine.contains("|")) {
+                    continue;
+                }
+                String[] parts = normalizedLine.split("\\|", -1);
                 String processName = parts[0].trim();
-                String title = parts.length > 1 ? parts[1].trim() : "";
+                // Trường CUỐI chỉ được coi là URL/domain nếu nó TRÔNG GIỐNG một
+                // URL (chứa "://") hoặc domain — tránh nhầm title chứa dấu "|"
+                // (vd "Bài Hóa | VietJack - Chrome") thành trường URL.
+                String url = "";
+                String title;
+                if (parts.length >= 3) {
+                    String candidate = parts[parts.length - 1].trim();
+                    if (looksLikeUrlOrDomain(candidate)) {
+                        url = candidate;
+                        title = String.join("|",
+                                java.util.Arrays.copyOfRange(parts, 1, parts.length - 1)).trim();
+                    } else {
+                        title = String.join("|",
+                                java.util.Arrays.copyOfRange(parts, 1, parts.length)).trim();
+                    }
+                } else {
+                    title = parts.length > 1 ? parts[1].trim() : "";
+                }
                 // Chỉ nhận tên tiến trình hợp lệ (lỗi PowerShell lọt qua bị loại)
                 if (processName.isEmpty() || !processName.matches("[A-Za-z0-9._-]+")) {
                     continue;
@@ -286,15 +371,17 @@ public class WindowsActivityCollector implements ActivityCollector {
                 if (isSystemProcess(processName) || !isMeaningfulTitle(title)) {
                     continue;
                 }
-                validApps.add(new UserApp(processName, title));
+                UserApp app = new UserApp(processName, title, url);
+                if (active == null) {
+                    active = app; // dòng đầu hợp lệ = foreground
+                }
+                validApps.add(app);
             }
         }
-        if (validApps.isEmpty()) {
+        if (active == null) {
             // Chỉ có app hệ thống/không gì (màn hình khóa) → payload rỗng chuẩn
             return emptyPayload();
         }
-        // Active = dòng đầu hợp lệ (Foreground UIA / fallback First-1)
-        UserApp active = validApps.get(0);
 
         List<String> topProcesses = validApps.stream()
                 .map(UserApp::processName)
@@ -302,7 +389,21 @@ public class WindowsActivityCollector implements ActivityCollector {
                 .limit(ActivityReportPayload.MAX_TOP_PROCESSES)
                 .toList();
         return new ActivityReportPayload(active.title(), active.processName() + ".exe",
-                topProcesses, System.currentTimeMillis());
+                active.url(), topProcesses, System.currentTimeMillis());
+    }
+
+    /**
+     * Chuỗi có TRÔNG GIỐNG một URL (chứa {@code ://}) hoặc domain
+     * ({@code a.b.c} — không khoảng trắng, có TLD ≥ 2 chữ cái)?
+     */
+    static boolean looksLikeUrlOrDomain(String candidate) {
+        if (candidate == null || candidate.isBlank() || candidate.contains(" ")) {
+            return false;
+        }
+        if (candidate.contains("://")) {
+            return true;
+        }
+        return candidate.matches("(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?:/.*)?");
     }
 
     /** Payload rỗng chuẩn (không null — contract của {@link ActivityCollector}). */

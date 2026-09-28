@@ -182,6 +182,32 @@ class ActivityDaoTest {
     }
 
     @Test
+    @DisplayName("Mở rộng 10: logActivity 4 tham số lưu URL/domain; đọc lại khớp; 3 tham số → URL rỗng")
+    void logActivityWithUrlPersists() {
+        activityDao.logActivity("client-01", "chrome.exe",
+                "Nhập câu lệnh cho Gemini - Google Chrome", "gemini.google.com");
+        activityDao.logActivity("client-01", "somegame.exe", "Elden Ring", null);
+        activityDao.logActivity("client-01", "notepad.exe", "Ghi chú"); // 3 tham số — URL rỗng
+
+        List<ActivityDao.ActivityRecord> recent =
+                activityDao.getRecentActivities("client-01", 10);
+        assertEquals(3, recent.size());
+
+        // Soi theo processName (recorded_at cùng giây → thứ tự DESC theo id, không giả định)
+        ActivityDao.ActivityRecord chrome = recent.stream()
+                .filter(r -> "chrome.exe".equals(r.processName())).findFirst().orElseThrow();
+        ActivityDao.ActivityRecord game = recent.stream()
+                .filter(r -> "somegame.exe".equals(r.processName())).findFirst().orElseThrow();
+        ActivityDao.ActivityRecord notepad = recent.stream()
+                .filter(r -> "notepad.exe".equals(r.processName())).findFirst().orElseThrow();
+
+        assertEquals("gemini.google.com", chrome.activeUrlOrDomain(),
+                "URL bóc tách phải được persist để 1-click chặn");
+        assertEquals("", game.activeUrlOrDomain(), "null → chuỗi rỗng (không null)");
+        assertEquals("", notepad.activeUrlOrDomain(), "3 tham số → URL rỗng");
+    }
+
+    @Test
     @DisplayName("recorded_at ghi giờ LOCAL tường minh — đọc lại lệch < 5 phút (hết lỗi UTC ±7h)")
     void recordedAtIsLocalTimeNotUtc() {
         java.time.LocalDateTime before = java.time.LocalDateTime.now().minusSeconds(5);

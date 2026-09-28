@@ -33,12 +33,26 @@ public class ActionDispatcher {
     private final NetworkEnforcer enforcer;
     private final AlertNotifier alertNotifier;
     private final NetworkMetricsCollector metricsCollector; // nullable
+    /** Quản lý chặn tiến trình (Mở rộng 10) — nullable: null = tắt chặn app .exe. */
+    private final ProcessBlockerManager processBlockerManager;
 
     public ActionDispatcher(NetworkEnforcer enforcer, AlertNotifier alertNotifier,
                             NetworkMetricsCollector metricsCollector) {
+        this(enforcer, alertNotifier, metricsCollector, null);
+    }
+
+    /**
+     * Constructor đầy đủ (Mở rộng 10): kèm {@link ProcessBlockerManager} để
+     * xử lý lệnh {@code BLOCK_PROCESS} (chặn app .exe 1-click). Truyền null
+     * = hành vi cũ (chỉ log, không kill process).
+     */
+    public ActionDispatcher(NetworkEnforcer enforcer, AlertNotifier alertNotifier,
+                            NetworkMetricsCollector metricsCollector,
+                            ProcessBlockerManager processBlockerManager) {
         this.enforcer = Objects.requireNonNull(enforcer, "enforcer");
         this.alertNotifier = Objects.requireNonNull(alertNotifier, "alertNotifier");
         this.metricsCollector = metricsCollector; // nullable — không sync status khi null
+        this.processBlockerManager = processBlockerManager; // nullable
     }
 
     /**
@@ -58,6 +72,7 @@ public class ActionDispatcher {
                 case PAUSE_NETWORK -> handlePause(command);
                 case RESUME_NETWORK -> handleResume(command);
                 case ALERT -> handleAlert(command);
+                case BLOCK_PROCESS -> handleBlockProcess(command);
             };
         } catch (RuntimeException e) {
             log.error("Dispatch failed for command {}: {}", command.commandId(), e.getMessage());
@@ -90,6 +105,33 @@ public class ActionDispatcher {
         log.info("ALERT processed (command={}, shown={}, reason={})",
                 command.commandId(), shown, command.reason());
         // ALERT luôn coi như tiếp nhận thành công
+        return command.commandId();
+    }
+
+    /**
+     * BLOCK_PROCESS (Mở rộng 10 — chặn app .exe 1-click): {@code reason} mang
+     * tên tiến trình cần chặn. Lưu danh sách + taskkill tức thì qua
+     * {@link ProcessBlockerManager} — ACK khi đã tiếp nhận (kill là best-effort;
+     * manager null → vẫn ACK để không treo Server, chỉ log).
+     */
+    private String handleBlockProcess(CommandPayload command) {
+        String processName = command.reason();
+        if (processName == null || processName.isBlank()) {
+            log.warn("BLOCK_PROCESS without process name (command={}) — dropped", command.commandId());
+            return null;
+        }
+        if (processBlockerManager != null) {
+            boolean ok = processBlockerManager.blockProcess(processName);
+            if (!ok) {
+                log.warn("BLOCK_PROCESS '{}' failed to persist (command={}) — no ACK",
+                        processName, command.commandId());
+                return null;
+            }
+            log.info("Process '{}' blocked permanently (command={})", processName, command.commandId());
+        } else {
+            log.info("BLOCK_PROCESS received but process blocker disabled (command={}) — ACK anyway",
+                    command.commandId());
+        }
         return command.commandId();
     }
 

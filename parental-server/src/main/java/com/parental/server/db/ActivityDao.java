@@ -35,7 +35,14 @@ public class ActivityDao {
             String clientId,
             String processName,
             String windowTitle,
+            String activeUrlOrDomain,
             Instant recordedAt) {
+
+        /** Constructor 5 tham số (tương thích code cũ) — URL rỗng. */
+        public ActivityRecord(long id, String clientId, String processName,
+                              String windowTitle, Instant recordedAt) {
+            this(id, clientId, processName, windowTitle, null, recordedAt);
+        }
     }
 
     public ActivityDao(DatabaseManager database) {
@@ -43,26 +50,44 @@ public class ActivityDao {
     }
 
     /**
-     * Ghi 1 bản ghi hoạt động (client đang mở gì).
+     * Ghi 1 bản ghi hoạt động (client đang mở gì) — giữ chữ ký 3 tham số cho
+     * tương thích: ủy quyền {@link #logActivity(String, String, String, String)}
+     * với URL rỗng.
      *
      * @return id bản ghi vừa ghi, hoặc -1 nếu lỗi/client không tồn tại (FK)
      */
     public long logActivity(String clientId, String processName, String windowTitle) {
+        return logActivity(clientId, processName, windowTitle, null);
+    }
+
+    /**
+     * Ghi 1 bản ghi hoạt động kèm URL/domain bóc tách từ thanh địa chỉ
+     * (Mở rộng 10 — dùng cho menu "Chặn nhanh" 1-click).
+     *
+     * @param clientId        định danh client
+     * @param processName     tên tiến trình active
+     * @param windowTitle     tiêu đề cửa sổ active
+     * @param activeUrlOrDomain URL/domain từ address bar (null/rỗng nếu không có)
+     * @return id bản ghi vừa ghi, hoặc -1 nếu lỗi/client không tồn tại (FK)
+     */
+    public long logActivity(String clientId, String processName, String windowTitle,
+                            String activeUrlOrDomain) {
         if (clientId == null || clientId.isBlank()) {
             return -1;
         }
-        String sql = "INSERT INTO activity_logs (client_id, process_name, window_title, recorded_at) "
-                + "VALUES (?, ?, ?, ?)";
+        String sql = "INSERT INTO activity_logs (client_id, process_name, window_title, "
+                + "active_url_or_domain, recorded_at) VALUES (?, ?, ?, ?, ?)";
         try (Connection connection = database.newConnection();
              PreparedStatement statement = connection.prepareStatement(sql,
                      Statement.RETURN_GENERATED_KEYS)) {
             statement.setString(1, clientId);
             statement.setString(2, truncate(processName, 100));
             statement.setString(3, truncate(windowTitle, 2_000));
+            statement.setString(4, truncate(activeUrlOrDomain, 500));
             // GHI TƯỜNG MINH giờ LOCAL (hệ máy SERVER) thay vì DEFAULT
             // CURRENT_TIMESTAMP (UTC của SQLite) — hết lệch múi giờ khi hiển thị
             // trên JTable so với Event Log; getTimestamp() đọc lại khớp tuyệt đối.
-            statement.setTimestamp(4, Timestamp.valueOf(LocalDateTime.now()));
+            statement.setTimestamp(5, Timestamp.valueOf(LocalDateTime.now()));
             statement.executeUpdate();
             try (ResultSet keys = statement.getGeneratedKeys()) {
                 long id = keys.next() ? keys.getLong(1) : -1;
@@ -86,7 +111,8 @@ public class ActivityDao {
         if (clientId == null || clientId.isBlank() || limit <= 0) {
             return activities;
         }
-        String sql = "SELECT id, client_id, process_name, window_title, recorded_at "
+        String sql = "SELECT id, client_id, process_name, window_title, "
+                + "COALESCE(active_url_or_domain, '') AS active_url_or_domain, recorded_at "
                 + "FROM activity_logs WHERE client_id = ? "
                 + "ORDER BY recorded_at DESC, id DESC LIMIT ?";
         try (Connection connection = database.newConnection();
@@ -100,6 +126,7 @@ public class ActivityDao {
                             rs.getString("client_id"),
                             rs.getString("process_name"),
                             rs.getString("window_title"),
+                            rs.getString("active_url_or_domain"),
                             toInstant(rs.getTimestamp("recorded_at"))));
                 }
             }

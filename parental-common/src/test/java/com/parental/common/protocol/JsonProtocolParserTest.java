@@ -199,7 +199,53 @@ class JsonProtocolParserTest {
             ActivityReportPayload payload = assertInstanceOf(ActivityReportPayload.class, received.getPayload());
             assertNull(payload.activeWindowTitle());
             assertNull(payload.activeProcessName());
+            assertEquals("", payload.activeUrlOrDomain(),
+                    "Mở rộng 10: URL chuẩn hóa rỗng (không null)");
             assertEquals(0L, payload.timestamp());
+        }
+
+        @Test
+        @DisplayName("Mở rộng 10: ACTIVITY_REPORT với activeUrlOrDomain — round-trip nguyên vẹn")
+        void activityReportWithUrlRoundTrip() throws Exception {
+            ActivityReportPayload payload = new ActivityReportPayload(
+                    "Nhập câu lệnh cho Gemini - Google Chrome", "chrome.exe",
+                    "gemini.google.com", List.of("chrome.exe"), 1_727_400_000_000L);
+            BaseMessage<ActivityReportPayload> sent =
+                    BaseMessage.of(MessageType.ACTIVITY_REPORT, "client-01", payload);
+
+            BaseMessage<?> received = parser.fromLine(parser.toLine(sent));
+
+            ActivityReportPayload decoded = assertInstanceOf(ActivityReportPayload.class, received.getPayload());
+            assertEquals("gemini.google.com", decoded.activeUrlOrDomain(),
+                    "URL bóc tách từ address bar phải round-trip nguyên vẹn");
+            assertEquals("chrome.exe", decoded.activeProcessName());
+        }
+
+        @Test
+        @DisplayName("Mở rộng 10: client CŨ không gửi URL field → server nhận rỗng (tương thích ngược)")
+        void legacyClientWithoutUrlField() throws Exception {
+            BaseMessage<?> received = parser.fromLine(
+                    "{\"type\":\"ACTIVITY_REPORT\",\"clientId\":\"c1\",\"timestamp\":5,"
+                            + "\"payload\":{\"activeWindowTitle\":\"T\",\"activeProcessName\":\"app.exe\","
+                            + "\"topProcesses\":[],\"timestamp\":5}}\n");
+            ActivityReportPayload payload = assertInstanceOf(ActivityReportPayload.class, received.getPayload());
+            assertEquals("", payload.activeUrlOrDomain(), "Field thiếu → rỗng, không vỡ protocol");
+        }
+
+        @Test
+        @DisplayName("Mở rộng 10: ActionType.BLOCK_PROCESS — COMMAND round-trip với enum mới")
+        void blockProcessCommandRoundTrip() throws Exception {
+            CommandPayload payload = new CommandPayload(
+                    "cmd-block-1", ActionType.BLOCK_PROCESS, "somegame.exe");
+            BaseMessage<CommandPayload> sent =
+                    BaseMessage.of(MessageType.COMMAND, "server", payload);
+
+            BaseMessage<?> received = parser.fromLine(parser.toLine(sent));
+
+            CommandPayload decoded = assertInstanceOf(CommandPayload.class, received.getPayload());
+            assertEquals(ActionType.BLOCK_PROCESS, decoded.action(),
+                    "Enum mới phải round-trip qua JSON");
+            assertEquals("somegame.exe", decoded.reason(), "reason mang tên tiến trình");
         }
 
         @Test

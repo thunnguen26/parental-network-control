@@ -208,6 +208,11 @@ public class DatabaseManager {
                     )
                     """);
 
+            // Mở rộng 10: URL/domain bóc tách từ thanh địa chỉ trình duyệt —
+            // dùng cho menu "Chặn nhanh" 1-click điền sẵn domain.
+            addColumnIfMissing(connection, "activity_logs", "active_url_or_domain",
+                    "VARCHAR(500)");
+
             statement.execute("CREATE INDEX IF NOT EXISTS idx_metrics_client_time "
                     + "ON metrics_logs(client_id, recorded_at)");
             statement.execute("CREATE INDEX IF NOT EXISTS idx_metrics_recorded_at "

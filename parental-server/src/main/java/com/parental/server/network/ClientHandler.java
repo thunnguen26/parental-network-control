@@ -262,15 +262,18 @@ public class ClientHandler implements Runnable {
                     if (message.getPayload() instanceof ActivityReportPayload activity) {
                         session.setLastActivity(activity); // Dashboard đọc trực tiếp (realtime)
                         // DEDUP (chống spam nhật ký): người dùng ở yên 1 app/video
-                        // → client vẫn gửi mỗi 10s nhưng process+title KHÔNG đổi
+                        // → client vẫn gửi mỗi 10s nhưng process+title+url KHÔNG đổi
                         // → KHÔNG insert thêm dòng, chỉ giữ chữ ký + timestamp.
-                        // Chỉ khi app/tab THAY ĐỔI mới ghi bản ghi mới vào DB.
+                        // Chỉ khi app/tab/URL THAY ĐỔI mới ghi bản ghi mới vào DB
+                        // (URL đổi = chuyển trang web → phải ghi dòng mới).
                         String signature = activity.activeProcessName() + "\u0000"
-                                + activity.activeWindowTitle();
+                                + activity.activeWindowTitle() + "\u0000"
+                                + activity.activeUrlOrDomain();
                         if (!signature.equals(session.getActivitySignature())) {
                             if (activityDao != null) {
                                 activityDao.logActivity(session.getClientId(),
-                                        activity.activeProcessName(), activity.activeWindowTitle());
+                                        activity.activeProcessName(), activity.activeWindowTitle(),
+                                        activity.activeUrlOrDomain());
                             }
                             session.setActivitySignature(signature);
                             log.debug("[{}] ACTIVITY_REPORT recorded (changed): {} — {}",
