@@ -10,21 +10,26 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Quản lý danh sách TIẾN TRÌNH bị chặn trên máy con (Mở rộng 10 — "Chặn app
- * .exe 1-click"): server gửi {@code ActionType.BLOCK_PROCESS} với
- * {@code reason} = tên tiến trình; dispatcher lưu vào
- * {@code blocked_processes.json} (persist qua restart) và:
+ * Quản lý danh sách TIẾN TRÌNH bị chặn trên máy con (Mở rộng 10/12):
+ * server gửi {@code ActionType.BLOCK_PROCESS} với {@code reason} = tên tiến
+ * trình; dispatcher lưu vào {@code blocked_processes.json} (persist qua
+ * restart) và:
  * <ol>
  *   <li><b>Tức thì</b>: {@code taskkill /F /IM <tên>} mọi instance đang chạy
  *       (thử cả tên có/không đuôi {@code .exe});</li>
- *   <li><b>Lặp 60s</b>: daemon scheduler quét + kết thúc lại nếu ứng dụng tự
- *       mở lại — chặn "trốn" bằng cách mở lại app.</li>
+ *   <li><b>Watchdog 2s (Mở rộng 12)</b>: scheduler daemon quét + kết thúc lại
+ *       LIÊN TỤC bất cứ instance nào trong danh sách đang chạy — người dùng
+ *       nhấp mở lại app cũng bị tắt ngay trong vòng 2 giây, không kịp dùng.
+ *       Bỏ chặn (gỡ khỏi danh sách qua {@code replaceBlockedProcesses}) →
+ *       watchdog không còn kill app đó nữa → mở lại bình thường.</li>
  * </ol>
  *
  * <p><b>Defensive OS Interfacing</b> (AGENTS.md): taskkill timeout 5s +
@@ -42,14 +47,21 @@ public class ProcessBlockerManager {
     /** Tên file lưu danh sách tiến trình bị chặn (thư mục làm việc). */
     public static final String BLOCKED_PROCESSES_FILE = "blocked_processes.json";
 
-    /** Chu kỳ quét + kill lại tiến trình bị chặn (giây) — chống mở lại app. */
-    public static final int RESCAN_INTERVAL_SECONDS = 60;
+    /**
+     * Chu kỳ quét watchdog (giây) — Mở rộng 12: mỗi 2 giây quét MỘT LẦN toàn
+     * bộ danh sách và kill mọi instance bị chặn đang chạy. Đủ dày để người
+     * dùng "nhấp mở lại app cũng bị tắt ngay", đủ thưa để không đập CPU.
+     */
+    public static final int WATCHDOG_INTERVAL_SECONDS = 2;
 
     /** Timeout mỗi lệnh taskkill (giây). */
     static final int TASKKILL_TIMEOUT_SECONDS = 5;
 
     private final Path listFilePath;
     private final boolean windowsOs;
+
+    /** Watchdog daemon — null khi chưa start; tắt qua {@link #stopWatchdog()}. */
+    private final AtomicReference<ScheduledExecutorService> watchdogRef = new AtomicReference<>();
 
     public ProcessBlockerManager() {
         this(Path.of(BLOCKED_PROCESSES_FILE), isWindows());
@@ -118,7 +130,7 @@ public class ProcessBlockerManager {
     /**
      * Đồng bộ TOÀN BỘ danh sách chặn tiến trình từ Server (Mở rộng 11 —
      * REPLACE-ALL semantics của CONFIG_SYNC.blockedProcesses): ghi đè file
-     * danh sách. App bị GỠ khỏi danh sách = bỏ chặn: daemon quét 60s và mọi
+     * danh sách. App bị GỠ khỏi danh sách = bỏ chặn: watchdog quét 2s và mọi
      * luồng kill sau đó không đụng tới nữa — người dùng mở lại bình thường.
      * App còn/vừa có trong danh sách mới → kill ngay để trạng thái ăn khớp.
      *
@@ -147,24 +159,51 @@ public class ProcessBlockerManager {
         return true;
     }
 
-    /** Bắt đầu daemon quét 60s — kill lại tiến trình bị chặn nếu tự mở lại. */
+    /**
+     * Bắt đầu WATCHDOG quét 2s (Mở rộng 12 — thay cho quét 60s cũ): mỗi chu
+     * kỳ đọc lại danh sách hiện hành và kill mọi instance bị chặn đang chạy —
+     * người dùng mở lại app bị chặn sẽ bị tắt ngay trong vòng 2 giây. Gọi
+     * nhiều lần chỉ có 1 watchdog (idempotent); {@link #stopWatchdog()} tắt.
+     */
     public void startRescanScheduler() {
-        java.util.concurrent.ScheduledExecutorService scheduler =
+        if (watchdogRef.get() != null) {
+            return; // idempotent — đã chạy
+        }
+        ScheduledExecutorService scheduler =
                 java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
-                    Thread thread = new Thread(runnable, "parental-client-process-rescan");
+                    Thread thread = new Thread(runnable, "parental-client-process-watchdog");
                     thread.setDaemon(true);
                     return thread;
                 });
-        scheduler.scheduleAtFixedRate(() -> {
-            try {
-                for (String processName : loadBlockedProcesses()) {
-                    killProcessNow(processName);
-                }
-            } catch (RuntimeException e) {
-                log.debug("Process rescan failed: {}", e.getMessage());
+        if (!watchdogRef.compareAndSet(null, scheduler)) {
+            // Thread khác đã thắng — đóng scheduler thừa, giữ watchdog cũ
+            scheduler.shutdownNow();
+            return;
+        }
+        scheduler.scheduleWithFixedDelay(this::watchdogSweep,
+                WATCHDOG_INTERVAL_SECONDS, WATCHDOG_INTERVAL_SECONDS, TimeUnit.SECONDS);
+        log.info("Process watchdog started (every {}s — blocked apps are killed on sight)",
+                WATCHDOG_INTERVAL_SECONDS);
+    }
+
+    /** Tắt watchdog (dọn dẹp khi engine/unpair dừng). */
+    public void stopWatchdog() {
+        ScheduledExecutorService scheduler = watchdogRef.getAndSet(null);
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+            log.info("Process watchdog stopped");
+        }
+    }
+
+    /** MỘT chu kỳ watchdog: quét danh sách hiện hành + kill mọi app bị chặn. */
+    void watchdogSweep() {
+        try {
+            for (String processName : loadBlockedProcesses()) {
+                killProcessNow(processName);
             }
-        }, RESCAN_INTERVAL_SECONDS, RESCAN_INTERVAL_SECONDS, TimeUnit.SECONDS);
-        log.info("Process rescan scheduler started (every {}s)", RESCAN_INTERVAL_SECONDS);
+        } catch (RuntimeException e) {
+            log.debug("Process watchdog sweep failed: {}", e.getMessage());
+        }
     }
 
     // ------------------------------------------------------------------

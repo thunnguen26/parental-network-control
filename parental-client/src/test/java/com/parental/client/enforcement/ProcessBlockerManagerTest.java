@@ -136,9 +136,9 @@ class ProcessBlockerManagerTest {
     }
 
     @Test
-    @DisplayName("Hằng số theo spec: quét lại 60s, taskkill timeout 5s")
+    @DisplayName("Hằng số theo spec Mở rộng 12: watchdog 2s, taskkill timeout 5s")
     void constantsMatchSpec() {
-        assertEquals(60, ProcessBlockerManager.RESCAN_INTERVAL_SECONDS);
+        assertEquals(2, ProcessBlockerManager.WATCHDOG_INTERVAL_SECONDS);
         assertEquals(5, ProcessBlockerManager.TASKKILL_TIMEOUT_SECONDS);
         assertEquals("blocked_processes.json", ProcessBlockerManager.BLOCKED_PROCESSES_FILE);
     }

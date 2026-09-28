@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="com.parental.server.rules.RuleEvaluationEngineTest" time="0.063" tests="16" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="23"/>
+    <property name="sun.cpu.isalist" value="amd64"/>
+    <property name="sun.jnu.encoding" value="Cp1252"/>
+    <property name="java.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.awt.enableExtraMouseButtons" value="true"/>
+    <property name="java.vm.vendor" value="Oracle Corporation"/>
+    <property name="sun.arch.data.model" value="64"/>
+    <property name="user.variant" value=""/>
+    <property name="java.vendor.url" value="https://java.oracle.com/"/>
+    <property name="user.timezone" value="Asia/Saigon"/>
+    <property name="os.name" value="Windows 11"/>
+    <property name="java.vm.specification.version" value="23"/>
+    <property name="sun.java.launcher" value="SUN_STANDARD"/>
+    <property name="user.country" value="VN"/>
+    <property name="sun.boot.library.path" value="C:\MT\bin"/>
+    <property name="sun.java.command" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253 2026-09-28T18-43-58_178-jvmRun1 surefire-20260928184401374_4tmp surefire_1-20260928184401374_5tmp"/>
+    <property name="jdk.debug" value="release"/>
+    <property name="surefire.test.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.cpu.endian" value="little"/>
+    <property name="user.home" value="C:\Users\ADMIN"/>
+    <property name="user.language" value="vi"/>
+    <property name="java.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.version.date" value="2024-10-15"/>
+    <property name="java.home" value="C:\MT"/>
+    <property name="file.separator" value="\"/>
+    <property name="basedir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="java.vm.compressedOopsMode" value="Zero based"/>
+    <property name="line.separator" value="&#10;"/>
+    <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.specification.name" value="Java Platform API Specification"/>
+    <property name="java.awt.headless" value="true"/>
+    <property name="surefire.real.class.path" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar"/>
+    <property name="user.script" value=""/>
+    <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
+    <property name="java.runtime.version" value="23.0.1+11-39"/>
+    <property name="user.name" value="ADMIN"/>
+    <property name="stdout.encoding" value="Cp1252"/>
+    <property name="path.separator" value=";"/>
+    <property name="os.version" value="10.0"/>
+    <property name="java.runtime.name" value="Java(TM) SE Runtime Environment"/>
+    <property name="file.encoding" value="UTF-8"/>
+    <property name="java.vm.name" value="Java HotSpot(TM) 64-Bit Server VM"/>
+    <property name="localRepository" value="C:\Users\ADMIN\.m2\repository"/>
+    <property name="java.vendor.url.bug" value="https://bugreport.java.com/bugreport/"/>
+    <property name="java.io.tmpdir" value="C:\Users\ADMIN\AppData\Local\Temp\"/>
+    <property name="java.version" value="23.0.1"/>
+    <property name="user.dir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="os.arch" value="amd64"/>
+    <property name="java.vm.specification.name" value="Java Virtual Machine Specification"/>
+    <property name="sun.os.patch.level" value=""/>
+    <property name="native.encoding" value="Cp1252"/>
+    <property name="java.library.path" value="C:\MT\bin;C:\WINDOWS\Sun\Java\bin;C:\WINDOWS\system32;C:\WINDOWS;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\bin;D:\moitruong\node.exe;D:\moitruong\npm;C:\Users\ADMIN\AppData\Roaming\npm;C:\Users\ADMIN\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\local\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\bin;C:\Users\ADMIN\bin;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;C:\ffmpeg;C:\Users\ADMIN\AppData\Local\Programs\Microsoft VS Code\bin;D:\ap\Git\Git\usr\bin\vendor_perl;D:\ap\Git\Git\usr\bin\core_perl;C:\Users\ADMIN\AppData\Roaming\npm;."/>
+    <property name="java.vm.info" value="mixed mode, sharing"/>
+    <property name="stderr.encoding" value="Cp1252"/>
+    <property name="java.vendor" value="Oracle Corporation"/>
+    <property name="java.vm.version" value="23.0.1+11-39"/>
+    <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
+    <property name="java.class.version" value="67.0"/>
+  </properties>
+  <testcase name="unconfiguredClientIgnored" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.009">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-4150a44b-ccdf-4691-a174-8a9bfa91c5ff?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-04] registered (1 online)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-05] registered (2 online)
+]]></system-err>
+  </testcase>
+  <testcase name="violationOutsideSchedulePausesOnce" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.013">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-817744d3-5b84-43ab-ba93-3b082a75fd90?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-01] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-01] (reason: Outside allowed time schedule)
+]]></system-err>
+  </testcase>
+  <testcase name="lifecycleStartStop" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.005">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-b1008441-c317-46e5-90cf-e60b59afbb33?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - RuleEvaluationEngine started (scan interval 1s)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - RuleEvaluationEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="resumeWhenRuleRemoved" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.004">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-5e10a75f-d074-4096-89a5-0a9740e26327?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-03] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-03] (reason: Daily traffic quota exceeded)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - RESUME_NETWORK sent to [kid-03] (reason: Network access restored: usage limits no longer exceeded)
+]]></system-err>
+  </testcase>
+  <testcase name="noViolationNoCommands" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-8956e589-48e9-4c18-8507-20d33e7cbb43?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-08] registered (1 online)
+]]></system-err>
+  </testcase>
+  <testcase name="scheduleNormalWithin" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.0"/>
+  <testcase name="resumeWhenViolationClears" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.004">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-bc47ddc2-b34e-40c1-8106-7268998a9162?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-02] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-02] (reason: Daily usage time limit exceeded)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - RESUME_NETWORK sent to [kid-02] (reason: Network access restored: usage limits no longer exceeded)
+]]></system-err>
+  </testcase>
+  <testcase name="preWarningAlertSentOnce" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.004">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-ade99736-ffd1-421d-a556-0782e891bc81?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-07] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - ALERT sent to [kid-07] (reason: You have 5 minutes of screen time left)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - Pre-warning ALERT sent to [kid-07] (300s remaining)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-07] (reason: Daily usage time limit exceeded)
+]]></system-err>
+  </testcase>
+  <testcase name="scheduleUnconfiguredOrBroken" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.0">
+    <system-err><![CDATA[[main] WARN com.parental.server.rules.RuleEvaluationEngine - Invalid allowed time format ('25:99' - '08:00'): schedule ignored (fail-open)
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - Invalid allowed time format ('abc' - '08:00'): schedule ignored (fail-open)
+]]></system-err>
+  </testcase>
+  <testcase name="hasActiveRuleCases" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.0"/>
+  <testcase name="trafficQuotaViolationPauses" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-ba70b3ca-423e-4a2e-ab23-732e5dd6435d?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-06] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-06] (reason: Daily traffic quota exceeded)
+]]></system-err>
+  </testcase>
+  <testcase name="scheduleOvernight" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.0"/>
+  <testcase name="offlineCleanup" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-d2e10359-e375-4205-82ab-a619bb817a87?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-10] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-10] (reason: Daily usage time limit exceeded)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-10] removed (0 online)
+]]></system-err>
+  </testcase>
+  <testcase name="evaluationSurvivesDaoFailure" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.004">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-2dffab20-b651-469c-997d-b8ee0ae68169?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-11] registered (1 online)
+[main] ERROR com.parental.server.rules.RuleEvaluationEngine - Rule evaluation cycle failed: DB down
+java.lang.IllegalStateException: DB down
+	at com.parental.server.rules.RuleEvaluationEngineTest$2.getRule(RuleEvaluationEngineTest.java:390)
+	at com.parental.server.rules.RuleEvaluationEngine.evaluateClient(RuleEvaluationEngine.java:200)
+	at com.parental.server.rules.RuleEvaluationEngine.evaluateAll(RuleEvaluationEngine.java:182)
+	at org.junit.jupiter.api.AssertDoesNotThrow.assertDoesNotThrow(AssertDoesNotThrow.java:49)
+	at org.junit.jupiter.api.AssertDoesNotThrow.assertDoesNotThrow(AssertDoesNotThrow.java:36)
+	at org.junit.jupiter.api.Assertions.assertDoesNotThrow(Assertions.java:3168)
+	at com.parental.server.rules.RuleEvaluationEngineTest.evaluationSurvivesDaoFailure(RuleEvaluationEngineTest.java:398)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+[main] ERROR com.parental.server.rules.RuleEvaluationEngine - Rule evaluation cycle failed: DB down
+java.lang.IllegalStateException: DB down
+	at com.parental.server.rules.RuleEvaluationEngineTest$2.getRule(RuleEvaluationEngineTest.java:390)
+	at com.parental.server.rules.RuleEvaluationEngine.evaluateClient(RuleEvaluationEngine.java:200)
+	at com.parental.server.rules.RuleEvaluationEngine.evaluateAll(RuleEvaluationEngine.java:182)
+	at org.junit.jupiter.api.AssertDoesNotThrow.assertDoesNotThrow(AssertDoesNotThrow.java:49)
+	at org.junit.jupiter.api.AssertDoesNotThrow.assertDoesNotThrow(AssertDoesNotThrow.java:36)
+	at org.junit.jupiter.api.Assertions.assertDoesNotThrow(Assertions.java:3168)
+	at com.parental.server.rules.RuleEvaluationEngineTest.evaluationSurvivesDaoFailure(RuleEvaluationEngineTest.java:399)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.platform.commons.util.ReflectionUtils.invokeMethod(ReflectionUtils.java:728)
+	at org.junit.jupiter.engine.execution.MethodInvocation.proceed(MethodInvocation.java:60)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$ValidatingInvocation.proceed(InvocationInterceptorChain.java:131)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.intercept(TimeoutExtension.java:156)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestableMethod(TimeoutExtension.java:147)
+	at org.junit.jupiter.engine.extension.TimeoutExtension.interceptTestMethod(TimeoutExtension.java:86)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker$ReflectiveInterceptorCall.lambda$ofVoidMethod$0(InterceptingExecutableInvoker.java:103)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.lambda$invoke$0(InterceptingExecutableInvoker.java:93)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain$InterceptedInvocation.proceed(InvocationInterceptorChain.java:106)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.proceed(InvocationInterceptorChain.java:64)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.chainAndInvoke(InvocationInterceptorChain.java:45)
+	at org.junit.jupiter.engine.execution.InvocationInterceptorChain.invoke(InvocationInterceptorChain.java:37)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:92)
+	at org.junit.jupiter.engine.execution.InterceptingExecutableInvoker.invoke(InterceptingExecutableInvoker.java:86)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.lambda$invokeTestMethod$7(TestMethodTestDescriptor.java:218)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.invokeTestMethod(TestMethodTestDescriptor.java:214)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:139)
+	at org.junit.jupiter.engine.descriptor.TestMethodTestDescriptor.execute(TestMethodTestDescriptor.java:69)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:151)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.invokeAll(SameThreadHierarchicalTestExecutorService.java:41)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$6(NodeTestTask.java:155)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$8(NodeTestTask.java:141)
+	at org.junit.platform.engine.support.hierarchical.Node.around(Node.java:137)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.lambda$executeRecursively$9(NodeTestTask.java:139)
+	at org.junit.platform.engine.support.hierarchical.ThrowableCollector.execute(ThrowableCollector.java:73)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.executeRecursively(NodeTestTask.java:138)
+	at org.junit.platform.engine.support.hierarchical.NodeTestTask.execute(NodeTestTask.java:95)
+	at org.junit.platform.engine.support.hierarchical.SameThreadHierarchicalTestExecutorService.submit(SameThreadHierarchicalTestExecutorService.java:35)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestExecutor.execute(HierarchicalTestExecutor.java:57)
+	at org.junit.platform.engine.support.hierarchical.HierarchicalTestEngine.execute(HierarchicalTestEngine.java:54)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:198)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:169)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:93)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.lambda$execute$0(EngineExecutionOrchestrator.java:58)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.withInterceptedStreams(EngineExecutionOrchestrator.java:141)
+	at org.junit.platform.launcher.core.EngineExecutionOrchestrator.execute(EngineExecutionOrchestrator.java:57)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:103)
+	at org.junit.platform.launcher.core.DefaultLauncher.execute(DefaultLauncher.java:85)
+	at org.junit.platform.launcher.core.DelegatingLauncher.execute(DelegatingLauncher.java:47)
+	at org.apache.maven.surefire.junitplatform.LazyLauncher.execute(LazyLauncher.java:56)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.execute(JUnitPlatformProvider.java:184)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invokeAllTests(JUnitPlatformProvider.java:148)
+	at org.apache.maven.surefire.junitplatform.JUnitPlatformProvider.invoke(JUnitPlatformProvider.java:122)
+	at org.apache.maven.surefire.booter.ForkedBooter.runSuitesInProcess(ForkedBooter.java:385)
+	at org.apache.maven.surefire.booter.ForkedBooter.execute(ForkedBooter.java:162)
+	at org.apache.maven.surefire.booter.ForkedBooter.run(ForkedBooter.java:507)
+	at org.apache.maven.surefire.booter.ForkedBooter.main(ForkedBooter.java:495)
+]]></system-err>
+  </testcase>
+  <testcase name="failedSendRetriesNextCycle" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-6f2ad8ad-ba05-44b4-8000-c36ce6efff12?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-09] registered (1 online)
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK send failed to [kid-09] — will retry next cycle
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK send failed to [kid-09] — will retry next cycle
+]]></system-err>
+  </testcase>
+  <testcase name="scheduleNormalOutside" classname="com.parental.server.rules.RuleEvaluationEngineTest" time="0.001"/>
+</testsuite>

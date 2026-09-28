@@ -1,0 +1,14 @@
+com\parental\common\protocol\payload\ConfigSyncPayload.class
+com\parental\common\protocol\JsonProtocolParser.class
+com\parental\common\protocol\payload\MetricsPayload.class
+com\parental\common\protocol\payload\PairRequestPayload.class
+com\parental\common\protocol\BaseMessage.class
+com\parental\common\protocol\ProtocolParseException.class
+com\parental\common\protocol\payload\ActivityReportPayload.class
+com\parental\common\protocol\payload\CommandPayload.class
+com\parental\common\protocol\payload\HandshakePayload.class
+com\parental\common\protocol\ActionType.class
+com\parental\common\protocol\MessageType.class
+com\parental\common\protocol\payload\PairResponsePayload.class
+com\parental\common\protocol\JsonProtocolParser$1.class
+com\parental\common\protocol\payload\UnpairPayload.class

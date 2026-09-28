@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="com.parental.server.db.BlockedDomainDaoTest" time="0.08" tests="12" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="23"/>
+    <property name="sun.cpu.isalist" value="amd64"/>
+    <property name="sun.jnu.encoding" value="Cp1252"/>
+    <property name="java.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="java.vm.vendor" value="Oracle Corporation"/>
+    <property name="sun.arch.data.model" value="64"/>
+    <property name="user.variant" value=""/>
+    <property name="java.vendor.url" value="https://java.oracle.com/"/>
+    <property name="user.timezone" value="Asia/Saigon"/>
+    <property name="os.name" value="Windows 11"/>
+    <property name="java.vm.specification.version" value="23"/>
+    <property name="sun.java.launcher" value="SUN_STANDARD"/>
+    <property name="user.country" value="VN"/>
+    <property name="sun.boot.library.path" value="C:\MT\bin"/>
+    <property name="sun.java.command" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253 2026-09-28T18-43-58_178-jvmRun1 surefire-20260928184401374_4tmp surefire_1-20260928184401374_5tmp"/>
+    <property name="jdk.debug" value="release"/>
+    <property name="surefire.test.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.cpu.endian" value="little"/>
+    <property name="user.home" value="C:\Users\ADMIN"/>
+    <property name="user.language" value="vi"/>
+    <property name="java.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.version.date" value="2024-10-15"/>
+    <property name="java.home" value="C:\MT"/>
+    <property name="file.separator" value="\"/>
+    <property name="basedir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="java.vm.compressedOopsMode" value="Zero based"/>
+    <property name="line.separator" value="&#10;"/>
+    <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.specification.name" value="Java Platform API Specification"/>
+    <property name="java.awt.headless" value="true"/>
+    <property name="surefire.real.class.path" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar"/>
+    <property name="user.script" value=""/>
+    <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
+    <property name="java.runtime.version" value="23.0.1+11-39"/>
+    <property name="user.name" value="ADMIN"/>
+    <property name="stdout.encoding" value="Cp1252"/>
+    <property name="path.separator" value=";"/>
+    <property name="os.version" value="10.0"/>
+    <property name="java.runtime.name" value="Java(TM) SE Runtime Environment"/>
+    <property name="file.encoding" value="UTF-8"/>
+    <property name="java.vm.name" value="Java HotSpot(TM) 64-Bit Server VM"/>
+    <property name="localRepository" value="C:\Users\ADMIN\.m2\repository"/>
+    <property name="java.vendor.url.bug" value="https://bugreport.java.com/bugreport/"/>
+    <property name="java.io.tmpdir" value="C:\Users\ADMIN\AppData\Local\Temp\"/>
+    <property name="java.version" value="23.0.1"/>
+    <property name="user.dir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="os.arch" value="amd64"/>
+    <property name="java.vm.specification.name" value="Java Virtual Machine Specification"/>
+    <property name="sun.os.patch.level" value=""/>
+    <property name="native.encoding" value="Cp1252"/>
+    <property name="java.library.path" value="C:\MT\bin;C:\WINDOWS\Sun\Java\bin;C:\WINDOWS\system32;C:\WINDOWS;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\bin;D:\moitruong\node.exe;D:\moitruong\npm;C:\Users\ADMIN\AppData\Roaming\npm;C:\Users\ADMIN\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\local\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\bin;C:\Users\ADMIN\bin;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;C:\ffmpeg;C:\Users\ADMIN\AppData\Local\Programs\Microsoft VS Code\bin;D:\ap\Git\Git\usr\bin\vendor_perl;D:\ap\Git\Git\usr\bin\core_perl;C:\Users\ADMIN\AppData\Roaming\npm;."/>
+    <property name="java.vm.info" value="mixed mode, sharing"/>
+    <property name="stderr.encoding" value="Cp1252"/>
+    <property name="java.vendor" value="Oracle Corporation"/>
+    <property name="java.vm.version" value="23.0.1+11-39"/>
+    <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
+    <property name="java.class.version" value="67.0"/>
+  </properties>
+  <testcase name="deleteClientCascadesBlockedDomains" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.014">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-fceb19c1-82e4-4e78-96f9-d4b2211a4984?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.ClientDao - Client [client-01] deleted with all related data (transaction committed)
+]]></system-err>
+  </testcase>
+  <testcase name="addDomainNormalizesAndDeduplicates" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.005">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-3e26a4bc-c02f-461a-97b2-01f5a28c3509?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'tiktok.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' already blocked for client [client-01] — idempotent, re-syncing
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' already blocked for client [client-01] — idempotent, re-syncing
+]]></system-err>
+  </testcase>
+  <testcase name="setKeepsOtherClientDataIntact" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.016">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-9eccb432-e0b8-4001-965a-a33786fdf1e8?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Blocked domains replaced for client [client-01] (1 domains)
+]]></system-err>
+  </testcase>
+  <testcase name="addDomainDuplicateIsIdempotentNotError" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.008">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-e769a50f-2428-47fa-983a-62f58fb8d6cd?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'youtube.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'youtube.com' already blocked for client [client-01] — idempotent, re-syncing
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'youtube.com' already blocked for client [client-01] — idempotent, re-syncing
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'youtube.com' already blocked for client [client-01] — idempotent, re-syncing
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'youtube.com' already blocked for client [client-01] — idempotent, re-syncing
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'youtube.com' already blocked for client [client-01] — idempotent, re-syncing
+[main] WARN com.parental.server.db.BlockedDomainDao - Cannot add invalid domain 'không hợp lệ!!!' for client [client-01]
+[main] ERROR com.parental.server.db.BlockedDomainDao - Failed to add domain 'youtube.com' for client [ghost]: [SQLITE_CONSTRAINT_FOREIGNKEY] A foreign key constraint failed (FOREIGN KEY constraint failed)
+]]></system-err>
+  </testcase>
+  <testcase name="addDomainRejectsInvalidOrMissingClient" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.005">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-205ddb53-77e8-42ab-89aa-4077703e08b4?mode=memory&cache=shared (schema ready)
+[main] WARN com.parental.server.db.BlockedDomainDao - Cannot add invalid domain 'not a domain' for client [client-01]
+[main] WARN com.parental.server.db.BlockedDomainDao - Cannot add invalid domain 'null' for client [client-01]
+[main] ERROR com.parental.server.db.BlockedDomainDao - Failed to add domain 'facebook.com' for client [ghost]: [SQLITE_CONSTRAINT_FOREIGNKEY] A foreign key constraint failed (FOREIGN KEY constraint failed)
+]]></system-err>
+  </testcase>
+  <testcase name="normalizeKeepsRealSubdomains" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-7a612676-9a0a-44ae-9e59-d1601eac51ff?mode=memory&cache=shared (schema ready)
+]]></system-err>
+  </testcase>
+  <testcase name="removeDomainNormalizesAndDeletes" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.004">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-ff52a822-e402-4b63-b671-0fb7552165b1?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'tiktok.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' unblocked for client [client-01]
+]]></system-err>
+  </testcase>
+  <testcase name="normalizeRejectsInvalidInput" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-edd54481-9177-44be-a4ad-4849edfac38f?mode=memory&cache=shared (schema ready)
+]]></system-err>
+  </testcase>
+  <testcase name="normalizeStripsSchemeWwwSlashPath" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.004">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-1fac0cd7-0c27-4811-8083-9072d832a043?mode=memory&cache=shared (schema ready)
+]]></system-err>
+  </testcase>
+  <testcase name="setEmptyClearsAndMissingClientFails" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-8555116f-9759-4e99-92d9-b155a78594dc?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Blocked domains replaced for client [client-01] (0 domains)
+[main] ERROR com.parental.server.db.BlockedDomainDao - Failed to set blocked domains for client [ghost]: [SQLITE_CONSTRAINT_FOREIGNKEY] A foreign key constraint failed (FOREIGN KEY constraint failed) — rolling back
+]]></system-err>
+  </testcase>
+  <testcase name="normalizationMatchesGuiHelper" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-86234bef-803d-4fb2-814e-1bc57a78be82?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'facebook.com' unblocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'x.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'x.com' unblocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'tiktok.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'tiktok.com' unblocked for client [client-01]
+]]></system-err>
+  </testcase>
+  <testcase name="setReplacesAllAndNormalizes" classname="com.parental.server.db.BlockedDomainDaoTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-93797a39-6275-482a-8978-c037ebe87680?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.db.BlockedDomainDao - Domain 'old.com' blocked for client [client-01]
+[main] INFO com.parental.server.db.BlockedDomainDao - Blocked domains replaced for client [client-01] (2 domains)
+]]></system-err>
+  </testcase>
+</testsuite>

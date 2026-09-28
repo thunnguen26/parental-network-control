@@ -6,7 +6,6 @@ import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.util.ArrayList;
 import java.util.List;
 
 import javax.swing.BorderFactory;
@@ -18,6 +17,7 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
+import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 
@@ -27,14 +27,17 @@ import com.parental.server.db.RuleDao;
 import com.parental.server.db.RuleDao.RuleRecord;
 
 /**
- * Dialog cấu hình chính sách cho MỘT client (Task 5.2):
+ * Dialog cấu hình chính sách cho MỘT client (Task 5.2 + Mở rộng 12):
  * <ul>
- *   <li>Quản lý Blocked Domains — danh sách + Thêm/Xóa;</li>
+ *   <li><b>JTabbedPane 2 tab</b>: "Chặn Tên Miền" (blacklist domain) và
+ *       "Chặn Tiến Trình / Ứng Dụng" (danh sách .exe bị chặn + Thêm/Bỏ chặn
+ *       — tự tải từ {@code RuleDao.getBlockedProcesses} khi mở dialog);</li>
  *   <li>Giới hạn thời gian dùng trong ngày — spinner GIỜ (0–24);</li>
  *   <li>Giới hạn dung lượng trong ngày — spinner GB (0–1024);</li>
  *   <li>Khung giờ cho phép — spinner Giờ:Phút bắt đầu/kết thúc (HH:mm);</li>
- *   <li>[Lưu &amp; Đồng bộ ngay]: {@code RuleDao.upsertRule} + {@code setBlockedDomains}
- *       → callback đẩy {@code CONFIG_SYNC} xuống client → đóng dialog.</li>
+ *   <li>[Lưu &amp; Đồng bộ ngay]: {@code RuleDao.upsertRule} (persist CẢ
+ *       domains lẫn blockedProcesses trong 1 transaction) → callback đẩy
+ *       {@code CONFIG_SYNC} xuống client → đóng dialog.</li>
  * </ul>
  *
  * <p>Giá trị 0 = không giới hạn; thời gian rỗng (bỏ tick) = không giới hạn giờ.
@@ -128,11 +131,10 @@ final class PolicyConfigDialog extends JDialog {
     private void initUi() {
         setLayout(new BorderLayout(0, 8));
 
-        // --- Blocked domains (Domain Blacklist Management) ---
+        // --- Blocked domains (Domain Blacklist Management) — nạp qua TestHook
+        // (logic thuần tách riêng, headless-test được) ---
         domainListModel = new DefaultListModel<>();
-        for (String domain : ruleDao.getBlockedDomains(client.clientId())) {
-            domainListModel.addElement(domain);
-        }
+        PolicyConfigDialogTestHook.loadDomains(ruleDao, client.clientId(), domainListModel);
         JList<String> domainList = new JList<>(domainListModel);
         domainList.setVisibleRowCount(6);
         domainField = new JTextField(18);
@@ -162,11 +164,10 @@ final class PolicyConfigDialog extends JDialog {
         presetSocialButton.addActionListener(event ->
                 mergePresetIntoList(PRESET_SOCIAL_VIDEO));
 
-        // --- Quản lý chặn ứng dụng / tiến trình (Mở rộng 11) ---
+        // --- Quản lý chặn ứng dụng / tiến trình (Mở rộng 11/12): TỰ ĐỘNG tải
+        // từ BlockedProcessDao (RuleDao) của thiết bị khi mở dialog ---
         processListModel = new DefaultListModel<>();
-        for (String process : ruleDao.getBlockedProcesses(client.clientId())) {
-            processListModel.addElement(process);
-        }
+        PolicyConfigDialogTestHook.loadProcesses(ruleDao, client.clientId(), processListModel);
         JList<String> processList = new JList<>(processListModel);
         processList.setVisibleRowCount(5);
         processField = new JTextField(18);
@@ -182,10 +183,9 @@ final class PolicyConfigDialog extends JDialog {
         JButton unblockProcessButton = new JButton("Bỏ chặn / Xóa");
         addProcessButton.addActionListener(event -> addProcessFromField());
         unblockProcessButton.addActionListener(event -> {
-            int index = processList.getSelectedIndex();
-            if (index >= 0) {
-                processListModel.remove(index); // bỏ khỏi danh sách = bỏ chặn khi lưu
-            }
+            // Bỏ khỏi danh sách = BỎ CHẶN khi Lưu & Đồng bộ (REPLACE-ALL)
+            PolicyConfigDialogTestHook.removeIndex(processListModel,
+                    processList.getSelectedIndex());
         });
 
         JPanel processesPanel = new JPanel(new BorderLayout(0, 4));
@@ -260,10 +260,16 @@ final class PolicyConfigDialog extends JDialog {
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         buttonPanel.add(saveButton);
 
-        add(domainsPanel, BorderLayout.NORTH);
-        add(limitsPanel, BorderLayout.CENTER);
-        add(processesPanel, BorderLayout.SOUTH);
-        add(buttonPanel, BorderLayout.PAGE_END);
+        // --- Bố cục tab (Mở rộng 12): Tab 1 = Chặn Tên Miền, Tab 2 = Chặn
+        // Tiến Trình/Ứng Dụng — mỗi danh sách có bảng + ô nhập + nút riêng,
+        // không còn nhồi 2 bảng vào 1 khung nhìn dọc ---
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.addTab("Chặn Tên Mi\u00ECnh", domainsPanel);
+        tabs.addTab("Ch\u1EB7n Ti\u1EBFn Tr\u00ECnh / \u1EE8ng D\u1EE5ng", processesPanel);
+
+        add(limitsPanel, BorderLayout.NORTH);
+        add(tabs, BorderLayout.CENTER);
+        add(buttonPanel, BorderLayout.SOUTH);
     }
 
     /**
@@ -273,14 +279,16 @@ final class PolicyConfigDialog extends JDialog {
      */
     private void addProcessFromField() {
         String normalized = BlockedDomainDialogHelper.normalizeProcessName(processField.getText());
-        if (normalized != null && !processListModel.contains(normalized)) {
-            processListModel.addElement(normalized);
+        boolean added = PolicyConfigDialogTestHook.addNormalized(processListModel, normalized);
+        if (added) {
+            processField.setText("");
         } else if (normalized == null) {
             javax.swing.JOptionPane.showMessageDialog(this,
                     "Tên tiến trình không hợp lệ. Ví dụ: somegame.exe hoặc somegame",
                     "Tên tiến trình không hợp lệ", javax.swing.JOptionPane.WARNING_MESSAGE);
+            processField.setText("");
         }
-        processField.setText("");
+        // normalized != null nhưng trùng → giữ nguyên text cho người dùng sửa
     }
 
     /**
@@ -316,10 +324,7 @@ final class PolicyConfigDialog extends JDialog {
         String startTime = new TimeWindow(startHourSpinner, startMinuteSpinner).toHHmm();
         String endTime = new TimeWindow(endHourSpinner, endMinuteSpinner).toHHmm();
 
-        List<String> domains = new ArrayList<>();
-        for (int i = 0; i < domainListModel.size(); i++) {
-            domains.add(domainListModel.get(i));
-        }
+        List<String> domains = PolicyConfigDialogTestHook.snapshot(domainListModel);
 
         // Cả hai spinner đều được cấu hình → luôn có khung giờ; chỉ bỏ khi
         // người dùng đặt 00:00 cho CẢ bắt đầu và kết thúc (00:00–00:00 = cả ngày)
@@ -330,10 +335,7 @@ final class PolicyConfigDialog extends JDialog {
             allowedEnd = null;
         }
 
-        List<String> blockedProcesses = new ArrayList<>();
-        for (int i = 0; i < processListModel.size(); i++) {
-            blockedProcesses.add(processListModel.get(i));
-        }
+        List<String> blockedProcesses = PolicyConfigDialogTestHook.snapshot(processListModel);
 
         ConfigSyncPayload config = new ConfigSyncPayload(
                 domains, usageSeconds, quotaBytes, allowedStart, allowedEnd, blockedProcesses);

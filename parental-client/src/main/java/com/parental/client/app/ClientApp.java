@@ -95,11 +95,19 @@ public class ClientApp {
                 .metricsIntervalMs(5000)
                 .build();
 
+        // Watchdog chặn app (Mở rộng 12) tạo TRƯỚC engine để shutdown hook dừng
+        // được (không còn kill khi app client đã tắt)
+        com.parental.client.enforcement.ProcessBlockerManager processBlocker =
+                new com.parental.client.enforcement.ProcessBlockerManager();
+        processBlocker.startRescanScheduler();
+
         TcpClientEngine clientEngine = buildEngine(config, identityManager, () ->
-                SwingUtilities.invokeLater(() -> showPairingUiAfterUnpair(identityManager, host, port)));
+                SwingUtilities.invokeLater(() -> showPairingUiAfterUnpair(identityManager, host, port)),
+                processBlocker);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutting down client agent...");
+            processBlocker.stopWatchdog(); // dừng watchdog quét kill
             clientEngine.stop();
         }, "client-shutdown-hook"));
 
@@ -168,22 +176,19 @@ public class ClientApp {
     }
 
     /**
-     * Dựng TcpClientEngine đầy đủ 10 tham số: kèm {@link ClientIdentityManager}
+     * Dựng TcpClientEngine đầy đủ 11 tham số: kèm {@link ClientIdentityManager}
      * + listener UNPAIR (thiết bị bị xóa → khôi phục mạng, xóa identity,
      * quay về màn hình ghép đôi qua EDT) + {@link WindowsActivityCollector}
-     * (Activity Monitoring — gửi ACTIVITY_REPORT mỗi 10s).
+     * (Activity Monitoring — gửi ACTIVITY_REPORT mỗi 10s) +
+     * {@code ProcessBlockerManager} (Mở rộng 10/12 — watchdog 2s).
      */
     private static TcpClientEngine buildEngine(ClientConfig config,
                                                ClientIdentityManager identityManager,
-                                               Runnable unpairListener) {
+                                               Runnable unpairListener,
+                                               com.parental.client.enforcement.ProcessBlockerManager processBlocker) {
         WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer();
         SystemTrayAlertNotifier notifier = new SystemTrayAlertNotifier();
         OshiNetworkMetricsCollector metricsCollector = new OshiNetworkMetricsCollector();
-        // Chặn app .exe 1-click (Mở rộng 10): lưu danh sách + taskkill tức thì
-        // + daemon quét 60s chống mở lại app
-        com.parental.client.enforcement.ProcessBlockerManager processBlocker =
-                new com.parental.client.enforcement.ProcessBlockerManager();
-        processBlocker.startRescanScheduler();
         // Vô hiệu hóa DoH/QUIC của trình duyệt — hosts enforcement có hiệu lực thật:
         // mỗi lần áp/clear danh sách chặn, khóa/mở đường lách (DoH registry + QUIC UDP 443)
         // rồi flush DNS/NetBIOS cache để kết nối MỚI giải mã lại qua hosts.

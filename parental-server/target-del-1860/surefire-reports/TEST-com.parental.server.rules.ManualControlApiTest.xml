@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="com.parental.server.rules.ManualControlApiTest" time="0.05" tests="20" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="23"/>
+    <property name="sun.cpu.isalist" value="amd64"/>
+    <property name="sun.jnu.encoding" value="Cp1252"/>
+    <property name="java.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.awt.enableExtraMouseButtons" value="true"/>
+    <property name="java.vm.vendor" value="Oracle Corporation"/>
+    <property name="sun.arch.data.model" value="64"/>
+    <property name="user.variant" value=""/>
+    <property name="java.vendor.url" value="https://java.oracle.com/"/>
+    <property name="user.timezone" value="Asia/Saigon"/>
+    <property name="os.name" value="Windows 11"/>
+    <property name="java.vm.specification.version" value="23"/>
+    <property name="sun.java.launcher" value="SUN_STANDARD"/>
+    <property name="user.country" value="VN"/>
+    <property name="sun.boot.library.path" value="C:\MT\bin"/>
+    <property name="sun.java.command" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253 2026-09-28T18-43-58_178-jvmRun1 surefire-20260928184401374_4tmp surefire_1-20260928184401374_5tmp"/>
+    <property name="jdk.debug" value="release"/>
+    <property name="surefire.test.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.cpu.endian" value="little"/>
+    <property name="user.home" value="C:\Users\ADMIN"/>
+    <property name="user.language" value="vi"/>
+    <property name="java.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.version.date" value="2024-10-15"/>
+    <property name="java.home" value="C:\MT"/>
+    <property name="file.separator" value="\"/>
+    <property name="basedir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="java.vm.compressedOopsMode" value="Zero based"/>
+    <property name="line.separator" value="&#10;"/>
+    <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.specification.name" value="Java Platform API Specification"/>
+    <property name="java.awt.headless" value="true"/>
+    <property name="surefire.real.class.path" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar"/>
+    <property name="user.script" value=""/>
+    <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
+    <property name="java.runtime.version" value="23.0.1+11-39"/>
+    <property name="user.name" value="ADMIN"/>
+    <property name="stdout.encoding" value="Cp1252"/>
+    <property name="path.separator" value=";"/>
+    <property name="os.version" value="10.0"/>
+    <property name="java.runtime.name" value="Java(TM) SE Runtime Environment"/>
+    <property name="file.encoding" value="UTF-8"/>
+    <property name="java.vm.name" value="Java HotSpot(TM) 64-Bit Server VM"/>
+    <property name="localRepository" value="C:\Users\ADMIN\.m2\repository"/>
+    <property name="java.vendor.url.bug" value="https://bugreport.java.com/bugreport/"/>
+    <property name="java.io.tmpdir" value="C:\Users\ADMIN\AppData\Local\Temp\"/>
+    <property name="java.version" value="23.0.1"/>
+    <property name="user.dir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="os.arch" value="amd64"/>
+    <property name="java.vm.specification.name" value="Java Virtual Machine Specification"/>
+    <property name="sun.os.patch.level" value=""/>
+    <property name="native.encoding" value="Cp1252"/>
+    <property name="java.library.path" value="C:\MT\bin;C:\WINDOWS\Sun\Java\bin;C:\WINDOWS\system32;C:\WINDOWS;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\bin;D:\moitruong\node.exe;D:\moitruong\npm;C:\Users\ADMIN\AppData\Roaming\npm;C:\Users\ADMIN\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\local\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\bin;C:\Users\ADMIN\bin;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;C:\ffmpeg;C:\Users\ADMIN\AppData\Local\Programs\Microsoft VS Code\bin;D:\ap\Git\Git\usr\bin\vendor_perl;D:\ap\Git\Git\usr\bin\core_perl;C:\Users\ADMIN\AppData\Roaming\npm;."/>
+    <property name="java.vm.info" value="mixed mode, sharing"/>
+    <property name="stderr.encoding" value="Cp1252"/>
+    <property name="java.vendor" value="Oracle Corporation"/>
+    <property name="java.vm.version" value="23.0.1+11-39"/>
+    <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
+    <property name="java.class.version" value="67.0"/>
+  </properties>
+  <testcase name="manualPauseOffline" classname="com.parental.server.rules.ManualControlApiTest" time="0.006">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-0bf9f0b0-b92f-4484-bd6c-1369d0218c6f?mode=memory&cache=shared (schema ready)
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - Manual pause skipped: client [kid-m3] not online
+]]></system-err>
+  </testcase>
+  <testcase name="manualResumeReleases" classname="com.parental.server.rules.ManualControlApiTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-0303c280-bfd3-4ac6-b15f-1012eef40dde?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m5] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m5] (reason: test)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m5] Manual pause — auto rule engine will skip this client
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - RESUME_NETWORK sent to [kid-m5] (reason: Network access restored manually by parent)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m5] Manual resume — enforcement released
+]]></system-err>
+  </testcase>
+  <testcase name="manualEnforcedCleanedUpWhenOffline" classname="com.parental.server.rules.ManualControlApiTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-a421d4b3-065d-4db8-bff6-d60ca9e162d4?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m16] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m16] (reason: thủ công)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m16] Manual pause — auto rule engine will skip this client
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m16] removed (0 online)
+]]></system-err>
+  </testcase>
+  <testcase name="manualResumeThenAutoEngineRePauses" classname="com.parental.server.rules.ManualControlApiTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-8e0bb99f-b081-4f8e-8228-2380a55e7829?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m10] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m10] (reason: Daily traffic quota exceeded)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - RESUME_NETWORK sent to [kid-m10] (reason: Network access restored manually by parent)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m10] Manual resume — enforcement released
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m10] (reason: Daily traffic quota exceeded)
+]]></system-err>
+  </testcase>
+  <testcase name="syncConfigPushesPayload" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-e996f330-a81e-498f-bdca-46a678afded0?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m8] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m8] CONFIG_SYNC pushed (2 domains, 0 blocked processes, usage 14400s, quota 5368709120B, schedule 06:00-22:00)
+]]></system-err>
+  </testcase>
+  <testcase name="manualPauseWithOngoingViolationNotSpammed" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-95ec5abe-02ad-4aab-bbcc-d955e0f090fd?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m14] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m14] (reason: thủ công)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m14] Manual pause — auto rule engine will skip this client
+]]></system-err>
+  </testcase>
+  <testcase name="manualResumeOfflineAndRelease" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-5c542987-3bb8-4b5c-a9d8-e275d10f66f7?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m6] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m6] (reason: test)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m6] Manual pause — auto rule engine will skip this client
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - Manual resume skipped: client [ghost-offline] not online
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m6] Enforcement released (no command sent)
+]]></system-err>
+  </testcase>
+  <testcase name="sendAlertCases" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-0d99eac3-e3fd-4b42-a2ad-7f2f040b7d5d?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m7] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - ALERT sent to [kid-m7] (reason: Đến giờ ăn cơm)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - ALERT sent to [kid-m7] (reason: Message from parent)
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - Alert skipped: client [offline-kid] not online
+]]></system-err>
+  </testcase>
+  <testcase name="manualPauseNotUnpausedByAutoEngine" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-36eb16b0-31af-4828-9ba2-8d2565166579?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m13] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m13] (reason: Tạm dừng thủ công từ phụ huynh)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m13] Manual pause — auto rule engine will skip this client
+]]></system-err>
+  </testcase>
+  <testcase name="syncConfigWithoutRuleAndOffline" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-d99061f5-b7f9-4657-84e2-a83ee1b195cc?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m9] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m9] CONFIG_SYNC pushed (0 domains, 0 blocked processes, usage 0s, quota 0B, schedule null-null)
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - Config sync skipped: client [offline-kid] not online
+]]></system-err>
+  </testcase>
+  <testcase name="manualResumeReenablesAutoEvaluation" classname="com.parental.server.rules.ManualControlApiTest" time="0.003">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-97969fc7-8fe5-4e66-9899-b1f4204f31a9?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m15] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m15] (reason: thủ công)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m15] Manual pause — auto rule engine will skip this client
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - RESUME_NETWORK sent to [kid-m15] (reason: Network access restored manually by parent)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m15] Manual resume — enforcement released
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m15] (reason: Daily traffic quota exceeded)
+]]></system-err>
+  </testcase>
+  <testcase name="syncWithoutRuleStillCarriesProcesses" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-27d8b516-5f55-412e-8cc6-3b34e63fd34f?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m15] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m15] CONFIG_SYNC pushed (0 domains, 1 blocked processes, usage 0s, quota 0B, schedule null-null)
+]]></system-err>
+  </testcase>
+  <testcase name="manualPauseOnline" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-200838ae-bb71-49c2-8e42-c4fd3ada7c93?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m1] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m1] (reason: Tạm dừng thủ công từ phụ huynh)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m1] Manual pause — auto rule engine will skip this client
+]]></system-err>
+  </testcase>
+  <testcase name="blockProcessSendsCommand" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-2b142d29-0eab-4ca9-bb19-25bc804a48f5?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m17] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - BLOCK_PROCESS sent to [kid-m17] (reason: SomeGame)
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - Block process skipped: client [offline-kid] not online
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - Block process skipped: empty process name for client [kid-m17]
+]]></system-err>
+  </testcase>
+  <testcase name="setBlockedDomainsReplaces" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-8f11cdfc-9ad9-4572-aa92-1e5f80b89685?mode=memory&cache=shared (schema ready)
+[main] ERROR com.parental.server.db.RuleDao - Failed to set blocked domains for client [ghost]: [SQLITE_CONSTRAINT_FOREIGNKEY] A foreign key constraint failed (FOREIGN KEY constraint failed)
+]]></system-err>
+  </testcase>
+  <testcase name="manualPauseSendFailed" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-17fd2b32-e7b8-4a5f-86a6-bac713212d75?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m4] registered (1 online)
+[main] WARN com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK send failed to [kid-m4] — will retry next cycle
+]]></system-err>
+  </testcase>
+  <testcase name="manualPauseStateSurvivesAutoScan" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-0d0162f7-84e9-4804-bf68-4ab7043ee664?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m11] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m11] (reason: thủ công)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m11] Manual pause — auto rule engine will skip this client
+]]></system-err>
+  </testcase>
+  <testcase name="manualPauseDefaultReason" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-d7923434-5a32-4f43-a39c-5f14e00a4084?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m2] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - PAUSE_NETWORK sent to [kid-m2] (reason: Manual pause by parent)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m2] Manual pause — auto rule engine will skip this client
+]]></system-err>
+  </testcase>
+  <testcase name="syncConfigCarriesBlockedProcesses" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-0cc1f78d-b4db-42c0-95ca-07fd76171155?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m13] registered (1 online)
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m13] CONFIG_SYNC pushed (1 domains, 2 blocked processes, usage 3600s, quota 1000B, schedule 06:00-22:00)
+]]></system-err>
+  </testcase>
+  <testcase name="syncAfterUnblockRemovesProcess" classname="com.parental.server.rules.ManualControlApiTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.db.DatabaseManager - Migrated activity_logs : added column active_url_or_domain
+[main] INFO com.parental.server.db.DatabaseManager - Database initialized at jdbc:sqlite:file:parental-mem-f935a9fa-67cf-4705-9dce-f2a79391d9e2?mode=memory&cache=shared (schema ready)
+[main] INFO com.parental.server.network.ClientSessionManager - Client [kid-m14] registered (1 online)
+[main] INFO com.parental.server.db.RuleDao - Process 'somegame.exe' UNBLOCKED for client [kid-m14]
+[main] INFO com.parental.server.rules.RuleEvaluationEngine - [kid-m14] CONFIG_SYNC pushed (0 domains, 1 blocked processes, usage 0s, quota 0B, schedule null-null)
+]]></system-err>
+  </testcase>
+</testsuite>

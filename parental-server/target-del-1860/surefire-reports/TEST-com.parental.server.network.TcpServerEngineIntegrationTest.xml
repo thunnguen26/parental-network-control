@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report-3.0.xsd" version="3.0" name="com.parental.server.network.TcpServerEngineIntegrationTest" time="4.35" tests="12" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="23"/>
+    <property name="sun.cpu.isalist" value="amd64"/>
+    <property name="sun.jnu.encoding" value="Cp1252"/>
+    <property name="java.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.awt.enableExtraMouseButtons" value="true"/>
+    <property name="java.vm.vendor" value="Oracle Corporation"/>
+    <property name="sun.arch.data.model" value="64"/>
+    <property name="user.variant" value=""/>
+    <property name="java.vendor.url" value="https://java.oracle.com/"/>
+    <property name="user.timezone" value="Asia/Saigon"/>
+    <property name="os.name" value="Windows 11"/>
+    <property name="java.vm.specification.version" value="23"/>
+    <property name="sun.java.launcher" value="SUN_STANDARD"/>
+    <property name="user.country" value="VN"/>
+    <property name="sun.boot.library.path" value="C:\MT\bin"/>
+    <property name="sun.java.command" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253 2026-09-28T18-43-58_178-jvmRun1 surefire-20260928184401374_4tmp surefire_1-20260928184401374_5tmp"/>
+    <property name="jdk.debug" value="release"/>
+    <property name="surefire.test.class.path" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\test-classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server\target\classes;D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-common\target\classes;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.17.2\jackson-databind-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.17.2\jackson-annotations-2.17.2.jar;C:\Users\ADMIN\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.17.2\jackson-core-2.17.2.jar;C:\Users\ADMIN\.m2\repository\org\xerial\sqlite-jdbc\3.46.1.0\sqlite-jdbc-3.46.1.0.jar;C:\Users\ADMIN\.m2\repository\com\formdev\flatlaf\3.5.1\flatlaf-3.5.1.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-api\2.0.13\slf4j-api-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\slf4j\slf4j-simple\2.0.13\slf4j-simple-2.0.13.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter\5.10.2\junit-jupiter-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-api\5.10.2\junit-jupiter-api-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\opentest4j\opentest4j\1.3.0\opentest4j-1.3.0.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-commons\1.10.2\junit-platform-commons-1.10.2.jar;C:\Users\ADMIN\.m2\repository\org\apiguardian\apiguardian-api\1.1.2\apiguardian-api-1.1.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-params\5.10.2\junit-jupiter-params-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\jupiter\junit-jupiter-engine\5.10.2\junit-jupiter-engine-5.10.2.jar;C:\Users\ADMIN\.m2\repository\org\junit\platform\junit-platform-engine\1.10.2\junit-platform-engine-1.10.2.jar;"/>
+    <property name="sun.cpu.endian" value="little"/>
+    <property name="user.home" value="C:\Users\ADMIN"/>
+    <property name="user.language" value="vi"/>
+    <property name="java.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.version.date" value="2024-10-15"/>
+    <property name="java.home" value="C:\MT"/>
+    <property name="file.separator" value="\"/>
+    <property name="basedir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="java.vm.compressedOopsMode" value="Zero based"/>
+    <property name="line.separator" value="&#10;"/>
+    <property name="java.vm.specification.vendor" value="Oracle Corporation"/>
+    <property name="java.specification.name" value="Java Platform API Specification"/>
+    <property name="java.awt.headless" value="true"/>
+    <property name="surefire.real.class.path" value="C:\Users\ADMIN\AppData\Local\Temp\surefire1223530525028913253\surefirebooter-20260928184401374_6.jar"/>
+    <property name="user.script" value=""/>
+    <property name="sun.management.compiler" value="HotSpot 64-Bit Tiered Compilers"/>
+    <property name="java.runtime.version" value="23.0.1+11-39"/>
+    <property name="user.name" value="ADMIN"/>
+    <property name="stdout.encoding" value="Cp1252"/>
+    <property name="path.separator" value=";"/>
+    <property name="os.version" value="10.0"/>
+    <property name="java.runtime.name" value="Java(TM) SE Runtime Environment"/>
+    <property name="file.encoding" value="UTF-8"/>
+    <property name="java.vm.name" value="Java HotSpot(TM) 64-Bit Server VM"/>
+    <property name="localRepository" value="C:\Users\ADMIN\.m2\repository"/>
+    <property name="java.vendor.url.bug" value="https://bugreport.java.com/bugreport/"/>
+    <property name="java.io.tmpdir" value="C:\Users\ADMIN\AppData\Local\Temp\"/>
+    <property name="java.version" value="23.0.1"/>
+    <property name="user.dir" value="D:\A_SinhVien\NAM_3\KI_1\LAP_TRINH_MANG\BAI_TAP\parental-network-control\parental-server"/>
+    <property name="os.arch" value="amd64"/>
+    <property name="java.vm.specification.name" value="Java Virtual Machine Specification"/>
+    <property name="sun.os.patch.level" value=""/>
+    <property name="native.encoding" value="Cp1252"/>
+    <property name="java.library.path" value="C:\MT\bin;C:\WINDOWS\Sun\Java\bin;C:\WINDOWS\system32;C:\WINDOWS;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\bin;D:\moitruong\node.exe;D:\moitruong\npm;C:\Users\ADMIN\AppData\Roaming\npm;C:\Users\ADMIN\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\local\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\usr\bin;D:\ap\Git\Git\mingw64\bin;D:\ap\Git\Git\usr\bin;C:\Users\ADMIN\bin;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;C:\Users\ADMIN\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;D:\ap\VMware\VM\bin;C:\Python313\Scripts;C:\Python313;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\MinGW\bin;C:\Program Files (x86)\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\Microsoft SQL Server\160\DTS\Binn;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;D:\moitruong\ucrt64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;D:\moitruong;C:\ProgramData\chocolatey\bin;D:\ap\XAMPP\xam\php;C:\ProgramData\ComposerSetup\bin;C:\Program Files\GitHub CLI;D:\ap\Git\Git\cmd;C:\Program Files\Cloudflare\Cloudflare WARP;D:\ap\Putty\Putty;D:\ap\CMake\bin;C:\ffmpeg;C:\Users\ADMIN\AppData\Local\Programs\Microsoft VS Code\bin;D:\ap\Git\Git\usr\bin\vendor_perl;D:\ap\Git\Git\usr\bin\core_perl;C:\Users\ADMIN\AppData\Roaming\npm;."/>
+    <property name="java.vm.info" value="mixed mode, sharing"/>
+    <property name="stderr.encoding" value="Cp1252"/>
+    <property name="java.vendor" value="Oracle Corporation"/>
+    <property name="java.vm.version" value="23.0.1+11-39"/>
+    <property name="sun.io.unicode.encoding" value="UnicodeLittle"/>
+    <property name="java.class.version" value="67.0"/>
+  </properties>
+  <testcase name="handshakeRegistersSession" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.122">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63309 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [AA-BB-CC-DD-EE-01] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [AA-BB-CC-DD-EE-01] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - Client connection dropped abruptly: Socket closed
+[main] INFO com.parental.server.network.ClientSession - [AA-BB-CC-DD-EE-01] Session closed
+[main] INFO com.parental.server.network.ClientSessionManager - Client [AA-BB-CC-DD-EE-01] closed (SERVER_SHUTDOWN)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="metricsReportUpdatesSessionLastMetrics" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.188">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63312 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-metrics] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-metrics] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-metrics] Client disconnected (EOF)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[parental-client-handler-1] INFO com.parental.server.network.ClientSession - [client-metrics] Session closed
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-metrics] disconnected (0 online)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="disconnectCleansUpSession" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.125">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63314 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-gone] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-gone] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-gone] Client disconnected (EOF)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[parental-client-handler-1] INFO com.parental.server.network.ClientSession - [client-gone] Session closed
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-gone] disconnected (0 online)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="stopShutsDownCleanly" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.159">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63316 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-x] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-x] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - Client connection dropped abruptly: Socket closed
+[main] INFO com.parental.server.network.ClientSession - [client-x] Session closed
+[main] INFO com.parental.server.network.ClientSessionManager - Client [client-x] closed (SERVER_SHUTDOWN)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="twoClientsRegistered" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.155">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63318 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-01] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-01] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[parental-client-handler-2] INFO com.parental.server.network.ClientSessionManager - Client [client-02] registered (2 online)
+[parental-client-handler-2] INFO com.parental.server.network.ClientHandler - [client-02] Handshake OK from 127.0.0.1 (device: PC-PhongKhach)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-01] Client disconnected (EOF)
+[parental-client-handler-2] INFO com.parental.server.network.ClientHandler - [client-02] Client disconnected (EOF)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[parental-client-handler-2] INFO com.parental.server.network.ClientSession - [client-02] Session closed
+[parental-client-handler-2] INFO com.parental.server.network.ClientSessionManager - Client [client-02] disconnected (0 online)
+[main] INFO com.parental.server.network.ClientSession - [client-01] Session closed
+[main] INFO com.parental.server.network.ClientSessionManager - Client [client-01] closed (SERVER_SHUTDOWN)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="sweepRemovesDeadSessions" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.126">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63321 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-dead] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-dead] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[main] WARN com.parental.server.network.ClientSessionManager - Session [client-dead] timed out: no heartbeat for 60s > 30s, closing
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - Client connection dropped abruptly: Socket closed
+[main] INFO com.parental.server.network.ClientSession - [client-dead] Session closed
+[main] INFO com.parental.server.network.ClientSessionManager - Client [client-dead] removed (0 online)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="serverPushesCommandToClient" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.125">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63323 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-ctrl] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-ctrl] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-ctrl] Client disconnected (EOF)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[main] INFO com.parental.server.network.ClientSession - [client-ctrl] Session closed
+[main] INFO com.parental.server.network.ClientSessionManager - Client [client-ctrl] closed (SERVER_SHUTDOWN)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="heartbeatGetsAckAndUpdatesTimestamp" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.124">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63325 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-01] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-01] Handshake OK from 127.0.0.1 (device: PC-PhongKhach)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-01] Client disconnected (EOF)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[main] INFO com.parental.server.network.ClientSession - [client-01] Session closed
+[main] INFO com.parental.server.network.ClientSessionManager - Client [client-01] closed (SERVER_SHUTDOWN)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="periodicSweeperRemovesSilentClientWithCallback" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="3.082">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63327 (pool size 8, heartbeat timeout 30s)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63328 (pool size 8, heartbeat timeout 2s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [silent-client] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [silent-client] Handshake OK from 127.0.0.1 (device: PC-Im-Lang)
+[parental-session-sweeper-1] WARN com.parental.server.network.ClientSessionManager - Session [silent-client] timed out: no heartbeat for 3s > 2s, closing
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - Client connection dropped abruptly: Socket closed
+[parental-session-sweeper-1] INFO com.parental.server.network.ClientSession - [silent-client] Session closed
+[parental-session-sweeper-1] INFO com.parental.server.network.ClientSessionManager - Client [silent-client] removed (0 online)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+]]></system-err>
+  </testcase>
+  <testcase name="nonHandshakeFirstPacketIsRejected" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.006">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63330 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] WARN com.parental.server.network.ClientHandler - Rejected connection from /127.0.0.1:63331: first message must be HANDSHAKE but was HEARTBEAT
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="serverBindsToDynamicPort" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.002">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63332 (pool size 8, heartbeat timeout 30s)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+  <testcase name="connectedListenerFiresOnHandshake" classname="com.parental.server.network.TcpServerEngineIntegrationTest" time="0.126">
+    <system-err><![CDATA[[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine started on port 63333 (pool size 8, heartbeat timeout 30s)
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-cb] registered (1 online)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-cb] Handshake OK from 127.0.0.1 (device: Laptop-ConTrai)
+[parental-client-handler-1] INFO com.parental.server.network.ClientHandler - [client-cb] Client disconnected (EOF)
+[parental-server-acceptor] INFO com.parental.server.network.TcpServerEngine - Acceptor thread exited
+[parental-client-handler-1] INFO com.parental.server.network.ClientSession - [client-cb] Session closed
+[parental-client-handler-1] INFO com.parental.server.network.ClientSessionManager - Client [client-cb] disconnected (0 online)
+[main] INFO com.parental.server.network.TcpServerEngine - TcpServerEngine stopped
+]]></system-err>
+  </testcase>
+</testsuite>

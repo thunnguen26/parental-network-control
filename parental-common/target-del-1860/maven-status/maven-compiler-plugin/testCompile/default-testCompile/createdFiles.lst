@@ -1,0 +1,4 @@
+com\parental\common\protocol\JsonProtocolParserTest$Framing.class
+com\parental\common\protocol\JsonProtocolParserTest$RoundTrip.class
+com\parental\common\protocol\JsonProtocolParserTest.class
+com\parental\common\protocol\JsonProtocolParserTest$ErrorHandling.class

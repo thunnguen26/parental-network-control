@@ -127,6 +127,13 @@ public class ServerDashboardFrame extends JFrame {
     /** Số bản ghi nhật ký hiển thị trên Dashboard (tăng từ 10 → 30). */
     static final int ACTIVITY_LOG_LIMIT = 30;
 
+    /**
+     * Khoảng nghỉ tối thiểu (ms) giữa 2 lần auto-refresh của dialog "Xem toàn
+     * bộ" (Mở rộng 12) — ACTIVITY_REPORT đến dày (10s/lần, nhiều client) →
+     * throttle tránh đập DB liên tục; nút Làm mới thủ công không bị giới hạn.
+     */
+    static final long ACTIVITY_DIALOG_AUTO_REFRESH_MIN_MS = 2000;
+
     /** Chỉ số cột JTable nhật ký — dùng cho RowFilter + menu chặn nhanh. */
     private static final int ACTIVITY_COLUMN_TIME = 0;
     private static final int ACTIVITY_COLUMN_PROCESS = 1;
@@ -868,7 +875,9 @@ public class ServerDashboardFrame extends JFrame {
             public void onActivityReport(ClientSession session,
                     com.parental.common.protocol.payload.ActivityReportPayload activity) {
                 // Activity Monitoring (Mục 3.9): cập nhật "Đang mở" tức thời +
-                // nhắc refresher nạp lại bảng nhật ký (DB đã có bản ghi mới).
+                // nhắc refresher nạp lại bảng nhật ký (DB đã có bản ghi mới);
+                // dialog "Xem toàn bộ" đang mở tự refresh qua listener riêng
+                // (Mở rộng 12 — throttled, isShowing guard).
                 SwingUtilities.invokeLater(() -> {
                     lastActivityTableRefresh = java.time.Instant.EPOCH; // buộc reload bảng
                 });
@@ -1111,6 +1120,28 @@ public class ServerDashboardFrame extends JFrame {
         };
         reloadFullTable.run();
 
+        // Mở rộng 12: listener ACTIVITY_REPORT — dialog đang mở tự nạp lại
+        // (throttle 2s) khi thiết bị của nó gửi bản ghi mới; gỡ listener khi
+        // đóng dialog để không rò rỉ.
+        ClientConnectionListener dialogAutoRefreshListener = new ClientConnectionListener() {
+            volatile long lastAutoRefresh = 0;
+
+            @Override
+            public void onActivityReport(ClientSession session,
+                    com.parental.common.protocol.payload.ActivityReportPayload activity) {
+                if (!clientId.equals(session.getClientId()) || !dialog.isShowing()) {
+                    return;
+                }
+                long now = System.currentTimeMillis();
+                if (now - lastAutoRefresh < ACTIVITY_DIALOG_AUTO_REFRESH_MIN_MS) {
+                    return; // throttle — tối đa 1 lần nạp/2s
+                }
+                lastAutoRefresh = now;
+                SwingUtilities.invokeLater(reloadFullTable); // EDT-safe
+            }
+        };
+        sessionManager.addConnectionListener(dialogAutoRefreshListener);
+
         // --- Ô lọc thời gian thực (dùng chung logic buildActivityRowFilter) ---
         JTextField fullFilterField = new JTextField();
         fullFilterField.setToolTipText("Ví dụ: chrome, browser (Cốc Cốc), youtube — lọc theo tiến trình hoặc tiêu đề");
@@ -1151,6 +1182,13 @@ public class ServerDashboardFrame extends JFrame {
         content.add(controlRow, BorderLayout.NORTH);
         content.add(fullScroll, BorderLayout.CENTER);
         dialog.setContentPane(content);
+        dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosed(java.awt.event.WindowEvent event) {
+                // Mở rộng 12: gỡ listener khi dialog đóng — không rò rỉ
+                sessionManager.removeConnectionListener(dialogAutoRefreshListener);
+            }
+        });
         dialog.setVisible(true); // modal — đóng bằng nút Đóng hoặc Esc qua X
     }
 
