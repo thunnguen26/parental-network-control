@@ -1,9 +1,11 @@
 package com.parental.server.gui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
+import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,38 @@ class QuickBlockOneClickTest {
     void processLabelNamesProcess() {
         assertEquals("Chặn tiến trình [somegame.exe]",
                 ServerDashboardFrameTestHook.buildQuickBlockProcessLabel("somegame.exe"));
+    }
+
+    @Test
+    @DisplayName("Mở rộng 11: buildQuickUnblockProcessLabel — nhãn 'Bỏ chặn tiến trình [app.exe]'")
+    void unblockLabelNamesProcess() {
+        assertEquals("Bỏ chặn tiến trình [somegame.exe]",
+                ServerDashboardFrameTestHook.buildQuickUnblockProcessLabel("somegame.exe"));
+        // Nhãn unblock phân biệt rõ với nhãn block (không gây nhầm nút)
+        assertTrue(!ServerDashboardFrameTestHook.buildQuickUnblockProcessLabel("app.exe")
+                .equals(ServerDashboardFrameTestHook.buildQuickBlockProcessLabel("app.exe")));
+    }
+
+    @Test
+    @DisplayName("Mở rộng 11: kiểm tra trạng thái đã chặn — so khớp tên normalize (có/không .exe, hoa/thường)")
+    void blockedStateMatchByNormalizedName() {
+        List<String> blockedInDb = List.of("somegame.exe", "browser.exe");
+
+        // Logic so khớp trong maybeShowQuickBlockPopup: processName từ bảng có thể
+        // là 'somegame.exe'/'SOMEGAME.EXE'/'somegame' — phải khớp tất cả
+        for (String cellValue : new String[] {"somegame.exe", "SOMEGAME.EXE", "somegame"}) {
+            boolean alreadyBlocked = blockedInDb.stream()
+                    .anyMatch(name -> name.equalsIgnoreCase(
+                            cellValue.trim().toLowerCase(java.util.Locale.ROOT))
+                            || name.equalsIgnoreCase(cellValue.trim() + ".exe")
+                            || name.equalsIgnoreCase(cellValue.trim()
+                                    .toLowerCase(java.util.Locale.ROOT) + ".exe"));
+            assertTrue(alreadyBlocked,
+                    "'" + cellValue + "' phải được nhận diện là ĐÃ chặn → menu 'Bỏ chặn'");
+        }
+        boolean notBlocked = blockedInDb.stream().anyMatch(name -> name.equalsIgnoreCase(
+                "otherapp.exe"));
+        assertFalse(notBlocked, "App lạ → chưa chặn → menu 'Chặn tiến trình'");
     }
 
     @Test

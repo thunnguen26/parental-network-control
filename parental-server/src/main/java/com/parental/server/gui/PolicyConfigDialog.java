@@ -67,6 +67,9 @@ final class PolicyConfigDialog extends JDialog {
 
     private DefaultListModel<String> domainListModel;
     private JTextField domainField;
+    /** Mở rộng 11: danh sách tiến trình bị chặn — xem/thêm/bỏ chặn. */
+    private DefaultListModel<String> processListModel;
+    private JTextField processField;
     private JSpinner usageHoursSpinner;
     private JSpinner quotaGbSpinner;
     private JSpinner startHourSpinner;
@@ -159,6 +162,42 @@ final class PolicyConfigDialog extends JDialog {
         presetSocialButton.addActionListener(event ->
                 mergePresetIntoList(PRESET_SOCIAL_VIDEO));
 
+        // --- Quản lý chặn ứng dụng / tiến trình (Mở rộng 11) ---
+        processListModel = new DefaultListModel<>();
+        for (String process : ruleDao.getBlockedProcesses(client.clientId())) {
+            processListModel.addElement(process);
+        }
+        JList<String> processList = new JList<>(processListModel);
+        processList.setVisibleRowCount(5);
+        processField = new JTextField(18);
+        processField.setToolTipText("Ví dụ: somegame.exe — ứng dụng bị chặn sẽ bị kết thúc "
+                + "ngay và không mở lại được tới khi bỏ chặn");
+        processField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusGained(java.awt.event.FocusEvent event) {
+                processField.selectAll();
+            }
+        });
+        JButton addProcessButton = new JButton("+ Thêm");
+        JButton unblockProcessButton = new JButton("Bỏ chặn / Xóa");
+        addProcessButton.addActionListener(event -> addProcessFromField());
+        unblockProcessButton.addActionListener(event -> {
+            int index = processList.getSelectedIndex();
+            if (index >= 0) {
+                processListModel.remove(index); // bỏ khỏi danh sách = bỏ chặn khi lưu
+            }
+        });
+
+        JPanel processesPanel = new JPanel(new BorderLayout(0, 4));
+        processesPanel.setBorder(BorderFactory.createTitledBorder(
+                "Quản lý chặn ứng dụng / tiến trình (.exe)"));
+        processesPanel.add(new JScrollPane(processList), BorderLayout.CENTER);
+        JPanel processEditPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+        processEditPanel.add(processField);
+        processEditPanel.add(addProcessButton);
+        processEditPanel.add(unblockProcessButton);
+        processesPanel.add(processEditPanel, BorderLayout.SOUTH);
+
         JPanel domainsPanel = new JPanel(new BorderLayout(0, 4));
         domainsPanel.setBorder(BorderFactory.createTitledBorder(
                 "Qu\u1EA3n l\u00FD Ch\u1EB7n T\u00EAn Mi\u1EC1n (Blacklist)"));
@@ -223,7 +262,25 @@ final class PolicyConfigDialog extends JDialog {
 
         add(domainsPanel, BorderLayout.NORTH);
         add(limitsPanel, BorderLayout.CENTER);
-        add(buttonPanel, BorderLayout.SOUTH);
+        add(processesPanel, BorderLayout.SOUTH);
+        add(buttonPanel, BorderLayout.PAGE_END);
+    }
+
+    /**
+     * Thêm tiến trình từ ô nhập vào danh sách chặn — chuẩn hóa qua quy tắc
+     * {@code RuleDao.normalizeProcessName} (lowercase + đuôi .exe); không hợp
+     * lệ → dialog nhẹ.
+     */
+    private void addProcessFromField() {
+        String normalized = BlockedDomainDialogHelper.normalizeProcessName(processField.getText());
+        if (normalized != null && !processListModel.contains(normalized)) {
+            processListModel.addElement(normalized);
+        } else if (normalized == null) {
+            javax.swing.JOptionPane.showMessageDialog(this,
+                    "Tên tiến trình không hợp lệ. Ví dụ: somegame.exe hoặc somegame",
+                    "Tên tiến trình không hợp lệ", javax.swing.JOptionPane.WARNING_MESSAGE);
+        }
+        processField.setText("");
     }
 
     /**
@@ -273,8 +330,13 @@ final class PolicyConfigDialog extends JDialog {
             allowedEnd = null;
         }
 
+        List<String> blockedProcesses = new ArrayList<>();
+        for (int i = 0; i < processListModel.size(); i++) {
+            blockedProcesses.add(processListModel.get(i));
+        }
+
         ConfigSyncPayload config = new ConfigSyncPayload(
-                domains, usageSeconds, quotaBytes, allowedStart, allowedEnd);
+                domains, usageSeconds, quotaBytes, allowedStart, allowedEnd, blockedProcesses);
         boolean saved = ruleDao.upsertRule(client.clientId(), config);
         if (!saved) {
             // Client chưa tồn tại trong bảng clients (FK) — báo lỗi, không đóng

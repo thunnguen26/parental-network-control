@@ -384,16 +384,18 @@ public class RuleEvaluationEngine {
         }
         RuleRecord rule = ruleDao.getRule(clientId);
         java.util.List<String> domains = ruleDao.getBlockedDomains(clientId);
+        // Mở rộng 11: đồng bộ CẢ danh sách chặn tiến trình (REPLACE-ALL)
+        java.util.List<String> blockedProcesses = ruleDao.getBlockedProcesses(clientId);
         ConfigSyncPayload payload = rule != null
                 ? new ConfigSyncPayload(domains,
                         rule.dailyUsageLimitSeconds(), rule.dailyTrafficQuotaBytes(),
-                        rule.allowedStartTime(), rule.allowedEndTime())
-                : new ConfigSyncPayload(domains, 0, 0, null, null);
+                        rule.allowedStartTime(), rule.allowedEndTime(), blockedProcesses)
+                : new ConfigSyncPayload(domains, 0, 0, null, null, blockedProcesses);
         boolean sent = session.send(BaseMessage.of(
                 MessageType.CONFIG_SYNC, ClientHandler.SERVER_ID, payload));
         if (sent) {
-            log.info("[{}] CONFIG_SYNC pushed ({} domains, usage {}s, quota {}B, schedule {}-{})",
-                    clientId, domains.size(),
+            log.info("[{}] CONFIG_SYNC pushed ({} domains, {} blocked processes, usage {}s, quota {}B, schedule {}-{})",
+                    clientId, domains.size(), blockedProcesses.size(),
                     payload.dailyUsageLimitSeconds(), payload.dailyTrafficQuotaBytes(),
                     payload.allowedStartTime(), payload.allowedEndTime());
         }

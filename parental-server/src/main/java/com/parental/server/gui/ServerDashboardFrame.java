@@ -1236,14 +1236,33 @@ public class ServerDashboardFrame extends JFrame {
         // vẫn chặn được qua mục tiến trình bên dưới hoặc dialog Cấu hình
         // chính sách (nhập tay tập trung 1 chỗ, tránh menu rối).
 
-        // 1-CLICK CHẶN APP .EXE: mọi dòng (kể cả trình duyệt) đều cho phép
-        // chặn tiến trình — game/tool đứng riêng thì đây là lựa chọn chính.
+        // 1-CLICK CHẶN/BỎ CHẶN APP .EXE: kiểm tra trạng thái trong DB —
+        // chưa chặn → "Chặn tiến trình [app.exe]"; đã chặn → "Bỏ chặn tiến
+        // trình [app.exe]" (gỡ chặn nhanh 1-click, Mở rộng 11).
         if (processName != null && !processName.isBlank() && !processName.equals("—")) {
-            JMenuItem blockProcessItem = new JMenuItem(
-                    ServerDashboardFrameTestHook.buildQuickBlockProcessLabel(processName));
-            blockProcessItem.addActionListener(actionEvent ->
-                    quickBlockProcessForClient(processName));
-            popup.add(blockProcessItem);
+            ClientRecord selectedDevice = deviceList.getSelectedValue();
+            boolean alreadyBlocked = selectedDevice != null
+                    && serverEngine.getRuleDao() != null
+                    && serverEngine.getRuleDao()
+                            .getBlockedProcesses(selectedDevice.clientId()).stream()
+                            .anyMatch(name -> name.equalsIgnoreCase(
+                                    processName.trim().toLowerCase(java.util.Locale.ROOT))
+                                    || name.equalsIgnoreCase(processName.trim() + ".exe")
+                                    || name.equalsIgnoreCase(processName.trim()
+                                            .toLowerCase(java.util.Locale.ROOT) + ".exe"));
+            if (alreadyBlocked) {
+                JMenuItem unblockProcessItem = new JMenuItem(
+                        ServerDashboardFrameTestHook.buildQuickUnblockProcessLabel(processName));
+                unblockProcessItem.addActionListener(actionEvent ->
+                        quickUnblockProcessForClient(processName));
+                popup.add(unblockProcessItem);
+            } else {
+                JMenuItem blockProcessItem = new JMenuItem(
+                        ServerDashboardFrameTestHook.buildQuickBlockProcessLabel(processName));
+                blockProcessItem.addActionListener(actionEvent ->
+                        quickBlockProcessForClient(processName));
+                popup.add(blockProcessItem);
+            }
         }
 
         if (popup.getComponentCount() > 0) {
@@ -1347,16 +1366,67 @@ public class ServerDashboardFrame extends JFrame {
         String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
                 ? selected.alias() + " (" + selected.deviceName() + ")"
                 : selected.deviceName();
+        // Lưu DB TRƯỚC (menu lần sau hiển thị "Bỏ chặn") rồi gửi COMMAND
+        // BLOCK_PROCESS để client kill NGAY không đợi chu kỳ sync.
+        boolean saved = serverEngine.getRuleDao() != null
+                && serverEngine.getRuleDao().addBlockedProcess(clientId, processName);
         String commandId = ruleEngine != null
                 ? ruleEngine.blockProcess(clientId, processName)
                 : null;
         if (commandId != null) {
             appendEventLog("Đã gửi lệnh chặn tiến trình '" + processName + "' cho '"
-                    + deviceDisplay + "' (client sẽ kill ngay và chặn vĩnh viễn)");
+                    + deviceDisplay + "' (client sẽ kill ngay và chặn vĩnh viễn)"
+                    + (saved ? "" : " — [!] LƯU DB THẤT BẠI, trạng thái menu có thể sai"));
         } else {
             appendEventLog("[!] Không gửi được lệnh chặn tiến trình '" + processName
-                    + "' cho '" + deviceDisplay + "' (client offline)");
+                    + "' cho '" + deviceDisplay + "' (client offline)"
+                    + (saved ? " — đã lưu DB, client nhận khi đồng bộ sau" : ""));
         }
+    }
+
+    /**
+     * BỎ CHẶN tiến trình 1-click từ menu nhật ký (Mở rộng 11): xóa khỏi
+     * bảng {@code blocked_processes} → đẩy CONFIG_SYNC (REPLACE-ALL) → client
+     * ngừng kill, người dùng mở lại ứng dụng bình thường.
+     */
+    private void quickUnblockProcessForClient(String processName) {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để bỏ chặn tiến trình");
+            return;
+        }
+        if (serverEngine.getRuleDao() == null) {
+            appendEventLog("[!] Server đang chạy không database — không bỏ chặn được");
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Bạn có chắc muốn BỎ chặn tiến trình [" + processName
+                        + "] cho thiết bị này?\n\n"
+                        + "Ứng dụng sẽ mở lại bình thường sau khi bỏ chặn.",
+                "Xác nhận bỏ chặn tiến trình",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+        String clientId = selected.clientId();
+        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+        boolean removed = serverEngine.getRuleDao()
+                .removeBlockedProcess(clientId, processName);
+        if (!removed) {
+            appendEventLog("[!] Không gỡ được '" + processName + "' (không có trong danh sách chặn)");
+            return;
+        }
+        // Đẩy REPLACE-ALL mới nhất xuống client — app đã gỡ khỏi danh sách
+        // → daemon quét 60s phía client ngừng kill ngay.
+        boolean pushed = ruleEngine != null
+                && ruleEngine.syncConfigToClient(clientId);
+        appendEventLog("Đã BỎ chặn tiến trình '" + processName + "' cho '"
+                + deviceDisplay + "'"
+                + (pushed ? " — client ngừng kill, app mở lại bình thường"
+                          : " — client offline, sẽ nhận khi kết nối lại"));
     }
 
     /**

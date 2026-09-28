@@ -97,6 +97,7 @@ Every packet must contain:
 | `dailyTrafficQuotaBytes` | long | Giới hạn dung lượng trong ngày (0 = không giới hạn) |
 | `allowedStartTime` | String | Giờ bắt đầu được phép dùng, định dạng `HH:mm` (ví dụ `"06:00"`) |
 | `allowedEndTime` | String | Giờ kết thúc được phép dùng, định dạng `HH:mm` (ví dụ `"22:00"`) |
+| `blockedProcesses` | List&lt;String&gt; | **(Mở rộng 11)** Danh sách tiến trình bị chặn vĩnh viễn: `"somegame.exe"`, ... (client tự chuẩn hóa, chấp nhận có/không đuôi .exe). **REPLACE-ALL semantics**: danh sách này là TOÀN BỘ trạng thái chặn tiến trình — client đồng bộ đè file `blocked_processes.json`; gỡ app khỏi danh sách = bỏ chặn (client ngừng kill, app mở lại bình thường). Danh sách rỗng = dọn sạch mọi chặn tiến trình |
 
 ```json
 {
@@ -104,7 +105,8 @@ Every packet must contain:
   "dailyUsageLimitSeconds": 14400,
   "dailyTrafficQuotaBytes": 5368709120,
   "allowedStartTime": "06:00",
-  "allowedEndTime": "22:00"
+  "allowedEndTime": "22:00",
+  "blockedProcesses": ["somegame.exe"]
 }
 ```
 

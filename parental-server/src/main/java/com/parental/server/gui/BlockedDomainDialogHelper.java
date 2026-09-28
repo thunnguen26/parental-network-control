@@ -46,4 +46,30 @@ final class BlockedDomainDialogHelper {
         }
         return domain;
     }
+
+    /**
+     * Chuẩn hóa TÊN TIẾN TRÌNH cho GUI (Mở rộng 11) — GIỐNG quy tắc của
+     * {@code RuleDao.normalizeProcessName} và {@code ProcessBlockerManager}
+     * phía client: trim + lowercase + đuôi {@code .exe}; chỉ nhận
+     * {@code [a-z0-9._-]}.
+     *
+     * @return tên chuẩn hóa, hoặc {@code null} nếu không hợp lệ
+     */
+    static String normalizeProcessName(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String name = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        if (name.isEmpty()) {
+            return null;
+        }
+        if (!name.endsWith(".exe")) {
+            name = name + ".exe";
+        }
+        if (!name.matches("[a-z0-9._-]+\\.exe") || name.equals(".exe")
+                || name.contains("..")) {
+            return null;
+        }
+        return name;
+    }
 }

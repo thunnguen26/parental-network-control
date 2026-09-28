@@ -425,4 +425,91 @@ class ManualControlApiTest {
 
         assertFalse(h.ruleDao().setBlockedDomains("ghost", List.of("x.com"))); // FK fail
     }
+
+    // ==================================================================
+    // Mở rộng 11 — blockedProcesses trong CONFIG_SYNC (chặn/bỏ chặn app .exe)
+    // ==================================================================
+
+    /** Lấy CONFIG_SYNC cuối cùng trong các gói session đã gửi. */
+    private static ConfigSyncPayload findLastConfigSync(FakeClientSession session) {
+        for (int i = session.sent.size() - 1; i >= 0; i--) {
+            BaseMessage<?> message = session.sent.get(i);
+            if (message.getType() == MessageType.CONFIG_SYNC) {
+                return (ConfigSyncPayload) message.getPayload();
+            }
+        }
+        throw new AssertionError("No CONFIG_SYNC sent");
+    }
+
+    @Test
+    @DisplayName("Mở rộng 11: syncConfigToClient gửi kèm blockedProcesses đã normalize")
+    void syncConfigCarriesBlockedProcesses() {
+        Harness h = Harness.create();
+        FakeClientSession session = new FakeClientSession("kid-m13");
+        h.sessions().register(session);
+        h.registerClient("kid-m13");
+        h.ruleDao().upsertRule("kid-m13", new ConfigSyncPayload(
+                List.of("tiktok.com"), 3_600, 1_000, "06:00", "22:00",
+                List.of("somegame.exe", "Browser")));
+
+        assertTrue(h.engine().syncConfigToClient("kid-m13"));
+
+        ConfigSyncPayload last = findLastConfigSync(session);
+        // getBlockedProcesses trả sorted theo alphabet (đúng documented behavior)
+        assertEquals(List.of("browser.exe", "somegame.exe"), last.blockedProcesses(),
+                "CONFIG_SYNC mang danh sách tiến trình đã normalize (REPLACE-ALL)");
+        assertEquals(List.of("tiktok.com"), last.blockedDomains());
+    }
+
+    @Test
+    @DisplayName("Mở rộng 11: bỏ chặn app → sync danh sách MỚI KHÔNG còn app đó (client ngừng kill)")
+    void syncAfterUnblockRemovesProcess() {
+        Harness h = Harness.create();
+        FakeClientSession session = new FakeClientSession("kid-m14");
+        h.sessions().register(session);
+        h.registerClient("kid-m14");
+
+        h.ruleDao().setBlockedProcesses("kid-m14", List.of("somegame.exe", "browser.exe"));
+        // Phụ huynh bỏ chặn somegame qua menu nhật ký (1-click):
+        assertTrue(h.ruleDao().removeBlockedProcess("kid-m14", "somegame.exe"));
+        assertTrue(h.engine().syncConfigToClient("kid-m14"));
+
+        ConfigSyncPayload last = findLastConfigSync(session);
+        assertEquals(List.of("browser.exe"), last.blockedProcesses(),
+                "Danh sách sync mới KHÔNG còn app đã bỏ chặn");
+    }
+
+    @Test
+    @DisplayName("Mở rộng 11: sync khi chưa có rule → vẫn mang blockedProcesses")
+    void syncWithoutRuleStillCarriesProcesses() {
+        Harness h = Harness.create();
+        FakeClientSession session = new FakeClientSession("kid-m15");
+        h.sessions().register(session);
+        h.registerClient("kid-m15");
+
+        h.ruleDao().setBlockedProcesses("kid-m15", List.of("somegame.exe"));
+        assertTrue(h.engine().syncConfigToClient("kid-m15"));
+
+        ConfigSyncPayload last = findLastConfigSync(session);
+        assertEquals(List.of("somegame.exe"), last.blockedProcesses(),
+                "Chưa có rule hạn mức nhưng vẫn phải sync danh sách tiến trình");
+        assertEquals(0, last.dailyUsageLimitSeconds());
+    }
+
+    @Test
+    @DisplayName("Mở rộng 11: blockProcess gửi COMMAND BLOCK_PROCESS với reason = tên tiến trình")
+    void blockProcessSendsCommand() {
+        Harness h = Harness.create();
+        FakeClientSession session = new FakeClientSession("kid-m17");
+        h.sessions().register(session);
+        h.registerClient("kid-m17");
+
+        assertNotNull(h.engine().blockProcess("kid-m17", "SomeGame"));
+        assertEquals(1, countMessages(session.sent, MessageType.COMMAND, ActionType.BLOCK_PROCESS));
+        CommandPayload payload = (CommandPayload) session.sent.get(0).getPayload();
+        assertEquals("SomeGame", payload.reason(), "reason mang tên tiến trình");
+
+        assertNull(h.engine().blockProcess("offline-kid", "app.exe"), "Offline → null");
+        assertNull(h.engine().blockProcess("kid-m17", "  "), "Tên rỗng → null");
+    }
 }

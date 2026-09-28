@@ -67,6 +67,14 @@ final class ServerDashboardFrameTestHook {
     }
 
     /**
+     * Nhãn menu 1-CLICK BỎ chặn tiến trình (Mở rộng 11 — app đã có trong
+     * danh sách chặn) — pure function. CHỈ dùng ký tự BMP cơ bản.
+     */
+    static String buildQuickUnblockProcessLabel(String processName) {
+        return "Bỏ chặn tiến trình [" + processName + "]";
+    }
+
+    /**
      * Formatter cột "Thời điểm" — giờ LOCAL hệ máy phụ huynh (recorded_at đã
      * được ghi tường minh theo giờ local phía {@link ActivityDao}).
      */

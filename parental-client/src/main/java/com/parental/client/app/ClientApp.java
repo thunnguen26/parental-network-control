@@ -215,7 +215,8 @@ public class ClientApp {
                 actionDispatcher,
                 identityManager,
                 unpairListener,
-                new com.parental.client.activity.WindowsActivityCollector() // Activity Monitoring
+                new com.parental.client.activity.WindowsActivityCollector(), // Activity Monitoring
+                processBlocker // Mở rộng 11: đồng bộ blockedProcesses qua CONFIG_SYNC
         );
     }
 

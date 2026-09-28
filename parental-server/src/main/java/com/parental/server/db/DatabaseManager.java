@@ -213,6 +213,18 @@ public class DatabaseManager {
             addColumnIfMissing(connection, "activity_logs", "active_url_or_domain",
                     "VARCHAR(500)");
 
+            // Mở rộng 11: tiến trình bị chặn vĩnh viễn theo client — đồng bộ
+            // xuống client qua CONFIG_SYNC.blockedProcesses (REPLACE-ALL).
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS blocked_processes (
+                        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                        client_id    VARCHAR NOT NULL,
+                        process_name VARCHAR(100) NOT NULL,
+                        UNIQUE(client_id, process_name),
+                        FOREIGN KEY (client_id) REFERENCES clients(client_id) ON DELETE CASCADE
+                    )
+                    """);
+
             statement.execute("CREATE INDEX IF NOT EXISTS idx_metrics_client_time "
                     + "ON metrics_logs(client_id, recorded_at)");
             statement.execute("CREATE INDEX IF NOT EXISTS idx_metrics_recorded_at "

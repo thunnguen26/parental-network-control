@@ -115,6 +115,38 @@ public class ProcessBlockerManager {
         }
     }
 
+    /**
+     * Đồng bộ TOÀN BỘ danh sách chặn tiến trình từ Server (Mở rộng 11 —
+     * REPLACE-ALL semantics của CONFIG_SYNC.blockedProcesses): ghi đè file
+     * danh sách. App bị GỠ khỏi danh sách = bỏ chặn: daemon quét 60s và mọi
+     * luồng kill sau đó không đụng tới nữa — người dùng mở lại bình thường.
+     * App còn/vừa có trong danh sách mới → kill ngay để trạng thái ăn khớp.
+     *
+     * @param processNames danh sách tên tiến trình (có/không đuôi .exe,
+     *                     null/rỗng = dọn sạch mọi chặn)
+     * @return {@code true} nếu ghi thành công
+     */
+    public synchronized boolean replaceBlockedProcesses(java.util.List<String> processNames) {
+        Set<String> normalized = new LinkedHashSet<>();
+        if (processNames != null) {
+            for (String name : processNames) {
+                String clean = normalizeProcessName(name);
+                if (clean != null) {
+                    normalized.add(clean);
+                }
+            }
+        }
+        Set<String> previous = loadBlockedProcesses();
+        saveBlockedProcesses(normalized);
+        log.info("Blocked processes REPLACED from server config ({} -> {} apps)",
+                previous.size(), normalized.size());
+        // Kill ngay các app vẫn/vừa nằm trong danh sách — đồng bộ trạng thái
+        for (String name : normalized) {
+            killProcessNow(name);
+        }
+        return true;
+    }
+
     /** Bắt đầu daemon quét 60s — kill lại tiến trình bị chặn nếu tự mở lại. */
     public void startRescanScheduler() {
         java.util.concurrent.ScheduledExecutorService scheduler =

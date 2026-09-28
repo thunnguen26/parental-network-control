@@ -107,6 +107,11 @@ public class TcpClientEngine implements AutoCloseable {
     private final ClientIdentityManager identityManager;
     /** Listener sự kiện bị thu hồi ghép đôi (UNPAIR) — nullable. */
     private final Runnable unpairListener;
+    /**
+     * Quản lý chặn tiến trình (Mở rộng 11) — nullable: null = không đồng bộ
+     * danh sách chặn qua CONFIG_SYNC (vẫn kill qua lệnh BLOCK_PROCESS lẻ).
+     */
+    private final com.parental.client.enforcement.ProcessBlockerManager processBlockerManager;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean connected = new AtomicBoolean(false);
@@ -194,6 +199,23 @@ public class TcpClientEngine implements AutoCloseable {
                            NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
                            ActionDispatcher actionDispatcher, ClientIdentityManager identityManager,
                            Runnable unpairListener, ActivityCollector activityCollector) {
+        this(config, deviceInfoCollector, parser, commandHandler, metricsCollector,
+                hostsFileManager, actionDispatcher, identityManager, unpairListener,
+                activityCollector, null);
+    }
+
+    /**
+     * Constructor đầy đủ nhất (Mở rộng 11): kèm {@code ProcessBlockerManager}
+     * — nhận CONFIG_SYNC.blockedProcesses (REPLACE-ALL) đồng bộ danh sách chặn
+     * tiến trình từ Server. Truyền null = bỏ qua đồng bộ (chỉ còn kill qua
+     * lệnh BLOCK_PROCESS lẻ).
+     */
+    public TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
+                           JsonProtocolParser parser, ServerCommandHandler commandHandler,
+                           NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
+                           ActionDispatcher actionDispatcher, ClientIdentityManager identityManager,
+                           Runnable unpairListener, ActivityCollector activityCollector,
+                           com.parental.client.enforcement.ProcessBlockerManager processBlockerManager) {
         this.config = Objects.requireNonNull(config, "config");
         this.deviceInfoCollector = Objects.requireNonNull(deviceInfoCollector, "deviceInfoCollector");
         this.parser = Objects.requireNonNull(parser, "parser");
@@ -204,6 +226,7 @@ public class TcpClientEngine implements AutoCloseable {
         this.identityManager = identityManager;   // nullable — null = không xử lý UNPAIR file
         this.unpairListener = unpairListener;     // nullable — null = không callback UNPAIR
         this.activityCollector = activityCollector; // nullable — null = tắt ACTIVITY_REPORT
+        this.processBlockerManager = processBlockerManager; // nullable — null = không sync qua CONFIG_SYNC
     }
 
     // ------------------------------------------------------------------
@@ -952,14 +975,24 @@ public class TcpClientEngine implements AutoCloseable {
             log.warn("CONFIG_SYNC with unexpected payload: {}", message.getPayload());
             return;
         }
-        log.info("CONFIG_SYNC received: {} blocked domains, usage limit {}s",
-                configSync.blockedDomains().size(), configSync.dailyUsageLimitSeconds());
+        log.info("CONFIG_SYNC received: {} blocked domains, {} blocked processes, usage limit {}s",
+                configSync.blockedDomains().size(), configSync.blockedProcesses().size(),
+                configSync.dailyUsageLimitSeconds());
         if (hostsFileManager != null) {
             try {
                 hostsFileManager.applyBlockedDomains(configSync.blockedDomains());
             } catch (RuntimeException e) {
                 // tuyệt đối không để lỗi hosts làm chết luồng đọc socket
                 log.error("Applying blocked domains failed: {}", e.getMessage());
+            }
+        }
+        // Mở rộng 11: đồng bộ danh sách chặn tiến trình (REPLACE-ALL) — app bị
+        // gỡ khỏi danh sách = bỏ chặn (ngừng kill, mở lại bình thường).
+        if (processBlockerManager != null) {
+            try {
+                processBlockerManager.replaceBlockedProcesses(configSync.blockedProcesses());
+            } catch (RuntimeException e) {
+                log.error("Applying blocked processes failed: {}", e.getMessage());
             }
         }
         try {
