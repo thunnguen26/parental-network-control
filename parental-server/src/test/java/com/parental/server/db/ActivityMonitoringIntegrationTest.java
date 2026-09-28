@@ -181,6 +181,64 @@ class ActivityMonitoringIntegrationTest {
     }
 
     @Test
+    @DisplayName("DEDUP: gửi lặp cùng process+title → KHÔNG insert thêm; đổi tab → insert bản ghi mới")
+    void duplicateActivityReportsAreNotInsertedTwice() throws Exception {
+        connectClient("activity-dedup-client");
+        ActivityDao dao = engine.getActivityDao();
+
+        ActivityReportPayload watching = new ActivityReportPayload(
+                "YouTube - Cốc Cốc", "browser.exe", List.of("browser.exe"), 1L);
+
+        // Người dùng ở yên xem 1 video — client gửi 5 lần giống hệt nhau (10s/lần)
+        for (int i = 0; i < 5; i++) {
+            writeAndFlush(BaseMessage.of(MessageType.ACTIVITY_REPORT, "activity-dedup-client", watching));
+            Thread.sleep(50);
+        }
+        awaitCondition("bản ghi ĐẦU TIÊN vào DB", Duration.ofSeconds(10),
+                () -> dao.countAll("activity-dedup-client") >= 1);
+        Thread.sleep(300); // đợi các report sau được xử lý — nếu không dedup sẽ thành 5 dòng
+        assertEquals(1, dao.countAll("activity-dedup-client"),
+                "5 report giống hệt nhau → CHỈ ĐÚNG 1 dòng trong DB (chống spam 10s/lần)");
+
+        // Người dùng chuyển tab: process+title THAY ĐỔI → được insert bản ghi mới
+        writeAndFlush(BaseMessage.of(MessageType.ACTIVITY_REPORT, "activity-dedup-client",
+                new ActivityReportPayload("Facebook – log in", "browser.exe", List.of("browser.exe"), 2L)));
+        awaitCondition("bản ghi THỨ HAI (đổi tab) vào DB", Duration.ofSeconds(10),
+                () -> dao.countAll("activity-dedup-client") >= 2);
+
+        // Ở yên trên Facebook tiếp 2 lần nữa → vẫn chỉ 2 dòng
+        for (int i = 0; i < 2; i++) {
+            writeAndFlush(BaseMessage.of(MessageType.ACTIVITY_REPORT, "activity-dedup-client",
+                    new ActivityReportPayload("Facebook – log in", "browser.exe", List.of("browser.exe"), 3L)));
+            Thread.sleep(50);
+        }
+        Thread.sleep(300);
+        assertEquals(2, dao.countAll("activity-dedup-client"),
+                "Report lặp sau khi đổi tab không được insert thêm");
+
+        List<ActivityDao.ActivityRecord> recent = dao.getRecentActivities("activity-dedup-client", 10);
+        assertEquals("Facebook – log in", recent.get(0).windowTitle(), "Mới nhất trước");
+
+        // Dashboard realtime vẫn nhận đủ MỌI report (kể cả trùng) qua listener
+        awaitCondition("listener nhận đủ 8 report", Duration.ofSeconds(10), () ->
+                activityEvents.size() >= 8);
+    }
+
+    @Test
+    @DisplayName("ClientSession signature: process+title tạo chữ ký, set/get nhất quán")
+    void sessionSignatureRoundTrip() {
+        com.parental.server.network.ClientSession session =
+                new com.parental.server.network.ClientSession("sig-client", null, null, null, parser);
+
+        org.junit.jupiter.api.Assertions.assertNull(session.getActivitySignature(),
+                "Chưa ghi gì → signature null");
+        session.setActivitySignature("browser.exe\u0000YouTube - Cốc Cốc");
+        assertEquals("browser.exe\u0000YouTube - Cốc Cốc", session.getActivitySignature());
+        session.setActivitySignature(null); // reset (khi clear lịch sử)
+        org.junit.jupiter.api.Assertions.assertNull(session.getActivitySignature());
+    }
+
+    @Test
     @DisplayName("ACTIVITY_REPORT khi engine không DB → session vẫn cập nhật, không crash")
     void activityReportWithoutDatabaseDoesNotCrash() throws Exception {
         TcpServerEngine noDbEngine = new TcpServerEngine(0, 8, 30);

@@ -47,6 +47,15 @@ public class ClientSession {
     /** Hoạt động gần nhất (ACTIVITY_REPORT — Mục 3.9): "đang mở gì" cho Dashboard. */
     private volatile com.parental.common.protocol.payload.ActivityReportPayload lastActivity;
 
+    /**
+     * Chữ ký dedup nhật ký: {@code process + '\u0000' + title} của bản ghi
+     * HOẠT ĐỘNG gần nhất ĐÃ ghi DB (khác {@code lastActivity} — thể hiện
+     * hoạt động MỚI NHẬN kể cả chưa ghi). So khớp trước khi insert để người
+     * dùng ở yên 1 video không sinh hàng chục dòng log giống nhau mỗi 10s.
+     * Cố tình dùng String (immutable) thay record để an toàn volatile publish.
+     */
+    private volatile String activitySignature;
+
     public ClientSession(String clientId, Socket socket,
                          BufferedReader reader, PrintWriter writer, JsonProtocolParser parser) {
         this.clientId = clientId;
@@ -162,6 +171,21 @@ public class ClientSession {
     public void setLastActivity(
             com.parental.common.protocol.payload.ActivityReportPayload lastActivity) {
         this.lastActivity = lastActivity;
+    }
+
+    /**
+     * Chữ ký hoạt động gần nhất ĐÃ ghi DB ({@code process + '\u0000' + title};
+     * {@code null} = chưa ghi gì). Dùng bởi {@code ClientHandler} cho bộ
+     * chống spam nhật ký trùng lặp (dedup) — người dùng ở yên 1 app/video
+     * thì KHÔNG insert thêm dòng, chỉ Dashboard "Đang mở" vẫn cập nhật realtime.
+     */
+    public String getActivitySignature() {
+        return activitySignature;
+    }
+
+    /** Lưu chữ ký hoạt động vừa ghi DB (gọi từ ClientHandler sau khi insert). */
+    public void setActivitySignature(String activitySignature) {
+        this.activitySignature = activitySignature;
     }
 
     public long getLastHeartbeatTimestamp() {

@@ -110,6 +110,84 @@ class HostsFileManagerTest {
                 "Không được sinh biến thể www.www lặp");
     }
 
+    // ------------------------------------------------------------------
+    // Alias/subdomain expansion (chặn dịch vụ lớn: YouTube, Facebook...)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("expandDomainAliases: youtube.com → gốc + www + m + youtu.be + CDN dịch vụ")
+    void expandYoutubeAliases() {
+        java.util.List<String> variants =
+                HostsFileManager.expandDomainAliases("youtube.com");
+
+        assertTrue(variants.contains("youtube.com"), "Domain gốc");
+        assertTrue(variants.contains("www.youtube.com"), "Biến thể www");
+        assertTrue(variants.contains("m.youtube.com"), "Biến thể mobile");
+        assertTrue(variants.contains("youtu.be"), "Alias rút gọn");
+        assertTrue(variants.contains("www.youtu.be"), "Alias rút gọn có www");
+        assertTrue(variants.contains("youtube-nocookie.com"), "Embed nhúng video");
+        assertTrue(variants.contains("googlevideo.com"), "CDN phát video");
+    }
+
+    @Test
+    @DisplayName("expandDomainAliases: facebook.com → fb.com/fb.me/fbcdn.net; x.com ↔ twitter.com")
+    void expandFacebookAndTwitterAliases() {
+        assertTrue(HostsFileManager.expandDomainAliases("facebook.com")
+                .containsAll(java.util.List.of("facebook.com", "www.facebook.com",
+                        "m.facebook.com", "fb.com", "fb.me", "fbcdn.net")));
+        assertTrue(HostsFileManager.expandDomainAliases("x.com")
+                .containsAll(java.util.List.of("x.com", "twitter.com")),
+                "Chặn x.com tự động chặn kèm twitter.com (đổi tên thương hiệu)");
+        assertTrue(HostsFileManager.expandDomainAliases("twitter.com")
+                .containsAll(java.util.List.of("twitter.com", "x.com", "twimg.com")),
+                "Chặn twitter.com tự động chặn kèm x.com + CDN twimg");
+        assertTrue(HostsFileManager.expandDomainAliases("zalo.me")
+                .containsAll(java.util.List.of("zalo.me", "zaloapp.com")));
+    }
+
+    @Test
+    @DisplayName("expandDomainAliases: domain lạ → chỉ gốc + www + m (không đoán bừa)")
+    void unknownDomainGetsOnlyStandardVariants() {
+        java.util.List<String> variants =
+                HostsFileManager.expandDomainAliases("example.edu.vn");
+
+        assertEquals(java.util.List.of("example.edu.vn", "www.example.edu.vn",
+                "m.example.edu.vn"), variants);
+    }
+
+    @Test
+    @DisplayName("expandDomainAliases: null/rỗng → danh sách rỗng (không ném)")
+    void nullDomainExpandsToEmpty() {
+        assertTrue(HostsFileManager.expandDomainAliases(null).isEmpty());
+        assertTrue(HostsFileManager.expandDomainAliases("  ").isEmpty());
+    }
+
+    @Test
+    @DisplayName("applyBlockedDomains: chặn youtube.com trong hosts → đủ youtu.be/m./googlevideo")
+    void applyWritesAllYoutubeAliasesIntoHosts() throws Exception {
+        HostsFileManager manager = newManager(OS_LIKE_CONTENT);
+
+        assertTrue(manager.applyBlockedDomains(List.of("youtube.com")));
+        String content = read(hostsPathOf(manager));
+
+        assertTrue(content.contains("0.0.0.0  youtube.com"));
+        assertTrue(content.contains("0.0.0.0  youtu.be"), "Alias youtu.be phải bị chặn kèm");
+        assertTrue(content.contains("0.0.0.0  m.youtube.com"), "Subdomain mobile phải bị chặn kèm");
+        assertTrue(content.contains("0.0.0.0  googlevideo.com"), "CDN video phải bị chặn kèm");
+    }
+
+    @Test
+    @DisplayName("buildMarkerBlock: 2 domain có alias trùng nhau → khử trùng lặp dòng")
+    void buildMarkerBlockDeduplicatesAliases() {
+        String block = HostsFileManager.buildMarkerBlock(
+                java.util.Arrays.asList("facebook.com", "fb.com"));
+
+        // fb.com nằm trong alias của facebook.com → chỉ được ghi ĐÚNG 1 lần
+        assertEquals(1, countOccurrences(block, "0.0.0.0  fb.com\n"));
+        assertEquals(1, countOccurrences(block, "0.0.0.0  facebook.com\n"));
+        assertEquals(1, countOccurrences(block, HostsFileManager.MARKER_START));
+    }
+
     @Test
     @DisplayName("Legacy marker cũ được nhận diện và nâng cấp: block cũ dọn sạch, block mới dùng marker mới")
     void legacyMarkersAreStrippedAndUpgraded() throws Exception {

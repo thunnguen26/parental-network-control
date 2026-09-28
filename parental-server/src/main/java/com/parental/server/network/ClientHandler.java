@@ -261,16 +261,28 @@ public class ClientHandler implements Runnable {
                     session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
                     if (message.getPayload() instanceof ActivityReportPayload activity) {
                         session.setLastActivity(activity); // Dashboard đọc trực tiếp (realtime)
-                        // Lưu nhật ký vào DB (bảng activity_logs)
-                        if (activityDao != null) {
-                            activityDao.logActivity(session.getClientId(),
-                                    activity.activeProcessName(), activity.activeWindowTitle());
+                        // DEDUP (chống spam nhật ký): người dùng ở yên 1 app/video
+                        // → client vẫn gửi mỗi 10s nhưng process+title KHÔNG đổi
+                        // → KHÔNG insert thêm dòng, chỉ giữ chữ ký + timestamp.
+                        // Chỉ khi app/tab THAY ĐỔI mới ghi bản ghi mới vào DB.
+                        String signature = activity.activeProcessName() + "\u0000"
+                                + activity.activeWindowTitle();
+                        if (!signature.equals(session.getActivitySignature())) {
+                            if (activityDao != null) {
+                                activityDao.logActivity(session.getClientId(),
+                                        activity.activeProcessName(), activity.activeWindowTitle());
+                            }
+                            session.setActivitySignature(signature);
+                            log.debug("[{}] ACTIVITY_REPORT recorded (changed): {} — {}",
+                                    session.getClientId(), activity.activeProcessName(),
+                                    activity.activeWindowTitle());
+                        } else {
+                            log.debug("[{}] ACTIVITY_REPORT deduplicated (unchanged): {} — {}",
+                                    session.getClientId(), activity.activeProcessName(),
+                                    activity.activeWindowTitle());
                         }
                         // Kích hoạt event listener (Dashboard cập nhật "Đang mở: ...")
                         sessionManager.fireActivityReport(session, activity);
-                        log.debug("[{}] ACTIVITY_REPORT: {} — {}",
-                                session.getClientId(), activity.activeProcessName(),
-                                activity.activeWindowTitle());
                     }
                 }
                 case HANDSHAKE ->

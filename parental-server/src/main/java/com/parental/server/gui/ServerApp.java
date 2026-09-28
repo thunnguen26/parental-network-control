@@ -41,6 +41,9 @@ public final class ServerApp {
 
         // Theme hiện đại FlatLaf Light — đặt TRƯỚC khi tạo Swing component nào
         FlatLightLaf.setup();
+        // SỬA LỖI GÕ TIẾNG VIỆT (Unikey/EVKey): ép font Segoe UI cho toàn bộ
+        // Swing defaults — phải trước khi tạo component đầu tiên.
+        VietnameseInputSupport.applyDefaultFont();
 
         SwingUtilities.invokeLater(() -> startServerAndShowDashboard(port));
     }
@@ -73,6 +76,9 @@ public final class ServerApp {
                     engine.getClientDao(), engine.getMetricsDao(), engine.getRuleDao(),
                     engine.getSessionManager(), engine.getRuleEvaluationEngine());
             dashboard.showFrame();
+            // Bật InputMethod cho toàn bộ cây component — Unikey/EVKey gõ được
+            // tiếng Việt có dấu vào mọi ô nhập liệu (tìm kiếm, chặn domain...).
+            VietnameseInputSupport.enableInputMethodsRecursively(dashboard);
 
             registerWindowShutdown(dashboard, engine);
         } catch (Exception e) {

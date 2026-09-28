@@ -179,7 +179,24 @@ public class ClientApp {
         WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer();
         SystemTrayAlertNotifier notifier = new SystemTrayAlertNotifier();
         OshiNetworkMetricsCollector metricsCollector = new OshiNetworkMetricsCollector();
-        HostsFileManager hostsFileManager = new HostsFileManager();
+        // Vô hiệu hóa DoH/QUIC của trình duyệt — hosts enforcement có hiệu lực thật:
+        // mỗi lần áp/clear danh sách chặn, khóa/mở đường lách (DoH registry + QUIC UDP 443)
+        // rồi flush DNS/NetBIOS cache để kết nối MỚI giải mã lại qua hosts.
+        com.parental.client.enforcement.BrowserBypassEnforcer bypassEnforcer =
+                new com.parental.client.enforcement.BrowserBypassEnforcer();
+        HostsFileManager hostsFileManager = new HostsFileManager() {
+            @Override
+            public boolean applyBlockedDomains(java.util.List<String> domains) {
+                bypassEnforcer.lockBypassPaths(); // khóa đường thoát TRƯỚC khi ghi hosts
+                return super.applyBlockedDomains(domains); // (super tự flush DNS)
+            }
+
+            @Override
+            public boolean clearBlocks() {
+                bypassEnforcer.unlockBypassPaths(); // gỡ khóa khi nới lỏng/gỡ cài
+                return super.clearBlocks();
+            }
+        };
         ActionDispatcher actionDispatcher = new ActionDispatcher(enforcer, notifier, metricsCollector);
 
         return new TcpClientEngine(

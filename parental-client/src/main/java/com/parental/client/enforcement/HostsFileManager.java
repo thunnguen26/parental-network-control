@@ -8,9 +8,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import org.slf4j.Logger;
@@ -64,6 +66,15 @@ public class HostsFileManager {
     public static final String BLOCK_IP_EXTRA = "127.0.0.1";
     /** Tiền tố subdomain được chặn kèm theo mỗi domain gốc. */
     public static final String WWW_PREFIX = "www.";
+
+    /**
+     * Alias/subdomain phục vụ cho từng dịch vụ lớn — chặn domain gốc là bị
+     * lách qua alias (youtube.com → youtu.be, m.youtube.com; facebook.com →
+     * fb.com, fb.me...). Key = domain gốc (lowercase), value = alias cộng
+     * thêm (bộ ghi đã tự thêm {@code www.} và {@code m.} cho mọi domain).
+     * Suy ra từ ban đầu: {@code www.} + {@code m.} + alias riêng của dịch vụ.
+     */
+    private static final Map<String, List<String>> DOMAIN_ALIASES = buildDomainAliases();
 
     private static final Logger log = LoggerFactory.getLogger(HostsFileManager.class);
 
@@ -290,22 +301,86 @@ public class HostsFileManager {
         return sb.toString();
     }
 
+    /** Dựng bảng alias dịch vụ lớn (immutable — chỉ đọc lúc build). */
+    private static Map<String, List<String>> buildDomainAliases() {
+        Map<String, List<String>> aliases = new LinkedHashMap<>();
+        aliases.put("youtube.com", List.of("youtu.be", "youtube-nocookie.com",
+                "ytimg.com", "googlevideo.com"));
+        aliases.put("youtu.be", List.of("youtube.com"));
+        aliases.put("facebook.com", List.of("fb.com", "fb.me", "fb.watch",
+                "facebook.net", "fbsbx.com", "fbcdn.net"));
+        aliases.put("fb.com", List.of("facebook.com"));
+        aliases.put("instagram.com", List.of("cdninstagram.com", "instagr.am"));
+        aliases.put("tiktok.com", List.of("tiktokcdn.com", "tiktokv.com", "musical.ly"));
+        aliases.put("twitter.com", List.of("x.com", "twimg.com"));
+        aliases.put("x.com", List.of("twitter.com"));
+        aliases.put("reddit.com", List.of("redd.it", "redditstatic.com", "reddithelp.com"));
+        aliases.put("netflix.com", List.of("nflxvideo.net", "nflximg.net", "nflxso.net"));
+        aliases.put("discord.com", List.of("discordapp.com", "discordapp.net", "discord.gg"));
+        aliases.put("zalo.me", List.of("zaloapp.com", "zalophn.com"));
+        aliases.put("twitch.tv", List.of("twitchcdn.net", "jtvnw.net"));
+        aliases.put("vimeo.com", List.of("vimeocdn.com", "player.vimeo.com"));
+        aliases.put("pinterest.com", List.of("pin.it", "pinimg.com"));
+        aliases.put("snapchat.com", List.of("sc-cdn.net", "snap.com"));
+        aliases.put("telegram.org", List.of("t.me", "telegram.me", "tgram.io"));
+        aliases.put("roblox.com", List.of("rbxcdn.com", "roblox.gg"));
+        aliases.put("steamcommunity.com", List.of("steampowered.com", "steamstatic.com"));
+        return Collections.unmodifiableMap(aliases);
+    }
+
+    /**
+     * Mở rộng 1 domain thành danh sách đầy đủ các biến thể cần chặn:
+     * domain gốc + {@code www.} + {@code m.} + alias dịch vụ (nếu có trong
+     * {@link #DOMAIN_ALIASES}). Bỏ trùng, giữ thứ tự.
+     *
+     * <p>Chỉ alias CHÍNH XÁC domain gốc mới được nới rộng (không phân tích
+     * sâu subdomain con) — tránh chặn oan domain khác. Domain chưa có trong
+     * bảng → chỉ gốc + www + m.</p>
+     */
+    static List<String> expandDomainAliases(String domain) {
+        Set<String> variants = new LinkedHashSet<>();
+        if (domain == null || domain.isBlank()) {
+            return List.of();
+        }
+        String clean = domain.trim().toLowerCase(Locale.ROOT);
+        variants.add(clean);
+        // Domain đã có sẵn www./m. → KHÔNG nhân bản www.www/m.m (giữ hành vi cũ)
+        if (!clean.startsWith(WWW_PREFIX)) {
+            variants.add(WWW_PREFIX + clean);
+        }
+        if (!clean.startsWith("m.")) {
+            variants.add("m." + clean);
+        }
+        List<String> serviceAliases = DOMAIN_ALIASES.get(clean);
+        if (serviceAliases != null) {
+            for (String alias : serviceAliases) {
+                variants.add(alias);
+                if (!alias.startsWith(WWW_PREFIX)) {
+                    variants.add(WWW_PREFIX + alias);
+                }
+            }
+        }
+        return List.copyOf(variants);
+    }
+
     /**
      * Dựng khối marker mới từ danh sách domain đã sanitize: mỗi domain được
-     * ghi với CẢ địa chỉ {@code 0.0.0.0} và {@code 127.0.0.1}, và CẢ domain
-     * gốc lẫn subdomain {@code www.domain} (chặn triệt để cả subdomain;
-     * domain đã bắt đầu bằng {@code www.} thì bỏ qua biến thể lặp).
+     * mở rộng alias/subdomain qua {@link #expandDomainAliases} rồi ghi với
+     * CẢ địa chỉ {@code 0.0.0.0} và {@code 127.0.0.1}. Chặn triệt để cả
+     * subdomain ({@code www.}, {@code m.}) và alias dịch vụ (youtu.be,
+     * fb.com, x.com...); khử trùng lặp giữa các domain (facebook.com và
+     * fb.com cùng chặn → không ghi trùng dòng).
      */
     static String buildMarkerBlock(List<String> domains) {
+        Set<String> allVariants = new LinkedHashSet<>();
+        for (String domain : domains) {
+            allVariants.addAll(expandDomainAliases(domain));
+        }
         StringBuilder sb = new StringBuilder();
         sb.append(MARKER_START).append('\n');
-        for (String domain : domains) {
-            String wwwVariant = domain.startsWith(WWW_PREFIX) ? null : WWW_PREFIX + domain;
-            for (String entry : wwwVariant != null
-                    ? new String[]{domain, wwwVariant} : new String[]{domain}) {
-                sb.append(BLOCK_IP).append("  ").append(entry).append('\n');
-                sb.append(BLOCK_IP_EXTRA).append("  ").append(entry).append('\n');
-            }
+        for (String entry : allVariants) {
+            sb.append(BLOCK_IP).append("  ").append(entry).append('\n');
+            sb.append(BLOCK_IP_EXTRA).append("  ").append(entry).append('\n');
         }
         sb.append(MARKER_END);
         return sb.toString();
