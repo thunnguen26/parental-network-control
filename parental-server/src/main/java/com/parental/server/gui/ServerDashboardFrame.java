@@ -26,8 +26,10 @@ import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
@@ -46,6 +48,7 @@ import org.slf4j.LoggerFactory;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.UnpairPayload;
 import com.parental.server.db.ActivityDao;
+import com.parental.server.db.BlockedDomainDao;
 import com.parental.server.db.ClientDao;
 import com.parental.server.db.ClientRecord;
 import com.parental.server.db.MetricsDao;
@@ -598,6 +601,8 @@ public class ServerDashboardFrame extends JFrame {
         // Sắp xếp + lọc dòng JTable ( ô "Lọc tiến trình/tiêu đề" )
         activitySorter = new javax.swing.table.TableRowSorter<>(activityTable.getModel());
         activityTable.setRowSorter(activitySorter);
+        // Menu chuột phải: chặn nhanh tên miền từ dòng nhật ký được chọn
+        attachQuickBlockPopup(activityTable);
         JScrollPane activityScroll = new JScrollPane(activityTable);
         // Cao 160px cố định định + chặn co hẹp — bảng nhật ký luôn trọn trong JScrollPane,
         // không bị panel khác đè bẹp (Box.Y_AXIS tôn trọng preferred size).
@@ -1085,6 +1090,8 @@ public class ServerDashboardFrame extends JFrame {
         javax.swing.table.TableRowSorter<javax.swing.table.TableModel> fullSorter =
                 new javax.swing.table.TableRowSorter<>(fullModel);
         fullTable.setRowSorter(fullSorter);
+        // Menu chuột phải: chặn nhanh tên miền từ dòng nhật ký được chọn
+        attachQuickBlockPopup(fullTable);
         JScrollPane fullScroll = new JScrollPane(fullTable);
         fullScroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
         fullScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
@@ -1148,6 +1155,112 @@ public class ServerDashboardFrame extends JFrame {
             javax.swing.table.TableRowSorter<? extends javax.swing.table.TableModel> sorter) {
         sorter.setRowFilter(ServerDashboardFrameTestHook
                 .buildActivityRowFilter(filterField.getText()).orElse(null));
+    }
+
+    // ------------------------------------------------------------------
+    // Chặn nhanh tên miền từ Nhật ký hoạt động (chuột phải trên JTable)
+    // ------------------------------------------------------------------
+
+    /**
+     * Gắn menu chuột phải "🚫 Chặn tên miền này" cho 1 bảng nhật ký hoạt động
+     * (dùng chung cho bảng Dashboard lẫn dialog "Xem toàn bộ"): trích domain
+     * gợi ý từ tiêu đề → confirm → {@code addDomain} + đẩy CONFIG_SYNC tức thì.
+     */
+    private void attachQuickBlockPopup(JTable table) {
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent event) {
+                maybeShowQuickBlockPopup(table, event);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent event) {
+                maybeShowQuickBlockPopup(table, event);
+            }
+        });
+    }
+
+    /** MouseEvent là popup trigger → chọn dòng dưới chuột và mở menu chặn. */
+    private void maybeShowQuickBlockPopup(JTable table, java.awt.event.MouseEvent event) {
+        if (!event.isPopupTrigger()) {
+            return;
+        }
+        int viewRow = table.rowAtPoint(event.getPoint());
+        if (viewRow < 0) {
+            return;
+        }
+        table.setRowSelectionInterval(viewRow, viewRow); // click dòng nào chặn dòng đó
+        int modelRow = table.convertRowIndexToModel(viewRow);
+        String title = String.valueOf(table.getModel().getValueAt(modelRow,
+                ServerDashboardFrameTestHook.ACTIVITY_COLUMN_TITLE));
+
+        JMenuItem blockItem = new JMenuItem(ServerDashboardFrameTestHook
+                .buildQuickBlockLabel(title));
+        blockItem.addActionListener(actionEvent -> quickBlockDomainForClient(title));
+
+        JPopupMenu popup = new JPopupMenu();
+        popup.add(blockItem);
+        popup.show(table, event.getX(), event.getY());
+    }
+
+    /**
+     * Luồng chặn nhanh cho client đang chọn: gợi ý domain từ tiêu đề →
+     * confirm → lưu DB qua {@link BlockedDomainDao#addDomain} → đẩy
+     * CONFIG_SYNC xuống client ngay → mở hosts trắng danh sách phía client.
+     */
+    private void quickBlockDomainForClient(String windowTitle) {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("⚠ Chưa chọn thiết bị nào để chặn tên miền");
+            return;
+        }
+        ActivityDao activityDao = serverEngine.getActivityDao();
+        BlockedDomainDao blockedDomainDao = serverEngine.getBlockedDomainDao();
+        if (blockedDomainDao == null) {
+            appendEventLog("⚠ Server đang chạy không database — không chặn tên miền được");
+            return;
+        }
+        String suggestion = WindowTitleDomainExtractor.suggestDomain(windowTitle);
+
+        // Ô nhập cho phép sửa gợi ý hoặc nhập tay khi không trích được
+        String input = (String) JOptionPane.showInputDialog(this,
+                "Tên miền cần chặn cho thiết bị '" + selected.deviceName() + "':",
+                "🚫 Chặn tên miền này",
+                JOptionPane.PLAIN_MESSAGE, null, null,
+                suggestion != null ? suggestion : "");
+        if (input == null || input.isBlank()) {
+            return; // hủy
+        }
+        String domain = BlockedDomainDialogHelper.normalize(input);
+        if (domain == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Tên miền không hợp lệ: " + input
+                            + "\n(ví dụ hợp lệ: youtube.com, facebook.com)",
+                    "Tên miền không hợp lệ", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Bạn có chắc muốn chặn tên miền [" + domain + "] cho thiết bị này?",
+                "Xác nhận chặn tên miền",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+        String clientId = selected.clientId();
+        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+        boolean added = activityDao != null && blockedDomainDao.addDomain(clientId, domain);
+        if (!added) {
+            appendEventLog("⚠ Không chặn được '" + domain + "' cho '"
+                    + deviceDisplay + "' (lỗi DB hoặc đã có sẵn)");
+            return;
+        }
+        boolean pushed = serverEngine.pushConfigSync(clientId);
+        appendEventLog("🚫 Đã chặn '" + domain + "' cho '" + deviceDisplay + "'"
+                + (pushed ? " — CONFIG_SYNC đã đẩy xuống client"
+                          : " — client offline, sẽ nhận khi kết nối lại"));
     }
 
     /** null/rỗng → "—" (dòng "—" trên UI thay cho dữ liệu thiếu). */

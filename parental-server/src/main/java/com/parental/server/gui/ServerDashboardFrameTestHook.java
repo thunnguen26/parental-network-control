@@ -27,8 +27,22 @@ final class ServerDashboardFrameTestHook {
      */
     static final int DIALOG_ROW_LIMIT = 200;
 
+    /** Chỉ số cột "Tiêu đề cửa sổ" trong JTable nhật ký (cho popup chặn nhanh). */
+    static final int ACTIVITY_COLUMN_TITLE = 2;
+
     private ServerDashboardFrameTestHook() {
         // utility class — không khởi tạo
+    }
+
+    /**
+     * Nhãn menu chuột phải "🚫 Chặn tên miền này" kèm domain gợi ý trích từ
+     * tiêu đề (nếu có) — pure function, test headless được.
+     */
+    static String buildQuickBlockLabel(String windowTitle) {
+        String suggestion = WindowTitleDomainExtractor.suggestDomain(windowTitle);
+        return suggestion != null
+                ? "🚫 Chặn tên miền này (gợi ý: " + suggestion + ")"
+                : "🚫 Chặn tên miền này (nhập tay)";
     }
 
     /**

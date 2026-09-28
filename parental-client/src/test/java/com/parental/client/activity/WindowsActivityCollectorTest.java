@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.charset.StandardCharsets;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -158,34 +160,75 @@ class WindowsActivityCollectorTest {
     }
 
     @Test
-    @DisplayName("PS_SCRIPT: SIÊU NHẸ đúng spec — Get-Process | Where MainWindowHandle | Select -First 5")
-    void psScriptMatchesSpec() {
+    @DisplayName("PS_SCRIPT: UIA FocusedElement — foreground/tab đang tương tác thật, KHÔNG theo thứ tự quét")
+    void psScriptUsesUiaFocusedElement() {
         String script = WindowsActivityCollector.PS_SCRIPT;
 
-        assertTrue(script.contains("Get-Process"), "Dùng Get-Process cmdlet có sẵn");
-        assertTrue(script.contains("MainWindowHandle -ne 0"),
-                "Chỉ tiến trình có cửa sổ giao diện thật");
-        assertTrue(script.contains("MainWindowTitle -ne ''"),
-                "Tiêu đề không rỗng — bỏ cửa sổ nền desktop");
-        assertTrue(script.contains("Select-Object -First 5"),
-                "Chọn First 5 (dòng đầu = đang tương tác)");
-        assertTrue(script.contains(
-                        "-notmatch '^(explorer|dwm|taskhostw|conhost|svchost)$'"),
-                "Loại tiến trình nền hệ thống theo spec");
+        assertTrue(script.contains("AutomationElement]::FocusedElement"),
+                "Bắt buộc UIA FocusedElement — Select -First 1 chỉ lấy tiến trình đầu theo thứ tự quét");
+        assertTrue(script.contains("Add-Type -AssemblyName UIAutomationClient"),
+                "Chỉ NẠP assembly UIA có sẵn (không biên dịch C#)");
+        assertTrue(script.contains("TreeWalker"),
+                "Đi ngược cây cha khi tên phần tử focus rỗng");
+        assertTrue(script.contains("exit 0"),
+                "UIA thành công → xuất đúng 1 dòng rồi exit (không chạy fallback)");
+        assertTrue(script.contains("MainWindowHandle -ne 0")
+                && script.contains("MainWindowTitle -ne ''"),
+                "Fallback Get-Process: chỉ tiến trình có cửa sổ + tiêu đề thật");
+        assertTrue(script.contains("Select-Object -First 1"),
+                "Fallback Get-Process First-1 theo spec");
         assertTrue(script.contains("'|'"), "Phân tách dấu | theo spec");
     }
 
     @Test
-    @DisplayName("PS_SCRIPT: KHÔNG Add-Type / C# / csc.exe — không trigger Antivirus quét compiler")
-    void psScriptHasNoAddTypeOrCSharp() {
+    @DisplayName("PS_SCRIPT: KHÔNG biên dịch C# / csc.exe — chỉ Add-Type -AssemblyName")
+    void psScriptHasNoCSharpCompilation() {
         String script = WindowsActivityCollector.PS_SCRIPT;
 
-        assertFalse(script.contains("Add-Type"), "KHÔNG dùng Add-Type (cả -MemberDefinition)");
+        assertFalse(script.contains("-MemberDefinition"), "KHÔNG dùng Add-Type -MemberDefinition (compile)");
         assertFalse(script.contains("DllImport"), "KHÔNG có P/Invoke DllImport C#");
         assertFalse(script.contains("user32"), "KHÔNG đụng user32.dll qua C# inline");
         assertFalse(script.contains("@\"") && script.contains("\"@"),
                 "KHÔNG dùng here-string C# multi-line");
         assertFalse(script.toLowerCase().contains("namespace"), "KHÔNG khai báo namespace C#");
+    }
+
+    @Test
+    @DisplayName("PS_SCRIPT: UTF-8 tường minh — OutputEncoding đặt đầu script, đọc bên Java bằng UTF_8")
+    void psScriptAndReaderUseUtf8() {
+        String script = WindowsActivityCollector.PS_SCRIPT;
+
+        assertTrue(script.startsWith("try { [Console]::OutputEncoding = "
+                + "[System.Text.Encoding]::UTF8 }"),
+                "OutputEncoding UTF8 phải là lệnh ĐẦU TIÊN của script");
+        assertTrue(script.contains("exit 0"), "(tiền đề) UIA thành công exit sớm sau khi xuất");
+    }
+
+    @Test
+    @DisplayName("readAllUtf8: tiêu đề tiếng Việt có dấu giữ nguyên 100% — hết lỗi font '?'")
+    void utf8VietnameseTitleSurvivesRoundTrip() throws Exception {
+        byte[] utf8Bytes = ("browser|Đăng nhập vào trang | VKU's Elearning - Cốc Cốc\n"
+                + "chrome|Giải bài tập Hóa 12 — ếệảơườ đặt đúng dấu").getBytes(StandardCharsets.UTF_8);
+
+        String decoded = WindowsActivityCollector.readAllUtf8(
+                new java.io.ByteArrayInputStream(utf8Bytes), 16_000);
+        ActivityReportPayload payload = collector.parseOutput(decoded);
+
+        assertEquals("browser.exe", payload.activeProcessName());
+        assertEquals("Đăng nhập vào trang | VKU's Elearning - Cốc Cốc",
+                payload.activeWindowTitle(),
+                "Tiêu đề tiếng Việt có dấu phải giữ nguyên — không '?' hay ký tự rác");
+        assertTrue(payload.topProcesses().contains("chrome"));
+    }
+
+    @Test
+    @DisplayName("readAllUtf8: byte lỗi/đơn giản ASCII vẫn đọc được, không ném")
+    void readAllUtf8HandlesPlainBytes() throws Exception {
+        assertEquals("chrome|Plain Title\n", WindowsActivityCollector.readAllUtf8(
+                new java.io.ByteArrayInputStream("chrome|Plain Title\n".getBytes(StandardCharsets.UTF_8)),
+                16_000));
+        assertEquals("", WindowsActivityCollector.readAllUtf8(
+                new java.io.ByteArrayInputStream(new byte[0]), 16_000), "Stream rỗng → chuỗi rỗng");
     }
 
     @Test

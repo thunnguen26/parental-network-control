@@ -17,63 +17,89 @@ import com.parental.common.protocol.payload.ActivityReportPayload;
 
 /**
  * Triển khai {@link ActivityCollector} trên Windows KHÔNG cần thư viện ngoài:
- * gọi PowerShell siêu nhẹ qua {@link ProcessBuilder} — liệt kê các tiến trình
- * đang có cửa sổ giao diện, dòng ĐẦU được coi là cửa sổ người dùng đang
- * tương tác.
+ * gọi PowerShell qua {@link ProcessBuilder} — bắt <b>CHÍNH XÁC cửa sổ/tab
+ * người dùng đang tương tác</b> qua Windows UI Automation
+ * ({@code AutomationElement::FocusedElement}), có fallback {@code Get-Process}
+ * khi UIA không xác định được.
  *
- * <p><b>Script SIÊU NHẸ — KHÔNG Add-Type, KHÔNG biên dịch C#, KHÔNG csc.exe</b>
- * (quyết định 2026-09-27): `Add-Type -MemberDefinition` P/Invoke tuy chính xác
- * nhưng mỗi lần spawn đều biên dịch C# qua {@code csc.exe} — Antivirus hay
- * giám sát/quét csc.exe gây chậm hoặc timeout. Script chỉ là MỘT pipeline
- * {@code Get-Process | Where-Object {...} | Select-Object -First N} — toàn bộ
- * cmdlet có sẵn, chạy ~0.3s.</p>
+ * <p><b>UIA FocusedElement (cải tiến 2026-09-28)</b>: phiên bản trước dùng
+ * {@code Get-Process | Select -First 1} — chỉ lấy tiến trình đầu tiên theo
+ * thứ tự quét, KHÔNG phải cửa sổ đang focus (người dùng chuyển sang Facebook
+ * nhưng hệ thống vẫn ghi YouTube cũ). UIA trả về đúng phần tử đang nhận bàn
+ * phím/chuột tại thời điểm probe: mở Facebook nhận Facebook, mở Zalo nhận
+ * Zalo, mở Word/Game nhận ngay — KHÔNG cần whitelist tên app. Nếu tên phần tử
+ * focus rỗng (control con không có title), đi ngược cây cha tối đa 6 cấp đến
+ * khi có tên. UIA chỉ {@code Add-Type -AssemblyName} (NẠP assembly có sẵn của
+ * .NET) — KHÔNG biên dịch C#, KHÔNG csc.exe.</p>
  *
- * <p><b>KHÔNG hardcode danh sách trình duyệt</b>: hệ thống tự nhận diện MỌI
- * ứng dụng người dùng đang có tương tác (Cốc Cốc browser.exe, Chrome, Edge,
- * Arc, game, VS Code...) — lọc loại chỉ dựa trên danh sách tiến trình NỀN hệ
- * thống (explorer/dwm/svchost...) và tiêu đề rác, mọi tiến trình còn lại đều
- * được lấy {@code ProcessName} + {@code MainWindowTitle} trả về.</p>
+ * <p><b>Encoding UTF-8</b>: script đặt
+ * {@code [Console]::OutputEncoding = [System.Text.Encoding]::UTF8} ngay đầu,
+ * phía Java đọc stdout bằng {@code InputStreamReader(..., UTF_8)} qua
+ * {@link #readAllUtf8} — tiêu đề tiếng Việt có dấu (ế/ệ/ơ...) giữ nguyên
+ * 100%, hết lỗi font '?/'.</p>
  *
- * <p><b>Hotfix giữ nguyên</b>: stdout/stderr tách RIÊNG (không
- * redirectErrorStream); {@code exitCode != 0} HOẶC stderr có nội dung →
- * fallback payload rỗng — chuỗi lỗi PowerShell TUYỆT ĐỐI không thành payload;
- * lỗi script → trả về rỗng (không bao giờ ném exception ra ngoài).</p>
+ * <p><b>Fallback an toàn</b>: UIA lỗi/app đặc thù → pipeline
+ * {@code Get-Process} First-1 (tiến trình có cửa sổ, loại nền hệ thống);
+ * cả hai thất bại → không xuất dòng nào → payload rỗng. Chuỗi lỗi PowerShell
+ * TUYỆT ĐỐI không thành payload (stdout/stderr tách riêng, exitCode≠0 hoặc
+ * stderr có nội dung → trả rỗng).</p>
  */
 public class WindowsActivityCollector implements ActivityCollector {
 
     private static final Logger log = LoggerFactory.getLogger(WindowsActivityCollector.class);
 
-    /** Timeout cho mỗi lần gọi PowerShell (giây) — 2s theo spec, lỗi → rỗng. */
+    /** Timeout cho mỗi lần gọi PowerShell (giây) — lỗi/treo → payload rỗng. */
     static final int POWERSHELL_TIMEOUT_SECONDS = 2;
 
     /**
-     * Script PowerShell SIÊU NHẸ (1 pipeline, không Add-Type/csc.exe):
-     * <ul>
-     *   <li>Chỉ lấy tiến trình CÓ cửa sổ giao diện thật
-     *       ({@code MainWindowHandle -ne 0}) + tiêu đề không rỗng;</li>
-     *   <li>Loại tiến trình nền hệ thống qua regex ProcessName
-     *       (explorer/dwm/svchost/conhost/taskhostw);</li>
-     *   <li>Dòng ĐẦU stdout = ứng dụng người dùng đang tương tác, sau đó là
-     *       các cửa sổ còn lại (tối đa {@link #MAX_WINDOWED_PROCESSES});</li>
-     *   <li>Mỗi dòng xuất {@code process|title}.</li>
-     * </ul>
-     * Không lấy được gì (màn hình khóa, không cửa sổ) → không xuất dòng nào
-     * → payload rỗng.
+     * Script PowerShell — 3 phần:
+     * <ol>
+     *   <li><b>UTF-8</b>: {@code [Console]::OutputEncoding = UTF8} — stdout
+     *       xuất tiếng Việt có dấu đúng chuẩn (Java đọc bằng UTF-8).</li>
+     *   <li><b>UIA Foreground thật</b>: {@code FocusedElement} → tên + PID
+     *       (tên rỗng → đi ngược cây cha ≤ 6 cấp) → xuất dòng duy nhất
+     *       {@code process|title} rồi {@code exit 0} (không chạy fallback).</li>
+     *   <li><b>Fallback Get-Process</b>: UIA lỗi/không xác định được → tiến
+     *       trình đầu tiên có cửa sổ thật + tiêu đề thật (loại explorer/dwm/
+     *       svchost/conhost/taskhostw), xuất {@code process|title}.</li>
+     * </ol>
+     * Không lấy được gì (màn hình khóa...) → không xuất dòng nào → payload rỗng.
      */
     static final String PS_SCRIPT =
-            "$h = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 "
+            "try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }\n"
+            + "try {\n"
+            + "  Add-Type -AssemblyName UIAutomationClient\n"
+            + "  $f = [System.Windows.Automation.AutomationElement]::FocusedElement\n"
+            + "  if ($f) {\n"
+            + "    $name = $f.Current.Name\n"
+            + "    $procId = $f.Current.ProcessId\n"
+            + "    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker\n"
+            + "    $node = $f\n"
+            + "    $depth = 0\n"
+            + "    while ([string]::IsNullOrEmpty($name) -and $depth -lt 6) {\n"
+            + "      $node = $walker.GetParent($node)\n"
+            + "      if ($null -eq $node) { break }\n"
+            + "      $name = $node.Current.Name\n"
+            + "      $procId = $node.Current.ProcessId\n"
+            + "      $depth++\n"
+            + "    }\n"
+            + "    $p = Get-Process -Id $procId -ErrorAction SilentlyContinue\n"
+            + "    if ($p -and -not [string]::IsNullOrEmpty($name)) {\n"
+            + "      Write-Output ($p.ProcessName + '|' + $name)\n"
+            + "      exit 0\n"
+            + "    }\n"
+            + "  }\n"
+            + "} catch { }\n"
+            + "$w = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 "
             + "-and $_.MainWindowTitle -ne '' "
             + "-and $_.ProcessName -notmatch '^(explorer|dwm|taskhostw|conhost|svchost)$' } "
-            + "| Select-Object -First 5; "
-            + "if ($h) { foreach ($item in $h) { "
-            + "Write-Output ($item.ProcessName + '|' + $item.MainWindowTitle) } }";
-
-    /** Số tiến trình có cửa sổ tối đa script trả về (dòng đầu = đang tương tác). */
-    static final int MAX_WINDOWED_PROCESSES = 5;
+            + "| Select-Object -First 1\n"
+            + "if ($w) { Write-Output ($w.ProcessName + '|' + $w.MainWindowTitle) }";
 
     /**
      * Tiến trình NỀN hệ thống Windows bị loại khỏi payload (không phải tương
-     * tác của người dùng) — so khớp THỨ 2 phía Java (script đã lọc trước).
+     * tác của người dùng) — so khớp lớp 2 phía Java (fallback script đã lọc
+     * trước một phần).
      */
     static final Set<String> SYSTEM_PROCESSES = Set.of(
             "explorer", "shellexperiencehost", "searchhost", "startmenuexperiencehost",
@@ -158,16 +184,8 @@ public class WindowsActivityCollector implements ActivityCollector {
     private static Thread pump(String name, java.io.InputStream stream,
                                StringBuilder sink, int maxLength) {
         Thread thread = new Thread(() -> {
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-                char[] buffer = new char[1024];
-                int read;
-                while ((read = reader.read(buffer)) >= 0) {
-                    sink.append(buffer, 0, read);
-                    if (sink.length() > maxLength) {
-                        break; // đủ dữ liệu — chặn pipe đầy
-                    }
-                }
+            try {
+                sink.append(readAllUtf8(stream, maxLength));
             } catch (IOException e) {
                 // Stream đóng đột ngột (timeout/destroy) — chấp nhận, defensive.
             }
@@ -175,6 +193,32 @@ public class WindowsActivityCollector implements ActivityCollector {
         thread.setDaemon(true);
         thread.start();
         return thread;
+    }
+
+    /**
+     * Đọc TOÀN BỘ stream với bảng mã <b>UTF-8 tường minh</b> — bắt buộc để
+     * tiếng Việt có dấu (tiêu đề cửa sổ trình duyệt/tiện ích) không vỡ font
+     * thành '?'. Phối hợp với {@code [Console]::OutputEncoding = UTF8} phía
+     * script: byte xuất ra chuẩn UTF-8, decode UTF-8 → giữ nguyên 100%.
+     *
+     * @param stream    stream cần đọc (stdout/stderr của process)
+     * @param maxLength cap ký tự tối đa (chống pipe đầy block vô hạn)
+     * @return nội dung UTF-8 đã decode (rỗng nếu stream rỗng)
+     */
+    static String readAllUtf8(java.io.InputStream stream, int maxLength) throws IOException {
+        StringBuilder sink = new StringBuilder(512);
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            char[] buffer = new char[1024];
+            int read;
+            while ((read = reader.read(buffer)) >= 0) {
+                sink.append(buffer, 0, read);
+                if (sink.length() > maxLength) {
+                    break; // đủ dữ liệu — chặn pipe đầy
+                }
+            }
+        }
+        return sink.toString();
     }
 
     /** Rút gọn stderr cho log (tránh phình log file). */
@@ -213,9 +257,10 @@ public class WindowsActivityCollector implements ActivityCollector {
     /**
      * Parse đầu ra PowerShell (dòng {@code process|title}):
      * <ul>
-     *   <li>Dòng ĐẦU TIÊN hợp lệ = <b>ứng dụng đang tương tác</b> (script chỉ
-     *       trả tiến trình có cửa sổ + tiêu đề thật, đã loại tiến trình nền
-     *       hệ thống) — KHÔNG đoán theo CPU, KHÔNG hardcode tên trình duyệt;</li>
+     *   <li>Dòng ĐẦU TIÊN hợp lệ = <b>Foreground UIA</b> (cửa sổ/tab người
+     *       dùng đang tương tác; UIA thành công script chỉ xuất ĐÚNG 1 dòng
+     *       rồi exit — fallback First-1 khi UIA trượt); KHÔNG đoán theo CPU,
+     *       KHÔNG hardcode tên trình duyệt;</li>
      *   <li>Áp Windowed App Filter phía Java (phòng thủ 2 lớp): bỏ tiến trình
      *       hệ thống + tiêu đề rác/rỗng;</li>
      *   <li>Mọi ứng dụng khác (trình duyệt/game/IDE bất kỳ) đều được nhận diện
@@ -248,8 +293,7 @@ public class WindowsActivityCollector implements ActivityCollector {
             // Chỉ có app hệ thống/không gì (màn hình khóa) → payload rỗng chuẩn
             return emptyPayload();
         }
-        // Active = dòng đầu hợp lệ (ứng dụng người dùng đang tương tác theo
-        // script); KHÔNG ưu tiên theo nhóm app — không hardcode tên trình duyệt.
+        // Active = dòng đầu hợp lệ (Foreground UIA / fallback First-1)
         UserApp active = validApps.get(0);
 
         List<String> topProcesses = validApps.stream()
