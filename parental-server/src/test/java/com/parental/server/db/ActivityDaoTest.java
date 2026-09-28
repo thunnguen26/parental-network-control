@@ -163,6 +163,25 @@ class ActivityDaoTest {
     }
 
     @Test
+    @DisplayName("getRecentActivitiesForDialog: nạp 100 bản ghi gần nhất cho dialog 'Xem toàn bộ'")
+    void recentForDialogLoadsHundredRecords() {
+        for (int i = 1; i <= 120; i++) {
+            activityDao.logActivity("client-01", "app.exe", "Hoạt động " + i);
+        }
+
+        List<ActivityDao.ActivityRecord> full =
+                activityDao.getRecentActivitiesForDialog("client-01", ActivityDao.FULL_VIEW_LIMIT);
+        assertEquals(ActivityDao.FULL_VIEW_LIMIT, full.size(),
+                "Dialog 'Xem toàn bộ' nhận đúng 100 bản ghi gần nhất");
+        assertEquals("Hoạt động 120", full.get(0).windowTitle(), "Mới nhất trước");
+
+        // limit tùy chỉnh + fallback FULL_VIEW_LIMIT khi truyền ≤ 0
+        assertEquals(5, activityDao.getRecentActivitiesForDialog("client-01", 5).size());
+        assertEquals(ActivityDao.FULL_VIEW_LIMIT,
+                activityDao.getRecentActivitiesForDialog("client-01", 0).size());
+    }
+
+    @Test
     @DisplayName("recorded_at ghi giờ LOCAL tường minh — đọc lại lệch < 5 phút (hết lỗi UTC ±7h)")
     void recordedAtIsLocalTimeNotUtc() {
         java.time.LocalDateTime before = java.time.LocalDateTime.now().minusSeconds(5);

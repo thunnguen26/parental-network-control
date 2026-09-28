@@ -13,46 +13,49 @@ import com.parental.common.protocol.payload.ActivityReportPayload;
 /**
  * Unit test {@link WindowsActivityCollector} (Activity Monitoring — Mục 3.9):
  * parse đầu ra PowerShell định dạng {@code process|title} (không spawn process
- * thật — headless an toàn), <b>User App Filter</b> (bỏ tiến trình hệ thống +
- * tiêu đề rác, ưu tiên app người dùng tương tác), defensive với output
- * rỗng/hỏng/chuỗi lỗi PowerShell, non-Windows → payload rỗng.
+ * thật — headless an toàn), <b>Windowed App Filter</b> (bỏ tiến trình hệ
+ * thống + tiêu đề rác; KHÔNG hardcode danh sách trình duyệt — mọi ứng dụng
+ * người dùng tự động được nhận diện), defensive với output rỗng/hỏng/chuỗi
+ * lỗi PowerShell, non-Windows → payload rỗng.
  */
 class WindowsActivityCollectorTest {
 
     private final WindowsActivityCollector collector = new WindowsActivityCollector(false);
 
     @Test
-    @DisplayName("parseOutput: format 'process|title' — app người dùng đầu tiên = active")
+    @DisplayName("parseOutput: format 'process|title' — dòng ĐẦU = ứng dụng đang tương tác (KHÔNG theo CPU)")
     void parsesPipeLines() {
-        String output = "chrome|Giải bài tập Hóa 12 | VietJack - Google Chrome\n"
-                + "notepad|Bài tập Toán - Notepad\n"
-                + "firefox|Trang chủ";
+        // browser.exe = Cốc Cốc — nhận diện TỰ ĐỘNG qua foreground/first-windowed,
+        // không phụ thuộc danh sách tên trình duyệt
+        String output = "browser|YouTube - Cốc Cốc\n"
+                + "code|Visual Studio Code\n"
+                + "notepad|Bài tập Toán - Notepad";
 
         ActivityReportPayload payload = collector.parseOutput(output);
 
-        assertEquals("chrome.exe", payload.activeProcessName());
-        assertEquals("Giải bài tập Hóa 12 | VietJack - Google Chrome", payload.activeWindowTitle());
-        assertEquals(java.util.List.of("chrome", "notepad", "firefox"), payload.topProcesses());
+        assertEquals("browser.exe", payload.activeProcessName(),
+                "Dòng đầu = ứng dụng đang tương tác — KHÔNG bị Code.exe CPU cao lấn át");
+        assertEquals("YouTube - Cốc Cốc", payload.activeWindowTitle());
+        assertEquals(java.util.List.of("browser", "code", "notepad"), payload.topProcesses());
         assertTrue(payload.timestamp() > 0, "timestamp epoch millis phải > 0");
     }
 
     @Test
-    @DisplayName("User App Filter: ƯU TIÊN app người dùng tương tác làm active (bỏ qua app khác đứng trước)")
-    void userAppPrioritizedAsActive() {
-        // Dòng đầu (CPU cao nhất) là app lạ — chrome đứng sau vẫn được ưu tiên
-        String output = "java|Apache Maven Wrapper\n"
-                + "chrome|YouTube - Google Chrome\n"
-                + "notepad|Ghi chú bài học";
+    @DisplayName("Mọi ứng dụng bất kỳ (game, app lạ) đều được nhận diện tự động — không whitelist")
+    void anyUserAppIsRecognized() {
+        // Game/app không có trong bất kỳ danh sách nào — vẫn làm active vì đứng đầu
+        String output = "somegame|Elden Ring\n"
+                + "code|Visual Studio Code";
 
         ActivityReportPayload payload = collector.parseOutput(output);
 
-        assertEquals("chrome.exe", payload.activeProcessName(),
-                "App nhóm người dùng tương tác (browser) phải được ưu tiên làm active");
-        assertEquals("YouTube - Google Chrome", payload.activeWindowTitle());
+        assertEquals("somegame.exe", payload.activeProcessName(),
+                "App lạ/game phải được nhận diện tự động — KHÔNG hardcode whitelist");
+        assertEquals("Elden Ring", payload.activeWindowTitle());
     }
 
     @Test
-    @DisplayName("User App Filter: tiến trình hệ thống (explorer/dwm/powershell...) bị LOẠI khỏi payload")
+    @DisplayName("Windowed App Filter: tiến trình hệ thống (explorer/dwm/powershell...) bị LOẠI khỏi payload")
     void systemProcessesAreFiltered() {
         String output = "explorer|Program Manager\n"
                 + "dwm|DWM Window\n"
@@ -67,7 +70,19 @@ class WindowsActivityCollectorTest {
     }
 
     @Test
-    @DisplayName("User App Filter: tiêu đề rác (≤ 2 ký tự, tên cửa sổ OS) bị loại")
+    @DisplayName("Windowed App Filter: ApplicationFrameHost (UWP host) bị loại — probe thực tế trả app nền")
+    void uwpHostProcessesAreFiltered() {
+        String output = "ApplicationFrameHost|Cài đặt\n"
+                + "browser|YouTube - Cốc Cốc";
+
+        ActivityReportPayload payload = collector.parseOutput(output);
+
+        assertEquals("browser.exe", payload.activeProcessName(),
+                "ApplicationFrameHost là host UWP nền — không phải tương tác của người dùng");
+    }
+
+    @Test
+    @DisplayName("Windowed App Filter: tiêu đề rác (≤ 2 ký tự, tên cửa sổ OS) bị loại")
     void meaninglessTitlesRejected() {
         String output = "someapp|ab\n"             // ≤ 2 ký tự
                 + "otherapp|Windows Security\n"    // cửa sổ hệ điều hành
@@ -143,19 +158,57 @@ class WindowsActivityCollectorTest {
     }
 
     @Test
-    @DisplayName("PS_SCRIPT: SIÊU NHẸ — không Add-Type (tránh compile C# + Defender), dùng dấu |, lọc cửa sổ thật")
-    void psScriptIsLightweight() {
+    @DisplayName("PS_SCRIPT: SIÊU NHẸ đúng spec — Get-Process | Where MainWindowHandle | Select -First 5")
+    void psScriptMatchesSpec() {
         String script = WindowsActivityCollector.PS_SCRIPT;
 
-        assertFalse(script.contains("Add-Type"),
-                "KHÔNG dùng Add-Type — compile C# mỗi 10s gây chậm/timeout/Defender giám sát");
+        assertTrue(script.contains("Get-Process"), "Dùng Get-Process cmdlet có sẵn");
         assertTrue(script.contains("MainWindowHandle -ne 0"),
-                "Chỉ tiến trình có cửa sổ thật");
+                "Chỉ tiến trình có cửa sổ giao diện thật");
         assertTrue(script.contains("MainWindowTitle -ne ''"),
-                "Chỉ ứng dụng CÓ tiêu đề cửa sổ thực (loại tiến trình nền)");
-        assertTrue(script.contains("Select-Object -First 5"), "Lấy tối đa 5 tiến trình");
+                "Tiêu đề không rỗng — bỏ cửa sổ nền desktop");
+        assertTrue(script.contains("Select-Object -First 5"),
+                "Chọn First 5 (dòng đầu = đang tương tác)");
+        assertTrue(script.contains(
+                        "-notmatch '^(explorer|dwm|taskhostw|conhost|svchost)$'"),
+                "Loại tiến trình nền hệ thống theo spec");
         assertTrue(script.contains("'|'"), "Phân tách dấu | theo spec");
-        assertFalse(script.contains("@\""), "KHÔNG dùng here-string dễ vỡ escape");
+    }
+
+    @Test
+    @DisplayName("PS_SCRIPT: KHÔNG Add-Type / C# / csc.exe — không trigger Antivirus quét compiler")
+    void psScriptHasNoAddTypeOrCSharp() {
+        String script = WindowsActivityCollector.PS_SCRIPT;
+
+        assertFalse(script.contains("Add-Type"), "KHÔNG dùng Add-Type (cả -MemberDefinition)");
+        assertFalse(script.contains("DllImport"), "KHÔNG có P/Invoke DllImport C#");
+        assertFalse(script.contains("user32"), "KHÔNG đụng user32.dll qua C# inline");
+        assertFalse(script.contains("@\"") && script.contains("\"@"),
+                "KHÔNG dùng here-string C# multi-line");
+        assertFalse(script.toLowerCase().contains("namespace"), "KHÔNG khai báo namespace C#");
+    }
+
+    @Test
+    @DisplayName("PS_SCRIPT: KHÔNG hardcode danh sách trình duyệt — nhận diện tự động mọi app")
+    void psScriptHasNoBrowserWhitelist() {
+        String script = WindowsActivityCollector.PS_SCRIPT;
+
+        // Không nhắc tên trình duyệt/app cụ thể trong script
+        for (String banned : new String[] {"chrome", "msedge", "coccoc", "firefox",
+                "brave", "opera", "browser", "arc"}) {
+            assertFalse(script.toLowerCase().contains(banned),
+                    "Script không được hardcode tên app: " + banned);
+        }
+        // Java filter cũng không ưu tiên theo nhóm app (không USER_APP_HINTS)
+        assertFalse(WindowsActivityCollector.SYSTEM_PROCESSES.contains("chrome"),
+                "SYSTEM_PROCESSES chỉ chứa tiến trình NỀN, không chứa app người dùng");
+    }
+
+    @Test
+    @DisplayName("Timeout PowerShell = 2s theo spec (lỗi → payload rỗng, không treo)")
+    void timeoutIsTwoSeconds() {
+        assertEquals(2, WindowsActivityCollector.POWERSHELL_TIMEOUT_SECONDS,
+                "Spec: timeout 2s, nếu lỗi fallback trả về rỗng");
     }
 
     @Test

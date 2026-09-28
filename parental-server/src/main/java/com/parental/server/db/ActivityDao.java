@@ -111,6 +111,21 @@ public class ActivityDao {
         }
     }
 
+    /**
+     * Số bản ghi tối đa hiển thị trong dialog "Xem toàn bộ" nhật ký hoạt động.
+     */
+    public static final int FULL_VIEW_LIMIT = 100;
+
+    /**
+     * Lấy nhiều bản ghi hơn cho dialog "Xem toàn bộ" (mặc định 100 gần nhất,
+     * mới nhất trước). Khác {@link #getRecentActivities(String, int)}: limit
+     * ≤ 0 → dùng {@link #FULL_VIEW_LIMIT} thay vì trả rỗng.
+     */
+    public List<ActivityRecord> getRecentActivitiesForDialog(String clientId, int limit) {
+        int effective = limit > 0 ? limit : FULL_VIEW_LIMIT;
+        return getRecentActivities(clientId, effective);
+    }
+
     /** Tổng số bản ghi hoạt động của client (test/thống kê). */
     public long countAll(String clientId) {
         String sql = "SELECT COUNT(*) FROM activity_logs WHERE client_id = ?";

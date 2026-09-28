@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
+import com.parental.client.activity.WindowsActivityCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

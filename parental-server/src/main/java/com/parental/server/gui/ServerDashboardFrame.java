@@ -635,9 +635,17 @@ public class ServerDashboardFrame extends JFrame {
         clearActivityButton.setToolTipText("Dọn sạch bản ghi nhật ký hoạt động của thiết bị đang chọn trong DB");
         clearActivityButton.addActionListener(event -> clearActivityHistory());
 
+        // --- Nút mở rộng: xem 100 bản ghi gần nhất trong dialog lớn (title full) ---
+        JButton expandButton = new JButton("⛶ Xem toàn bộ / Mở rộng");
+        expandButton.setToolTipText("Mở cửa sổ lớn hiển thị tối đa 200 bản ghi gần nhất — tiêu đề đầy đủ, có lọc tìm kiếm");
+        expandButton.addActionListener(event -> openExpandedActivityDialog());
+
         JPanel activityControlRow = new JPanel(new BorderLayout(8, 0));
         activityControlRow.add(filterPanel, BorderLayout.CENTER);
-        activityControlRow.add(clearActivityButton, BorderLayout.EAST);
+        JPanel eastButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        eastButtons.add(clearActivityButton);
+        eastButtons.add(expandButton);
+        activityControlRow.add(eastButtons, BorderLayout.EAST);
 
         // --- Cột phải xếp DỌC bằng BoxLayout (Y-AXIS) + strut chống co đè:
         // Hạn mức và Hoạt động người dùng không còn bị đè bẹp lên nhau. ---
@@ -1024,19 +1032,127 @@ public class ServerDashboardFrame extends JFrame {
         List<ActivityDao.ActivityRecord> records =
                 serverEngine.getActivityDao().getRecentActivities(clientId, ACTIVITY_LOG_LIMIT);
         activityTableModel.setRowCount(0);
-        // recorded_at giờ ghi bằng giờ LOCAL tường minh (ActivityDao) — format
-        // theo múi giờ hệ thống máy phụ huynh, KHÔNG còn lệch so với Event Log.
-        java.time.format.DateTimeFormatter timeFormat =
-                java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd/MM/yyyy")
-                        .withZone(java.time.ZoneId.systemDefault());
+        // recorded_at ghi bằng giờ LOCAL tường minh (ActivityDao) — format qua
+        // test hook dùng chung (pure function, test headless được).
         for (ActivityDao.ActivityRecord record : records) {
-            activityTableModel.addRow(new Object[] {
-                    record.recordedAt() != null ? timeFormat.format(record.recordedAt()) : "—",
-                    orDash(record.processName()),
-                    orDash(record.windowTitle())
-            });
+            activityTableModel.addRow(ServerDashboardFrameTestHook.buildActivityTableRow(record));
         }
         activityTable.repaint();
+    }
+
+    /**
+     * Mở dialog "⛶ Xem toàn bộ / Mở rộng" — tối đa 200 bản ghi hoạt động gần
+     * nhất: bảng lớn 1000x650 resizable canh giữa, cột Tiêu đề hiển thị ĐẦY
+     * ĐỦ (không cắt, scroll ngang/dọc thoải mái), ô lọc thời gian thực riêng,
+     * nút 🔄 Làm mới + Đóng.
+     */
+    private void openExpandedActivityDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("⚠ Chưa chọn thiết bị nào để xem nhật ký");
+            return;
+        }
+        ActivityDao activityDao = serverEngine.getActivityDao();
+        if (activityDao == null) {
+            appendEventLog("⚠ Server đang chạy không database — không có nhật ký hoạt động");
+            return;
+        }
+        String clientId = selected.clientId();
+        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+
+        JDialog dialog = new JDialog(this, "Nhật ký hoạt động đầy đủ — " + deviceDisplay, true);
+        dialog.setSize(1000, 650);
+        dialog.setResizable(true);
+        dialog.setLocationRelativeTo(this);
+        dialog.setLayout(new BorderLayout(8, 8));
+
+        // --- Mô hình bảng riêng: title HIỂN THỊ ĐẦY ĐỦ (không cắt) ---
+        javax.swing.table.DefaultTableModel fullModel = new javax.swing.table.DefaultTableModel(
+                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        JTable fullTable = new JTable(fullModel);
+        fullTable.getColumnModel().getColumn(0).setPreferredWidth(140);
+        fullTable.getColumnModel().getColumn(1).setPreferredWidth(120);
+        fullTable.getColumnModel().getColumn(2).setPreferredWidth(680);
+        // AUTO_RESIZE_OFF → cột title giữ nguyên độ rộng, tràn thì scroll ngang
+        fullTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        javax.swing.table.TableRowSorter<javax.swing.table.TableModel> fullSorter =
+                new javax.swing.table.TableRowSorter<>(fullModel);
+        fullTable.setRowSorter(fullSorter);
+        JScrollPane fullScroll = new JScrollPane(fullTable);
+        fullScroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        fullScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+
+        Runnable reloadFullTable = () -> {
+            List<ActivityDao.ActivityRecord> records = activityDao
+                    .getRecentActivitiesForDialog(clientId,
+                            ServerDashboardFrameTestHook.DIALOG_ROW_LIMIT);
+            fullModel.setRowCount(0);
+            for (ActivityDao.ActivityRecord record : records) {
+                // KHÔNG truncate — cột Tiêu đề cửa sổ giữ nguyên vẹn
+                fullModel.addRow(ServerDashboardFrameTestHook.buildActivityTableRow(record));
+            }
+        };
+        reloadFullTable.run();
+
+        // --- Ô lọc thời gian thực (dùng chung logic buildActivityRowFilter) ---
+        JTextField fullFilterField = new JTextField();
+        fullFilterField.setToolTipText("Ví dụ: chrome, browser (Cốc Cốc), youtube — lọc theo tiến trình hoặc tiêu đề");
+        fullFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                applyFullDialogFilter(fullFilterField, fullSorter);
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                applyFullDialogFilter(fullFilterField, fullSorter);
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                applyFullDialogFilter(fullFilterField, fullSorter);
+            }
+        });
+
+        JButton refreshButton = new JButton("🔄 Làm mới");
+        refreshButton.addActionListener(event -> reloadFullTable.run());
+        JButton closeButton = new JButton("Đóng");
+        closeButton.addActionListener(event -> dialog.dispose());
+
+        JPanel controlRow = new JPanel(new BorderLayout(8, 0));
+        controlRow.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+        controlRow.add(new JLabel("🔍 Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
+        controlRow.add(fullFilterField, BorderLayout.CENTER);
+        JPanel dialogButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        dialogButtons.add(refreshButton);
+        dialogButtons.add(closeButton);
+        controlRow.add(dialogButtons, BorderLayout.EAST);
+
+        JPanel content = new JPanel(new BorderLayout(8, 8));
+        content.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+        content.add(controlRow, BorderLayout.NORTH);
+        content.add(fullScroll, BorderLayout.CENTER);
+        dialog.setContentPane(content);
+        dialog.setVisible(true); // modal — đóng bằng nút Đóng hoặc Esc qua X
+    }
+
+    /** Áp filter cho bảng dialog mở rộng (dùng chung logic test hook). */
+    private static void applyFullDialogFilter(JTextField filterField,
+            javax.swing.table.TableRowSorter<? extends javax.swing.table.TableModel> sorter) {
+        sorter.setRowFilter(ServerDashboardFrameTestHook
+                .buildActivityRowFilter(filterField.getText()).orElse(null));
+    }
+
+    /** null/rỗng → "—" (dòng "—" trên UI thay cho dữ liệu thiếu). */
+    private static String orDash(String text) {
+        return text == null || text.isBlank() ? "—" : text;
     }
 
     /** Xóa trắng bảng nhật ký + bỏ bộ lọc (khi không chọn thiết bị). */
@@ -1045,10 +1161,6 @@ public class ServerDashboardFrame extends JFrame {
         if (activityFilterField != null && !activityFilterField.getText().isEmpty()) {
             activityFilterField.setText(""); // reset DocumentListener → setRowFilter(null)
         }
-    }
-
-    private static String orDash(String text) {
-        return text == null || text.isBlank() ? "—" : text;
     }
 
     /** Ghi 1 dòng sự kiện vào console log kèm timestamp (đã trên EDT). */
