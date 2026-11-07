@@ -178,8 +178,8 @@ class ServerDatabaseIntegrationTest {
         awaitCondition("2 bản ghi metrics vào DB", Duration.ofSeconds(10), () ->
                 engine.getMetricsDao().countAll("db-client-02") >= 2);
 
-        assertEquals(4_500, engine.getMetricsDao().getTodayTrafficBytes("db-client-02"),
-                "Tổng hôm nay = (1000+500) + (2000+1000)");
+        assertEquals(3_000, engine.getMetricsDao().getTodayTrafficBytes("db-client-02"),
+                "Tổng hôm nay = baseline (1000+500) + delta (1000+500)");
         assertEquals(2, engine.getMetricsDao().countToday("db-client-02"));
     }
 

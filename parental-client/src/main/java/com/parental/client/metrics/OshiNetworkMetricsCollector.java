@@ -43,6 +43,7 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
 
     private final HardwareAbstractionLayer hal;
     private final long sessionStartNanos;
+    private final long sessionStartTimestamp;
     private final Object lock = new Object();
 
     // Trạng thái delta giữa 2 lần đo (được bảo vệ bởi lock)
@@ -70,6 +71,7 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
     OshiNetworkMetricsCollector(HardwareAbstractionLayer hal) {
         this.hal = hal;
         this.sessionStartNanos = System.nanoTime();
+        this.sessionStartTimestamp = System.currentTimeMillis() / 1000;
     }
 
     /** Task 3.3: trạng thái mạng cho lần collect() kế tiếp ("ACTIVE"/"PAUSED"). */
@@ -113,7 +115,8 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
             previousRecvBytes = currentRecvBytes;
             previousSentBytes = currentSentBytes;
             previousTimestampNanos = nowNanos;
-            lastMetrics = new MetricsPayload(0, 0, 0, 0, sessionDurationSeconds, networkStatus);
+            lastMetrics = new MetricsPayload(0, 0, 0, 0, sessionDurationSeconds,
+                    networkStatus, sessionStartTimestamp);
             return lastMetrics;
         }
 
@@ -139,7 +142,8 @@ public class OshiNetworkMetricsCollector implements NetworkMetricsCollector {
                 downloadSpeedBps,
                 uploadSpeedBps,
                 sessionDurationSeconds,
-                networkStatus);
+                networkStatus,
+                sessionStartTimestamp);
         return lastMetrics;
     }
 

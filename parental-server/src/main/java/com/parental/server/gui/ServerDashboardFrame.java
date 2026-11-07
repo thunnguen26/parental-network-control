@@ -47,6 +47,8 @@ import org.slf4j.LoggerFactory;
 
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.UnpairPayload;
+import com.parental.common.protocol.payload.StreamControlPayload;
+import com.parental.common.protocol.MessageType;
 import com.parental.server.db.ActivityDao;
 import com.parental.server.db.BlockedDomainDao;
 import com.parental.server.db.ClientDao;
@@ -57,6 +59,7 @@ import com.parental.server.db.RuleDao.RuleRecord;
 import com.parental.server.network.ClientConnectionListener;
 import com.parental.server.network.ClientSession;
 import com.parental.server.network.ClientSessionManager;
+import com.parental.server.gui.RemoteScreenDialog;
 import com.parental.server.network.DisconnectReason;
 import com.parental.server.network.TcpServerEngine;
 import com.parental.server.rules.RuleEvaluationEngine;
@@ -153,6 +156,9 @@ public class ServerDashboardFrame extends JFrame {
     private JButton deleteDeviceButton;
     private JButton renameButton;
 
+    // --- Xem màn hình remote (Mục 3.10) ---
+    private JButton remoteScreenButton;
+
     private Timer uiRefresher;
 
     /** Dựng dashboard gắn với engine đang chạy (các thành phần không null). */
@@ -234,10 +240,14 @@ public class ServerDashboardFrame extends JFrame {
         JButton policyButton = new JButton("Cấu hình chính sách...");
         policyButton.addActionListener(event -> openPolicyDialog());
 
-        JPanel buttonPanel = new JPanel(new GridLayout(3, 1, 0, 4));
+        JButton remoteScreenButton = new JButton("Xem màn hình");
+        remoteScreenButton.addActionListener(event -> openRemoteScreenDialog());
+
+        JPanel buttonPanel = new JPanel(new GridLayout(4, 1, 0, 4));
         buttonPanel.add(addDeviceButton);
         buttonPanel.add(deleteDeviceButton);
         buttonPanel.add(policyButton);
+        buttonPanel.add(remoteScreenButton);
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(scrollPane, BorderLayout.CENTER);
@@ -382,6 +392,25 @@ public class ServerDashboardFrame extends JFrame {
             refreshNow();
         });
         dialog.open();
+    }
+
+    /**
+     * Mở dialog xem màn hình remote (Mục 3.10). Chỉ khả dụng khi có thiết bị
+     * đang chọn và đang ONLINE; client online sẽ nhận {@code STREAM_CONTROL}
+     * START/STOP và trả về {@code STREAM_FRAME}.
+     */
+    private void openRemoteScreenDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để xem màn hình");
+            return;
+        }
+        if (!"ONLINE".equals(selected.status())) {
+            appendEventLog("[!] Thiết bị đang chọn không trực tuyến — không thể xem màn hình");
+            return;
+        }
+        new RemoteScreenDialog(this, selected.clientId(), serverEngine.getClientSessionManager(),
+                () -> refreshNow());
     }
 
     /**

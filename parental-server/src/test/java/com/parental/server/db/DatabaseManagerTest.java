@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -18,18 +19,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Unit test cho {@link DatabaseManager} (Task 4.1): schema 5 bảng tạo tự
+ * Unit test cho {@link DatabaseManager} (Task 4.1): schema bảng tạo tự
  * động, migration idempotent, FK enforcement hoạt động, WAL pragma cho file
  * DB. Toàn bộ chạy trên :memory: hoặc temp file — không đụng DB thật.
  */
 class DatabaseManagerTest {
 
     private static final String[] TABLES = {
-            "clients", "metrics_logs", "client_rules", "blocked_domains", "command_logs"
+            "clients", "metrics_logs", "metrics_daily_usage", "metrics_client_state",
+            "schema_migrations", "client_rules", "blocked_domains", "command_logs"
     };
 
     @Test
-    @DisplayName("In-memory DB riêng cho từng instance: tạo đủ 5 bảng, không nhiễm chéo giữa 2 manager")
+    @DisplayName("In-memory DB riêng cho từng instance: tạo bảng và migration metrics")
     void memoryDbCreatesAllTables() throws Exception {
         DatabaseManager database = new DatabaseManager();
         assertTrue(database.getJdbcUrl().contains("mode=memory&cache=shared"),
@@ -42,6 +44,7 @@ class DatabaseManagerTest {
             while (rs.next()) {
                 tables.add(rs.getString("name"));
             }
+
             for (String table : TABLES) {
                 assertTrue(tables.contains(table), "Thiếu bảng: " + table);
             }
@@ -55,6 +58,41 @@ class DatabaseManagerTest {
             assertTrue(rs.next());
             assertEquals(0, rs.getLong(1), "Manager khác phải là DB rỗng hoàn toàn");
         }
+    }
+
+    @Test
+    @DisplayName("Upgrade migrates existing cumulative metric snapshots to daily deltas once")
+    void legacyMetricsAreBackfilledWithoutDoubleCounting(@TempDir Path tempDir) throws Exception {
+        Path dbFile = tempDir.resolve("legacy-metrics.db");
+        String jdbcUrl = "jdbc:sqlite:" + dbFile.toAbsolutePath().normalize();
+        String today = java.time.LocalDate.now().toString();
+        try (Connection connection = DriverManager.getConnection(jdbcUrl);
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE clients (client_id VARCHAR PRIMARY KEY)");
+            statement.execute("""
+                    CREATE TABLE metrics_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        client_id VARCHAR NOT NULL,
+                        download_bytes INTEGER NOT NULL DEFAULT 0,
+                        upload_bytes INTEGER NOT NULL DEFAULT 0,
+                        download_speed_bps INTEGER NOT NULL DEFAULT 0,
+                        upload_speed_bps INTEGER NOT NULL DEFAULT 0,
+                        session_duration_seconds INTEGER NOT NULL DEFAULT 0,
+                        network_status VARCHAR NOT NULL DEFAULT 'ACTIVE',
+                        recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            statement.execute("INSERT INTO clients(client_id) VALUES ('legacy-client')");
+            statement.execute("INSERT INTO metrics_logs(client_id, download_bytes, upload_bytes, "
+                    + "session_duration_seconds, recorded_at) VALUES "
+                    + "('legacy-client', 100, 50, 60, '" + today + " 10:00:00'), "
+                    + "('legacy-client', 200, 90, 120, '" + today + " 10:00:05')");
+        }
+
+        DatabaseManager database = new DatabaseManager(dbFile);
+        MetricsDao metricsDao = new MetricsDao(database);
+        assertEquals(290, metricsDao.getTodayTrafficBytes("legacy-client"));
+        assertEquals(120, metricsDao.getTodayUsageSeconds("legacy-client"));
     }
 
     @Test

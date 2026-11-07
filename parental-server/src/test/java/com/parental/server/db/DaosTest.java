@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -292,7 +294,7 @@ class DaosTest {
     }
 
     @Test
-    @DisplayName("MetricsDao: getTodayTrafficBytes = tổng download + upload trong hôm nay")
+    @DisplayName("MetricsDao: traffic quota cộng chênh lệch snapshot, không cộng lặp counter tích lũy")
     void todayTrafficSumsDownloadsAndUploads() {
         clientDao.upsertClient(new ClientRecord(
                 "client-01", "PC", "DESKTOP", "Windows 11", "127.0.0.1", "AA", "ONLINE"));
@@ -300,8 +302,47 @@ class DaosTest {
         metricsDao.insert("client-01", new MetricsPayload(1_000, 500, 0, 0, 1, "ACTIVE"));
         metricsDao.insert("client-01", new MetricsPayload(2_000, 1_000, 0, 0, 2, "ACTIVE"));
 
-        assertEquals(4_500, metricsDao.getTodayTrafficBytes("client-01"),
-                "Tổng hôm nay = (1000+500) + (2000+1000) = 4500");
+        assertEquals(3_000, metricsDao.getTodayTrafficBytes("client-01"),
+                "Tổng hôm nay = baseline (1000+500) + delta (1000+500), không phải tổng snapshot");
+    }
+
+    @Test
+    @DisplayName("MetricsDao: cumulative counters reset khi client restart vẫn cộng phần phiên mới")
+    void trafficAndUsageCountersResetOnClientRestart() {
+        clientDao.upsertClient(new ClientRecord(
+                "client-01", "PC", "DESKTOP", "Windows 11", "127.0.0.1", "AA", "ONLINE"));
+        ZoneId zone = ZoneId.systemDefault();
+        Instant firstReport = LocalDate.now(zone).atTime(10, 0).atZone(zone).toInstant();
+        long firstSessionStart = firstReport.minusSeconds(3_600).getEpochSecond();
+
+        assertTrue(metricsDao.insert("client-01",
+                new MetricsPayload(100, 40, 0, 0, 3_600, "ACTIVE", firstSessionStart),
+                firstReport) > 0);
+        assertTrue(metricsDao.insert("client-01",
+                new MetricsPayload(250, 90, 0, 0, 7_200, "ACTIVE", firstSessionStart),
+                firstReport.plusSeconds(3_600)) > 0);
+
+        long restartedSessionStart = firstReport.plusSeconds(7_200).getEpochSecond();
+        assertTrue(metricsDao.insert("client-01",
+                new MetricsPayload(50, 20, 0, 0, 1_800, "ACTIVE", restartedSessionStart),
+                firstReport.plusSeconds(9_000)) > 0);
+
+        assertEquals(410, metricsDao.getTodayTrafficBytes("client-01"));
+        assertEquals(9_000, metricsDao.getTodayUsageSeconds("client-01"));
+    }
+
+    @Test
+    @DisplayName("MetricsDao: phiên sử dụng qua nửa đêm được chia vào đúng ngày địa phương")
+    void usageIsSplitAcrossLocalMidnight() {
+        ZoneId zone = ZoneId.of("UTC");
+        Instant midnight = LocalDate.of(2026, 11, 3).atStartOfDay(zone).toInstant();
+
+        var usageByDate = MetricsDao.usageByLocalDate(
+                midnight.minusSeconds(60).getEpochSecond(), 0, 120, 120,
+                midnight.plusSeconds(60), zone);
+
+        assertEquals(60, usageByDate.get(LocalDate.of(2026, 11, 2)));
+        assertEquals(60, usageByDate.get(LocalDate.of(2026, 11, 3)));
     }
 
     @Test

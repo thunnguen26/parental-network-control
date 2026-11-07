@@ -1,6 +1,7 @@
 # Compiled class files & build directories
 target/
 **/target/
+out/
 *.class
 
 # IDE files
@@ -13,7 +14,19 @@ target/
 # Logs & DB
 *.log
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
+
+# Temporary / tool-generated files
+*.freebuff
+.freebuff/
+
+# Keep internal project notes and report out of the public repository
+/docs/BAO_CAO_DO_AN.md
+/docs/PROJECT_STATE.md
+/docs/PROTOCOL.md
+/docs/ROADMAP.md
 
 # Client persistent identity (chứa deviceToken — không commit máy khác)
 client_identity.json

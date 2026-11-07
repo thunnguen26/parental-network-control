@@ -5,10 +5,9 @@ import java.nio.file.Path;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
+import com.parental.client.activity.ActivityCollector;
+import com.parental.client.activity.LinuxActivityCollector;
 import com.parental.client.activity.WindowsActivityCollector;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.parental.client.config.ClientConfig;
 import com.parental.client.device.DefaultDeviceInfoCollector;
 import com.parental.client.device.DeviceInfoCollector;
@@ -19,10 +18,15 @@ import com.parental.client.enforcement.WindowsNetshEnforcer;
 import com.parental.client.identity.ClientIdentityManager;
 import com.parental.client.identity.ClientIdentityManager.ClientIdentity;
 import com.parental.client.identity.ClientPairingFrame;
+import com.parental.client.metrics.NetworkMetricsCollector;
 import com.parental.client.metrics.OshiNetworkMetricsCollector;
+import com.parental.client.metrics.ProcNetMetricsCollector;
 import com.parental.client.network.ServerCommandHandler;
 import com.parental.client.network.TcpClientEngine;
 import com.parental.common.protocol.JsonProtocolParser;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Luồng khởi động Client (Client Identity Persistence + Zero-Config Setup):
@@ -48,6 +52,16 @@ public class ClientApp {
     /** Exit code khi chạy headless mà thiết bị chưa ghép đôi. */
     static final int EXIT_NOT_PAIRED_HEADLESS = 2;
 
+    /**
+     * Có đang chạy trên Linux không (theo {@code os.name}) — quyết định chọn
+     * collector metrics/activity bản Linux ({@code /proc/net/dev} + xdotool)
+     * hay bản Windows (OSHI + PowerShell UIA).
+     */
+    static boolean isLinux() {
+        String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        return osName.contains("linux");
+    }
+
     public static void main(String[] args) {
         log.info("Starting Parental Control Client Agent...");
 
@@ -62,12 +76,23 @@ public class ClientApp {
         log.info("Persistent identity: clientId={} (paired={})",
                 identity.clientId(), identity.deviceToken() != null);
 
+        // ƯU TIÊN NGUỒN serverHost/serverPort:
+        //   1. Args dòng lệnh: java -jar client.jar [serverHost] [serverPort]
+        //   2. serverHost/serverPort GHI NHỚ trong client_identity.json — chính là
+        //      IP người dùng đã nhập trên màn hình ghép đôi (ClientPairingFrame).
+        //   3. Mặc định 127.0.0.1:8888 (chạy cùng máy với server).
         String host = argHost != null ? argHost
-                : identity.serverHost() != null ? identity.serverHost()
-                : "127.0.0.1";
+                : identity.serverHost() != null && !identity.serverHost().isBlank()
+                ? identity.serverHost()
+                : ClientConfig.DEFAULT_SERVER_HOST;
         int port = argPort > 0 ? argPort
                 : identity.serverPort() > 0 ? identity.serverPort()
-                : 8888;
+                : ClientConfig.DEFAULT_SERVER_PORT;
+        log.info("Server address resolved: host={} port={} (source: {})", host, port,
+                argHost != null ? "command-line args"
+                : identity.serverHost() != null && !identity.serverHost().isBlank()
+                        ? "client_identity.json (saved from pairing UI)"
+                        : "default (" + ClientConfig.DEFAULT_SERVER_HOST + ")");
 
         if (identity.deviceToken() == null) {
             // Chưa ghép đôi → giao diện ghép đôi (GUI) hoặc thoát có hướng dẫn (headless).
@@ -102,7 +127,7 @@ public class ClientApp {
         processBlocker.startRescanScheduler();
 
         TcpClientEngine clientEngine = buildEngine(config, identityManager, () ->
-                SwingUtilities.invokeLater(() -> showPairingUiAfterUnpair(identityManager, host, port)),
+                SwingUtilities.invokeLater(() -> showPairingUiAfterUnpair(identityManager)),
                 processBlocker);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -121,22 +146,30 @@ public class ClientApp {
     /**
      * Bị server thu hồi ghép đôi (UNPAIR) — hiện lại màn hình ghép đôi lần
      * đầu (người dùng nhập lại IP + PIN mới từ phụ huynh). Gọi trên EDT.
+     *
+     * <p>Host/port hiển thị sẵn và khởi động engine sau ghép đôi ĐỌC LẠI từ
+     * {@code client_identity.json} — người dùng có thể nhập IP khác lần này;
+     * KHÔNG còn dùng closure host/port cũ (nguồn lỗi kết nối 127.0.0.1).</p>
      */
-    private static void showPairingUiAfterUnpair(ClientIdentityManager identityManager,
-                                                 String host, int port) {
+    private static void showPairingUiAfterUnpair(ClientIdentityManager identityManager) {
         log.warn("Device was unpaired by server — showing pairing UI again");
         DeviceInfoCollector collector = new DefaultDeviceInfoCollector();
-        ClientIdentity fresh = identityManager.loadOrCreate();
+        identityManager.loadOrCreate();
+        ClientIdentity saved = identityManager.load();
+        String defaultHost = resolveHost(saved);
+        int defaultPort = resolvePort(saved);
         ClientPairingFrame frame = new ClientPairingFrame(
-                identityManager, collector, host,
+                identityManager, collector, defaultHost,
                 () -> {
                     // Được gọi trên thread nền sau khi token mới đã lưu (hotfix EDT).
+                    // Host/port đọc LẠI identity — dùng đúng IP người dùng vừa nhập.
                     ClientIdentity paired = identityManager.load();
                     if (paired == null || paired.deviceToken() == null) {
                         log.error("Re-paired but token missing — exiting");
                         System.exit(1);
                     }
-                    startBackgroundEngine(identityManager, paired, host, port);
+                    startBackgroundEngine(identityManager, paired,
+                            resolveHost(paired), resolvePort(paired));
                 });
         frame.setVisible(true);
     }
@@ -161,12 +194,16 @@ public class ClientApp {
                         // hàm này kết thúc bằng keepMainThreadAlive() (park vô hạn) và
                         // nếu chạy trên EDT sẽ block toàn bộ UI vĩnh viễn.
                         log.info("Pairing completed — switching to background engine");
+                        // Host/port PHẢI đọc lại identity: handlePairingResult vừa lưu
+                        // IP/port người dùng nhập trên ClientPairingFrame — nếu dùng
+                        // closure cũ (pre-fill 127.0.0.1) engine sẽ kết nối SAI server.
                         ClientIdentity paired = identityManager.load();
                         if (paired == null || paired.deviceToken() == null) {
                             log.error("Paired but token missing from identity file — aborting");
                             System.exit(1);
                         }
-                        startBackgroundEngine(identityManager, paired, host, port);
+                        startBackgroundEngine(identityManager, paired,
+                                resolveHost(paired), resolvePort(paired));
                     });
             frame.setVisible(true);
         });
@@ -188,7 +225,15 @@ public class ClientApp {
                                                com.parental.client.enforcement.ProcessBlockerManager processBlocker) {
         WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer();
         SystemTrayAlertNotifier notifier = new SystemTrayAlertNotifier();
-        OshiNetworkMetricsCollector metricsCollector = new OshiNetworkMetricsCollector();
+        // Chọn collector THEO HỆ ĐIỀU HÀNH (Linux chạy được cả khi OSHI JNI lỗi):
+        //   - Linux   → /proc/net/dev (bỏ lo, delta mỗi chu kỳ) + xdotool/fallback ps.
+        //   - Windows → OSHI NIC counters + PowerShell UIA (hành vi cũ giữ nguyên).
+        NetworkMetricsCollector metricsCollector = isLinux()
+                ? new ProcNetMetricsCollector()
+                : new OshiNetworkMetricsCollector();
+        ActivityCollector activityCollector = isLinux()
+                ? new LinuxActivityCollector()
+                : new WindowsActivityCollector();
         // Vô hiệu hóa DoH/QUIC của trình duyệt — hosts enforcement có hiệu lực thật:
         // mỗi lần áp/clear danh sách chặn, khóa/mở đường lách (DoH registry + QUIC UDP 443)
         // rồi flush DNS/NetBIOS cache để kết nối MỚI giải mã lại qua hosts.
@@ -220,7 +265,7 @@ public class ClientApp {
                 actionDispatcher,
                 identityManager,
                 unpairListener,
-                new com.parental.client.activity.WindowsActivityCollector(), // Activity Monitoring
+                activityCollector, // Linux: xdotool/ps — Windows: PowerShell UIA (Mục 3.9)
                 processBlocker // Mở rộng 11: đồng bộ blockedProcesses qua CONFIG_SYNC
         );
     }
@@ -241,6 +286,23 @@ public class ClientApp {
             log.warn("Invalid port argument '{}', falling back to saved/default port", raw);
             return -1;
         }
+    }
+
+    /** Host kết nối: giá trị đã lưu (IP nhập lúc ghép đôi) → mặc định 127.0.0.1. */
+    static String resolveHost(ClientIdentity identity) {
+        if (identity != null && identity.serverHost() != null
+                && !identity.serverHost().isBlank()) {
+            return identity.serverHost();
+        }
+        return ClientConfig.DEFAULT_SERVER_HOST;
+    }
+
+    /** Port kết nối: giá trị đã lưu (> 0) → mặc định 8888. */
+    static int resolvePort(ClientIdentity identity) {
+        if (identity != null && identity.serverPort() > 0) {
+            return identity.serverPort();
+        }
+        return ClientConfig.DEFAULT_SERVER_PORT;
     }
 
     /** Giữ luồng main không thoát (engine/Swing chạy thread riêng). */

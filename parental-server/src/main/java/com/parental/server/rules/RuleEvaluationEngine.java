@@ -249,10 +249,16 @@ public class RuleEvaluationEngine {
         return null;
     }
 
-    /** Giây đã dùng trong ngày: tổng tích lũy từ metrics gần nhất client tự báo. */
+    /** Giây đã dùng trong ngày, tích lũy từ chênh lệch metrics phía server. */
     private long getUsedSeconds(ClientSession session) {
         MetricsPayload metrics = session.getLastMetrics();
-        return metrics != null ? metrics.sessionDurationSeconds() : 0L;
+        if (metrics == null) {
+            return 0L;
+        }
+        if (metrics.sessionStartTimestamp() > 0) {
+            return metricsDao.getTodayUsageSeconds(session.getClientId());
+        }
+        return metrics.sessionDurationSeconds();
     }
 
     // ------------------------------------------------------------------

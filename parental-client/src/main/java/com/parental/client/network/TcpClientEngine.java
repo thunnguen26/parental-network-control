@@ -28,6 +28,7 @@ import com.parental.client.config.ClientConfig;
 import com.parental.client.enforcement.ActionDispatcher;
 import com.parental.client.enforcement.HostsFileManager;
 import com.parental.client.device.DeviceInfoCollector;
+import com.parental.client.screen.ScreenCaptureService;
 import com.parental.client.identity.ClientIdentityManager;
 import com.parental.client.metrics.NetworkMetricsCollector;
 import com.parental.client.metrics.OshiNetworkMetricsCollector;
@@ -39,7 +40,11 @@ import com.parental.common.protocol.payload.ActivityReportPayload;
 import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
+import com.parental.common.protocol.payload.ScreenFramePayload;
+import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.ScreenFramePayload;
+import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.common.protocol.payload.UnpairPayload;
 
 /**
@@ -126,6 +131,16 @@ public class TcpClientEngine implements AutoCloseable {
     private final AtomicLong lastHeartbeatSentMs = new AtomicLong(0);
     /** Số lần watchdog phát hiện server im lặng và chủ động đóng kết nối. */
     private final AtomicLong watchdogTimeoutCount = new AtomicLong(0);
+
+    /**
+     * Service chụp và nén màn hình remote (Live Screen Streaming — Mục 3.10).
+     * Nullable: null = không có khả năng stream (môi trường không hỗ trợ Robot).
+     */
+    private final ScreenCaptureService screenCaptureService;
+
+    /** Scheduler riêng gửi STREAM_FRAME định kỳ khi stream đang hoạt động. */
+    private volatile ScheduledExecutorService screenCaptureScheduler;
+    private volatile ScheduledFuture<?> screenCaptureTask;
 
     private volatile Socket socket;
     private volatile Writer writer;
@@ -227,6 +242,7 @@ public class TcpClientEngine implements AutoCloseable {
         this.unpairListener = unpairListener;     // nullable — null = không callback UNPAIR
         this.activityCollector = activityCollector; // nullable — null = tắt ACTIVITY_REPORT
         this.processBlockerManager = processBlockerManager; // nullable — null = không sync qua CONFIG_SYNC
+        this.screenCaptureService = null;         // stream tắt theo mặc định khi chưa có lệnh từ server
     }
 
     // ------------------------------------------------------------------
@@ -303,6 +319,7 @@ public class TcpClientEngine implements AutoCloseable {
 
         unregisterShutdownHook();
         shutdownHeartbeatScheduler();
+        stopScreenCaptureScheduler();
         shutdownMetricsScheduler();
         shutdownActivityScheduler();
         // Đóng socket ĐẦU TIÊN để đánh thức readLine() đang block trên Windows.
@@ -396,32 +413,48 @@ public class TcpClientEngine implements AutoCloseable {
         while (running.get()) {
             try {
                 openConnection();
-                if (!running.get()) {
-                    break;
-                }
-                if (performHandshake()) {
-                    // Kết nối + handshake thành công → reset backoff, bật heartbeat, đọc lệnh.
-                    onConnectionEstablished();
-                    delay = config.getInitialReconnectDelayMs();
-                    startHeartbeatScheduler();
-                    spawnAndAwaitReader();
-                    if (running.get()) {
-                        log.warn("Connection lost (clientId={}), scheduling reconnect", config.getClientId());
-                    }
-                } else {
-                    log.warn("HANDSHAKE could not be sent (clientId={}), will retry", config.getClientId());
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break; // stop() được gọi trong lúc ngủ backoff/chờ reader
-            } catch (Exception e) {
+            } catch (IOException e) {
                 if (running.get()) {
                     log.warn("Connection attempt to {}:{} failed: {} — retrying in {} ms",
                             config.getServerHost(), config.getServerPort(), e.getMessage(), delay);
                 }
-            } finally {
-                closeConnectionQuietly();
+                try {
+                    delay = sleepBackoff(delay);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                continue;
             }
+            if (!running.get()) {
+                break;
+            }
+            if (performHandshake()) {
+                // Kết nối + handshake thành công → reset backoff, bật heartbeat, đọc lệnh.
+                onConnectionEstablished();
+                delay = config.getInitialReconnectDelayMs();
+                startHeartbeatScheduler();
+                try {
+                    spawnAndAwaitReader();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    connected.set(false);
+                    break;
+                }
+                // isConnected() đã là false khi socket sập (closeConnectionQuietly
+                // set false trước khi reader trả về null). Đây chỉ là no-op an toàn
+                // vì AtomicBoolean thread-safe.
+                connected.set(false);
+                if (running.get()) {
+                    log.warn("Connection lost (clientId={}), scheduling reconnect", config.getClientId());
+                }
+            } else {
+                log.warn("HANDSHAKE could not be sent (clientId={}), will retry", config.getClientId());
+            }
+            if (!running.get()) {
+                break;
+            }
+            closeConnectionQuietly();
             if (!running.get()) {
                 break;
             }
@@ -449,7 +482,17 @@ public class TcpClientEngine implements AutoCloseable {
         }
         TimeUnit.MILLISECONDS.sleep(currentDelay);
         reconnectAttempt++;
-        return Math.min(currentDelay * 2, config.getMaxReconnectDelayMs());
+        return nextReconnectDelay(currentDelay, config.getMaxReconnectDelayMs());
+    }
+
+    static long nextReconnectDelay(long currentDelay, long maxReconnectDelayMs) {
+        if (currentDelay <= 0 || maxReconnectDelayMs <= 0) {
+            throw new IllegalArgumentException("Reconnect delays must be positive");
+        }
+        if (currentDelay >= maxReconnectDelayMs / 2) {
+            return maxReconnectDelayMs;
+        }
+        return Math.min(currentDelay * 2, maxReconnectDelayMs);
     }
 
     private void onConnectionEstablished() {
@@ -591,6 +634,79 @@ public class TcpClientEngine implements AutoCloseable {
         heartbeatTask = null;
         if (scheduler != null) {
             scheduler.shutdownNow();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Screen Capture scheduler (Live Screen Streaming — Mục 3.10): gửi
+    // STREAM_FRAME định kỳ trên thread riêng, không block heartbeat/reader.
+    // ------------------------------------------------------------------
+
+    /** Khởi động scheduler riêng gửi STREAM_FRAME khi stream đang bật. */
+    private void startScreenCaptureScheduler() {
+        if (screenCaptureService == null || !screenCaptureService.isStarted()) {
+            return;
+        }
+        ScheduledExecutorService scheduler =
+                Executors.newSingleThreadScheduledExecutor(namedDaemonFactory("parental-client-screencapture"));
+        screenCaptureScheduler = scheduler;
+        ScreenCaptureService.ScreenControlRequest req = screenCaptureService.currentRequest();
+        long periodMs = req != null && req.fps() > 0
+                ? Math.max(1, (long) (1000.0 / req.fps()))
+                : 200L;
+        screenCaptureTask = scheduler.scheduleAtFixedRate(this::sendScreenFrame, periodMs, periodMs, TimeUnit.MILLISECONDS);
+        if (!running.get()) {
+            stopScreenCaptureScheduler();
+        }
+    }
+
+    /** Dừng scheduler gửi STREAM_FRAME. */
+    private void stopScreenCaptureScheduler() {
+        ScheduledExecutorService scheduler = screenCaptureScheduler;
+        screenCaptureScheduler = null;
+        screenCaptureTask = null;
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+    }
+
+    /**
+     * Gửi 1 frame STREAM_FRAME đến server khi có phiên stream đang hoạt động.
+     * Gọi từ scheduler riêng — không block heartbeat/reader.
+     */
+    private void sendScreenFrame() {
+        if (!running.get() || !connected.get() || screenCaptureService == null
+                || !screenCaptureService.isStarted()) {
+            return;
+        }
+        ScreenFramePayload frame = screenCaptureService.captureFrame();
+        if (frame == null) {
+            return;
+        }
+        String line;
+        try {
+            line = parser.toLine(BaseMessage.of(MessageType.STREAM_FRAME,
+                    config.getClientId(), frame));
+        } catch (ProtocolParseException e) {
+            log.error("Serialize STREAM_FRAME failed: {}", e.getMessage());
+            return;
+        }
+        try {
+            synchronized (writeLock) {
+                Writer w = writer;
+                Socket s = socket;
+                if (w == null || s == null || s.isClosed()) {
+                    return;
+                }
+                w.write(line);
+                w.flush();
+            }
+            log.debug("STREAM_FRAME sent (seq={} {}x{} quality={} tsMs={})",
+                    frame.seqNo(), frame.width(), frame.height(),
+                    frame.quality(), frame.tsMs());
+        } catch (IOException e) {
+            log.warn("STREAM_FRAME write failed (clientId={}): {}",
+                    config.getClientId(), e.getMessage());
         }
     }
 
@@ -837,8 +953,11 @@ public class TcpClientEngine implements AutoCloseable {
             case COMMAND -> handleCommand(message);
             case CONFIG_SYNC -> handleConfigSync(message);
             case UNPAIR -> handleUnpair(message);
+            case STREAM_CONTROL -> handleStreamControl(message);
+            case STREAM_FRAME -> handleStreamFrame(message);
             case HANDSHAKE, HEARTBEAT, METRICS_REPORT, PAIR_REQUEST, PAIR_RESPONSE ->
                     log.debug("Unexpected {} from server, ignored", message.getType());
+            case ACTIVITY_REPORT -> log.debug("ACTIVITY_REPORT from server ignored (client does not expect)");
         }
     }
 
@@ -899,6 +1018,46 @@ public class TcpClientEngine implements AutoCloseable {
             }, "parental-client-unpair-notify");
             notify.setDaemon(true);
             notify.start();
+        }
+    }
+
+    /**
+     * Xử lý STREAM_CONTROL (Mục 3.10 — Live Screen Streaming): server ra lệnh
+     * bật/tắt stream màn hình. Client cập nhật {@link ScreenCaptureService}
+     * theo yêu cầu (START → bắt đầu capture thread riêng; STOP → dừng).
+     * Không có ACK bắt buộc — xử lý best-effort, không ảnh hưởng heartbeat/reader.
+     */
+    private void handleStreamControl(BaseMessage<?> message) {
+        if (!(message.getPayload() instanceof StreamControlPayload control)) {
+            log.warn("STREAM_CONTROL with unexpected payload: {}", message.getPayload());
+            return;
+        }
+        log.debug("STREAM_CONTROL received: action={} width={} height={} quality={} fps={}",
+                control.action(), control.width(), control.height(),
+                control.quality(), control.fps());
+        if (screenCaptureService != null) {
+            if (StreamControlPayload.ACTION_START.equalsIgnoreCase(control.action())) {
+                screenCaptureService.start(
+                        ScreenCaptureService.ScreenControlRequest.fromPayload(control));
+                startScreenCaptureScheduler();
+            } else {
+                screenCaptureService.stop();
+                stopScreenCaptureScheduler();
+            }
+        }
+    }
+
+    /**
+     * Xử lý STREAM_FRAME (Mục 3.10 — Live Screen Streaming): frame ảnh từ
+     * client (khi server đang xem màn hình). Hiện tại client không xử lý
+     * frame nguồn (chỉ gửi), nên log debug mỗi frame nếu có.
+     */
+    private void handleStreamFrame(BaseMessage<?> message) {
+        if (message.getPayload() instanceof ScreenFramePayload frame) {
+            log.debug("STREAM_FRAME received (ignored on client): {}x{} seq={} quality={} tsMs={}",
+                    frame.width(), frame.height(), frame.seqNo(), frame.quality(), frame.tsMs());
+        } else {
+            log.warn("STREAM_FRAME with unexpected payload: {}", message.getPayload());
         }
     }
 

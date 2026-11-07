@@ -245,6 +245,14 @@ public class TcpServerEngine {
         return sessionManager;
     }
 
+    /**
+     * Alias rõ ràng để show remote screen dialog — trùng với
+     * {@link #getSessionManager()}.</p>
+     */
+    public ClientSessionManager getClientSessionManager() {
+        return sessionManager;
+    }
+
     /** DAO lưu thông tin client (null nếu engine chạy không DB). */
     public ClientDao getClientDao() {
         return clientDao;

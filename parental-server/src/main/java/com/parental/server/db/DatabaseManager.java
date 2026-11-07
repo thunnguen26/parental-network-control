@@ -161,6 +161,38 @@ public class DatabaseManager {
                     """);
 
             statement.execute("""
+                    CREATE TABLE IF NOT EXISTS metrics_daily_usage (
+                        client_id      VARCHAR NOT NULL,
+                        usage_date     TEXT NOT NULL,
+                        download_bytes INTEGER NOT NULL DEFAULT 0,
+                        upload_bytes   INTEGER NOT NULL DEFAULT 0,
+                        usage_seconds  INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (client_id, usage_date),
+                        FOREIGN KEY (client_id) REFERENCES clients(client_id) ON DELETE CASCADE
+                    )
+                    """);
+
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS metrics_client_state (
+                        client_id                  VARCHAR PRIMARY KEY,
+                        download_bytes             INTEGER NOT NULL DEFAULT 0,
+                        upload_bytes               INTEGER NOT NULL DEFAULT 0,
+                        session_duration_seconds   INTEGER NOT NULL DEFAULT 0,
+                        session_start_timestamp    INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY (client_id) REFERENCES clients(client_id) ON DELETE CASCADE
+                    )
+                    """);
+
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        migration_key TEXT PRIMARY KEY,
+                        applied_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+
+            migrateMetricsAccounting(connection);
+
+            statement.execute("""
                     CREATE TABLE IF NOT EXISTS client_rules (
                         client_id                  VARCHAR PRIMARY KEY,
                         daily_usage_limit_seconds  INTEGER NOT NULL DEFAULT 0,
@@ -231,6 +263,86 @@ public class DatabaseManager {
                     + "ON metrics_logs(recorded_at)");
             statement.execute("CREATE INDEX IF NOT EXISTS idx_activity_client_time "
                     + "ON activity_logs(client_id, recorded_at)");
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_metrics_daily_date "
+                    + "ON metrics_daily_usage(usage_date)");
+        }
+    }
+
+    /**
+     * Existing metrics_logs rows contain cumulative snapshots. Backfill their
+     * per-report deltas once so upgrading does not discard today's quota usage.
+     */
+    private static void migrateMetricsAccounting(Connection connection) throws SQLException {
+        String migrationKey = "daily-metrics-accounting-v1";
+        try (var check = connection.prepareStatement(
+                "SELECT 1 FROM schema_migrations WHERE migration_key = ?")) {
+            check.setString(1, migrationKey);
+            try (var result = check.executeQuery()) {
+                if (result.next()) {
+                    return;
+                }
+            }
+        }
+
+        boolean previousAutoCommit = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    WITH ordered AS (
+                        SELECT client_id,
+                               DATE(recorded_at, 'localtime') AS usage_date,
+                               download_bytes,
+                               upload_bytes,
+                               session_duration_seconds,
+                               LAG(download_bytes) OVER (
+                                   PARTITION BY client_id ORDER BY id) AS previous_download,
+                               LAG(upload_bytes) OVER (
+                                   PARTITION BY client_id ORDER BY id) AS previous_upload,
+                               LAG(session_duration_seconds) OVER (
+                                   PARTITION BY client_id ORDER BY id) AS previous_duration
+                        FROM metrics_logs
+                    )
+                    INSERT INTO metrics_daily_usage (
+                        client_id, usage_date, download_bytes, upload_bytes, usage_seconds)
+                    SELECT client_id,
+                           usage_date,
+                           SUM(CASE WHEN previous_download IS NULL
+                                         OR download_bytes < previous_download
+                                    THEN download_bytes
+                                    ELSE download_bytes - previous_download END),
+                           SUM(CASE WHEN previous_upload IS NULL
+                                         OR upload_bytes < previous_upload
+                                    THEN upload_bytes
+                                    ELSE upload_bytes - previous_upload END),
+                           SUM(CASE WHEN previous_duration IS NULL
+                                         OR session_duration_seconds < previous_duration
+                                    THEN session_duration_seconds
+                                    ELSE session_duration_seconds - previous_duration END)
+                    FROM ordered
+                    GROUP BY client_id, usage_date
+                    """);
+            statement.execute("""
+                    INSERT OR IGNORE INTO metrics_client_state (
+                        client_id, download_bytes, upload_bytes, session_duration_seconds,
+                        session_start_timestamp)
+                    SELECT metrics.client_id, metrics.download_bytes, metrics.upload_bytes,
+                           metrics.session_duration_seconds, 0
+                    FROM metrics_logs AS metrics
+                    WHERE metrics.id = (
+                        SELECT MAX(latest.id) FROM metrics_logs AS latest
+                        WHERE latest.client_id = metrics.client_id)
+                    """);
+            try (var insert = connection.prepareStatement(
+                    "INSERT INTO schema_migrations(migration_key) VALUES (?)")) {
+                insert.setString(1, migrationKey);
+                insert.executeUpdate();
+            }
+            connection.commit();
+        } catch (SQLException e) {
+            connection.rollback();
+            throw e;
+        } finally {
+            connection.setAutoCommit(previousAutoCommit);
         }
     }
 

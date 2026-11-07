@@ -10,5 +10,18 @@ public record MetricsPayload(
         long downloadSpeedBps,
         long uploadSpeedBps,
         long sessionDurationSeconds,
-        String networkStatus) {
+        String networkStatus,
+        long sessionStartTimestamp) {
+
+    /**
+     * Compatibility constructor for callers and clients predating the
+     * session-start field. A zero timestamp asks the server to use legacy
+     * duration accounting.
+     */
+    public MetricsPayload(long downloadBytes, long uploadBytes,
+                          long downloadSpeedBps, long uploadSpeedBps,
+                          long sessionDurationSeconds, String networkStatus) {
+        this(downloadBytes, uploadBytes, downloadSpeedBps, uploadSpeedBps,
+                sessionDurationSeconds, networkStatus, 0);
+    }
 }

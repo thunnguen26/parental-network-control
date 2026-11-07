@@ -25,6 +25,8 @@ import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.PairRequestPayload;
 import com.parental.common.protocol.payload.PairResponsePayload;
+import com.parental.common.protocol.payload.ScreenFramePayload;
+import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.server.db.ActivityDao;
 import com.parental.server.db.ClientDao;
 import com.parental.server.db.ClientRecord;
@@ -290,6 +292,31 @@ public class ClientHandler implements Runnable {
                 }
                 case HANDSHAKE ->
                         log.warn("[{}] Redundant HANDSHAKE ignored", session.getClientId());
+                case STREAM_CONTROL -> {
+                    // Live Screen Streaming: server gửi lệnh start/stop tới client.
+                    // Không có ACK bắt buộc — client xử lý best-effort trên thread riêng.
+                    if (message.getPayload() instanceof com.parental.common.protocol.payload.StreamControlPayload control) {
+                        log.debug("[{}] STREAM_CONTROL {}: width={}, height={}, quality={}, fps={}",
+                                session.getClientId(), control.action(), control.width(),
+                                control.height(), control.quality(), control.fps());
+                    } else {
+                        log.warn("[{}] STREAM_CONTROL với payload không hợp lệ", session.getClientId());
+                    }
+                }
+                case STREAM_FRAME -> {
+                    // Client gửi frame ảnh về (chỉ dùng khi server đang mở RemoteScreenDialog).
+                    if (message.getPayload() instanceof com.parental.common.protocol.payload.ScreenFramePayload frame) {
+                        session.setLastStreamFrame(frame);
+                        log.debug("[{}] STREAM_FRAME seq={} {}x{} (jpeg {}) quality={} tsMs={}",
+                                session.getClientId(), frame.seqNo(), frame.width(),
+                                frame.height(),
+                                frame.jpegBase64().length() < 32 ? frame.jpegBase64()
+                                        : frame.jpegBase64().substring(0, 28) + "...",
+                                frame.quality(), frame.tsMs());
+                    } else {
+                        log.warn("[{}] STREAM_FRAME với payload không hợp lệ", session.getClientId());
+                    }
+                }
                 default ->
                         log.warn("[{}] Unexpected {} from client ignored", session.getClientId(), message.getType());
             }

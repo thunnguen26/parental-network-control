@@ -17,5 +17,15 @@ public enum MessageType {
     /** Thu hồi ghép đôi: server thông báo client bị xóa khỏi danh sách quản lý (Mục 3.8). */
     UNPAIR,
     /** Giám sát hoạt động: client báo cửa sổ active + tiến trình đang chạy (Mục 3.9). */
-    ACTIVITY_REPORT
+    ACTIVITY_REPORT,
+    /**
+     * Điều khiển stream màn hình remote (Mục 3.10): server ra lệnh start/stop,
+     * client gửi frame ảnh JPEG về server mỗi frame.
+     */
+    STREAM_CONTROL,
+    /**
+     * Frame ảnh màn hình remote (Mục 3.10): client gửi hình ảnh JPEG nén
+     * về server để hiển thị trên RemoteScreenDialog.
+     */
+    STREAM_FRAME
 }

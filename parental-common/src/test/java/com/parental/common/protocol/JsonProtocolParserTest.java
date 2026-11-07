@@ -63,7 +63,8 @@ class JsonProtocolParserTest {
         @DisplayName("METRICS_REPORT giữ nguyên dữ liệu")
         void metricsRoundTrip() throws Exception {
             MetricsPayload payload = new MetricsPayload(
-                    104857600L, 52428800L, 2097152L, 524288L, 3600L, "ACTIVE");
+                    104857600L, 52428800L, 2097152L, 524288L, 3600L, "ACTIVE",
+                    1727276400L);
             BaseMessage<MetricsPayload> sent =
                     BaseMessage.of(MessageType.METRICS_REPORT, "client-01", payload);
 
@@ -71,6 +72,19 @@ class JsonProtocolParserTest {
 
             assertEquals(MessageType.METRICS_REPORT, received.getType());
             assertEquals(payload, received.getPayload());
+        }
+
+        @Test
+        @DisplayName("METRICS_REPORT cũ không có sessionStartTimestamp vẫn được parse")
+        void legacyMetricsWithoutSessionStartTimestampAreAccepted() throws Exception {
+            BaseMessage<?> received = parser.fromLine("""
+                    {"type":"METRICS_REPORT","clientId":"client-01","timestamp":1727280000,
+                     "payload":{"downloadBytes":10,"uploadBytes":4,"downloadSpeedBps":1,
+                     "uploadSpeedBps":1,"sessionDurationSeconds":20,"networkStatus":"ACTIVE"}}
+                    """);
+
+            assertInstanceOf(MetricsPayload.class, received.getPayload());
+            assertEquals(0, ((MetricsPayload) received.getPayload()).sessionStartTimestamp());
         }
 
         @Test

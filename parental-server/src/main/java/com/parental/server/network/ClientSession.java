@@ -15,6 +15,7 @@ import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.ProtocolParseException;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.ScreenFramePayload;
 
 /**
  * Đại diện cho một phiên kết nối Client đang hoạt động.
@@ -188,6 +189,19 @@ public class ClientSession {
         this.activitySignature = activitySignature;
     }
 
+    /**
+     * Frame ảnh màn hình remote gần nhất (Mục 3.10, {@code STREAM_FRAME}).
+     */
+    private volatile ScreenFramePayload lastStreamFrame;
+
+    public ScreenFramePayload getLastStreamFrame() {
+        return lastStreamFrame;
+    }
+
+    public void setLastStreamFrame(ScreenFramePayload lastStreamFrame) {
+        this.lastStreamFrame = lastStreamFrame;
+    }
+
     public long getLastHeartbeatTimestamp() {
         return lastHeartbeatTimestamp;
     }
@@ -206,5 +220,20 @@ public class ClientSession {
             return addr.getAddress().getHostAddress();
         }
         return String.valueOf(socket.getRemoteSocketAddress());
+    }
+
+    /**
+     * Trạng thái kết nối — dùng bởi {@link RemoteScreenDialog} để quyết định
+     * gửi {@code STREAM_CONTROL} hoặc dừng refresh khi mất phiên.
+     * <p>Đồng bộ với {@code ClientSessionManager.closed} trên register/remove.</p>
+     */
+    private volatile boolean connected = true;
+
+    public boolean isConnected() {
+        return connected;
+    }
+
+    public void setConnected(boolean connected) {
+        this.connected = connected;
     }
 }
