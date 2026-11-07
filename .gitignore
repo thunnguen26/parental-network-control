@@ -27,6 +27,7 @@ out/
 /docs/PROJECT_STATE.md
 /docs/PROTOCOL.md
 /docs/ROADMAP.md
+/AGENTS.md
 
 # Client persistent identity (chứa deviceToken — không commit máy khác)
 client_identity.json
