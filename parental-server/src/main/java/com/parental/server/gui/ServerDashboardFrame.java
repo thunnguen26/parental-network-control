@@ -244,17 +244,21 @@ public class ServerDashboardFrame extends JFrame {
         JButton remoteScreenButton = new JButton("Xem màn hình");
         remoteScreenButton.addActionListener(event -> openRemoteScreenDialog());
 
+        JButton allScreensButton = new JButton("Quan sát tất cả máy online");
+        allScreensButton.addActionListener(event -> openRemoteScreenWallDialog());
+
         JButton usageChartButton = new JButton("Thống kê sử dụng");
         usageChartButton.addActionListener(event -> openUsageChartDialog());
 
         JButton powerControlButton = new JButton("Điều khiển nguồn...");
         powerControlButton.addActionListener(event -> openPowerControlDialog());
 
-        JPanel buttonPanel = new JPanel(new GridLayout(6, 1, 0, 4));
+        JPanel buttonPanel = new JPanel(new GridLayout(7, 1, 0, 4));
         buttonPanel.add(addDeviceButton);
         buttonPanel.add(deleteDeviceButton);
         buttonPanel.add(policyButton);
         buttonPanel.add(remoteScreenButton);
+        buttonPanel.add(allScreensButton);
         buttonPanel.add(usageChartButton);
         buttonPanel.add(powerControlButton);
 
@@ -420,6 +424,18 @@ public class ServerDashboardFrame extends JFrame {
         }
         new RemoteScreenDialog(this, selected.clientId(), serverEngine.getClientSessionManager(),
                 () -> refreshNow());
+    }
+
+    /** Mở lưới preview cho tất cả session đang online tại thời điểm mở cửa sổ. */
+    private void openRemoteScreenWallDialog() {
+        long onlineCount = sessionManager.getAllSessions().stream()
+                .filter(ClientSession::isConnected)
+                .count();
+        if (onlineCount == 0) {
+            appendEventLog("[!] Hiện không có máy online để quan sát");
+            return;
+        }
+        new RemoteScreenWallDialog(this, sessionManager, this::refreshNow);
     }
 
     /**

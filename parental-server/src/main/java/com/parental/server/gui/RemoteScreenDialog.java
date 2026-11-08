@@ -2,12 +2,13 @@ package com.parental.server.gui;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.Base64;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.imageio.ImageIO;
-import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
@@ -50,7 +51,7 @@ public final class RemoteScreenDialog extends JDialog {
     private final ClientSessionManager sessionManager;
     private final Runnable onClosed;
 
-    private final JLabel imageLabel;
+    private final ScreenImagePanel imagePanel;
     private final JLabel statusLabel;
     private final AtomicBoolean streaming = new AtomicBoolean(false);
     private final AtomicBoolean open = new AtomicBoolean(false);
@@ -72,30 +73,41 @@ public final class RemoteScreenDialog extends JDialog {
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager");
         this.onClosed = Objects.requireNonNull(onClosed, "onClosed");
 
-        setSize(640, 480);
-        setMinimumSize(new Dimension(480, 360));
+        setSize(1000, 700);
+        setMinimumSize(new Dimension(600, 420));
         setLocationRelativeTo(owner);
         // Mặc định JDialog là HIDE_ON_CLOSE: bấm X chỉ ẩn dialog → windowClosed
         // KHÔNG chạy → client tiếp tục chụp/gửi frame mãi. DISPOSE buộc dọn stream.
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
 
-        imageLabel = new JLabel("Không có hình", JLabel.CENTER);
-        imageLabel.setPreferredSize(new Dimension(600, 400));
-        imageLabel.setHorizontalTextPosition(JLabel.CENTER);
-        imageLabel.setVerticalTextPosition(JLabel.BOTTOM);
+        imagePanel = new ScreenImagePanel(new Dimension(960, 540), "Đang chờ khung hình...");
 
         statusLabel = new JLabel("Phát hiện stream...", JLabel.CENTER);
 
         JPanel content = new JPanel(new BorderLayout(8, 8));
         content.setBorder(createEmptyBorder());
         content.add(statusLabel, BorderLayout.NORTH);
-        content.add(imageLabel, BorderLayout.CENTER);
+        content.add(imagePanel, BorderLayout.CENTER);
 
         JButton closeButton = new JButton("Đóng");
         closeButton.addActionListener(event -> dispose());
-        JPanel buttonRow = new JPanel(new BorderLayout());
-        buttonRow.add(closeButton, BorderLayout.EAST);
+        JButton maximizeButton = new JButton("Phóng to");
+        Rectangle restoreBounds = getBounds();
+        maximizeButton.addActionListener(event -> {
+            if (maximizeButton.getText().equals("Phóng to")) {
+                restoreBounds.setBounds(getBounds());
+                setBounds(GraphicsEnvironment.getLocalGraphicsEnvironment()
+                        .getMaximumWindowBounds());
+                maximizeButton.setText("Khôi phục kích thước");
+            } else {
+                setBounds(restoreBounds);
+                maximizeButton.setText("Phóng to");
+            }
+        });
+        JPanel buttonRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT));
+        buttonRow.add(maximizeButton);
+        buttonRow.add(closeButton);
 
         JPanel bottom = new JPanel(new BorderLayout(8, 8));
         bottom.add(buttonRow, BorderLayout.CENTER);
@@ -189,8 +201,7 @@ public final class RemoteScreenDialog extends JDialog {
                 SwingUtilities.invokeLater(() -> {
                     BufferedImage img = decodeFrame(frame);
                     if (img != null) {
-                        imageLabel.setIcon(new ImageIcon(img));
-                        imageLabel.setText(null);
+                        imagePanel.setImage(img);
                         AdaptiveStreamController.Settings settings =
                                 adaptiveController.currentSettings();
                         statusLabel.setText("LIVE • " + frame.width() + "x" + frame.height()
