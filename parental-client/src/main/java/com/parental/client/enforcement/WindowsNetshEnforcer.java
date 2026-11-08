@@ -1,6 +1,10 @@
 package com.parental.client.enforcement;
 
 import java.io.File;
+import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
@@ -39,16 +43,48 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
 
     private static final Logger log = LoggerFactory.getLogger(WindowsNetshEnforcer.class);
 
+    /**
+     * Dead-man switch: tự RESUME sau tối đa 60 phút (cấu hình
+     * {@code -Dparental.pause.maxMinutes=...}, 0 = tắt). Tránh máy bị kẹt
+     * PAUSED vĩnh viễn nếu Client chết/mất kết nối trước khi Server gửi RESUME.
+     */
+    public static final int DEFAULT_AUTO_RESUME_MINUTES = 60;
+
     private final boolean windowsOs;
+    /** Kiểm tra lại rule sau add/delete — test cũ tắt để không chạy netsh thật. */
+    private final boolean verifyRules;
     private volatile boolean paused = false;
+    private volatile Runnable autoResumeListener;
+    private final ScheduledExecutorService autoResumeScheduler =
+            Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "parental-client-auto-resume");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private volatile ScheduledFuture<?> autoResumeFuture;
 
     public WindowsNetshEnforcer() {
-        this(isWindows());
+        this(isWindows(), true);
     }
 
     /** Cho test inject OS flag — không bao giờ chạy netsh thật trong test. */
     WindowsNetshEnforcer(boolean windowsOs) {
+        this(windowsOs, false);
+    }
+
+    /**
+     * @param verifyRules true = sau add phải thấy rule tồn tại, sau delete phải
+     *                    thấy rule biến mất (không tin exit code đơn thuần)
+     */
+    WindowsNetshEnforcer(boolean windowsOs, boolean verifyRules) {
         this.windowsOs = windowsOs;
+        this.verifyRules = verifyRules;
+    }
+
+    /** Callback khi timer tự RESUME (ActionDispatcher dùng để sync metrics). */
+    @Override
+    public void setAutoResumeListener(Runnable listener) {
+        this.autoResumeListener = listener;
     }
 
     private static boolean isWindows() {
@@ -70,45 +106,110 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
         boolean udpOk = execute("advfirewall", "firewall", "add", "rule",
                 "name=" + FIREWALL_RULE_NAME_UDP, "dir=out", "action=block",
                 "remoteport=80,443,53", "protocol=UDP");
-        if (tcpOk && udpOk) {
+        boolean verified = !verifyRules
+                || (isRulePresent(FIREWALL_RULE_NAME_TCP)
+                        && isRulePresent(FIREWALL_RULE_NAME_UDP));
+        if (tcpOk && udpOk && verified) {
             paused = true;
+            scheduleAutoResume();
             log.warn("Network PAUSED: outbound HTTP/HTTPS blocked by firewall rules '{}' (TCP) "
-                    + "+ '{}' (UDP/QUIC)", FIREWALL_RULE_NAME_TCP, FIREWALL_RULE_NAME_UDP);
+                    + "+ '{}' (UDP/QUIC), auto-resume in {} min",
+                    FIREWALL_RULE_NAME_TCP, FIREWALL_RULE_NAME_UDP, autoResumeMinutes());
         } else {
             // Bán khóa: rollback rule đã thêm để không rơi vào trạng thái lửng
             // (chặn TCP nhưng UDP/QUIC vẫn thông = duyệt web vẫn hoạt động).
-            log.warn("Network pause INCOMPLETE (tcpOk={}, udpOk={}) — rolling back partial rules",
-                    tcpOk, udpOk);
+            log.warn("Network pause INCOMPLETE (tcpOk={}, udpOk={}, verified={}) — rolling back partial rules",
+                    tcpOk, udpOk, verified);
             execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_TCP);
             execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_UDP);
         }
-        return tcpOk && udpOk;
+        return tcpOk && udpOk && verified;
     }
 
     @Override
     public boolean resumeNetwork() {
+        cancelAutoResume();
         if (!paused) {
-            // Idempotent best-effort: xóa rule sót (phòng crash phiên trước).
-            // Rule không tồn tại → netsh exit 1 — KHÔNG coi là thất bại vì không
-            // có gì để gỡ (giữ semantic cũ: resume khi chưa pause luôn true).
+            if (verifyRules) {
+                // Không tin exit code: chỉ coi là đã resume khi TRUY VẤN thấy rule biến mất.
+                boolean tcpPresent = isRulePresent(FIREWALL_RULE_NAME_TCP);
+                boolean udpPresent = isRulePresent(FIREWALL_RULE_NAME_UDP);
+                boolean tcpOk = !tcpPresent || execute("advfirewall", "firewall", "delete",
+                        "rule", "name=" + FIREWALL_RULE_NAME_TCP);
+                boolean udpOk = !udpPresent || execute("advfirewall", "firewall", "delete",
+                        "rule", "name=" + FIREWALL_RULE_NAME_UDP);
+                boolean gone = !isRulePresent(FIREWALL_RULE_NAME_TCP)
+                        && !isRulePresent(FIREWALL_RULE_NAME_UDP);
+                if (!(tcpOk && udpOk && gone)) {
+                    log.warn("Resume (not paused) could not remove stale rules (tcpPresent={}, "
+                            + "udpPresent={}, gone={}) — check Administrator privileges",
+                            tcpPresent, udpPresent, gone);
+                    return false;
+                }
+                paused = false;
+                return true;
+            }
+            // Test/legacy: idempotent best-effort, không chạy netsh thật.
             execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_TCP);
             execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_UDP);
             return true;
         }
-        // Đang paused: cả hai rule đáng lẽ tồn tại → xóa CẢ HAI, thành công khi
-        // cả hai lệnh netsh đều exit 0.
+        // Đang paused: xóa cả hai, rồi xác minh rule đã biến mất.
         boolean tcpOk = execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_TCP);
         boolean udpOk = execute("advfirewall", "firewall", "delete", "rule", "name=" + FIREWALL_RULE_NAME_UDP);
-        boolean ok = tcpOk && udpOk;
+        boolean gone = !verifyRules || (!isRulePresent(FIREWALL_RULE_NAME_TCP)
+                && !isRulePresent(FIREWALL_RULE_NAME_UDP));
+        boolean ok = tcpOk && udpOk && gone;
         if (ok) {
             paused = false;
-            log.info("Network RESUMED: firewall rules '{}' + '{}' removed",
-                    FIREWALL_RULE_NAME_TCP, FIREWALL_RULE_NAME_UDP);
+            log.info("Network RESUMED: firewall rules '{}' + '{}' removed (verified={})",
+                    FIREWALL_RULE_NAME_TCP, FIREWALL_RULE_NAME_UDP, verifyRules);
         } else {
-            log.warn("Network resume incomplete (tcpOk={}, udpOk={}) — firewall rules may remain, "
-                    + "check Administrator privileges", tcpOk, udpOk);
+            log.warn("Network resume incomplete (tcpOk={}, udpOk={}, gone={}) — firewall rules may "
+                    + "remain, check Administrator privileges", tcpOk, udpOk, gone);
         }
         return ok;
+    }
+
+    /** Truy vấn trạng thái rule thật (exit 0 = tồn tại, không log WARN khi vắng). */
+    boolean isRulePresent(String ruleName) {
+        return executeQuiet("advfirewall", "firewall", "show", "rule", "name=" + ruleName);
+    }
+
+    private static int autoResumeMinutes() {
+        return Integer.getInteger("parental.pause.maxMinutes", DEFAULT_AUTO_RESUME_MINUTES);
+    }
+
+    private void scheduleAutoResume() {
+        cancelAutoResume();
+        int minutes = autoResumeMinutes();
+        if (!windowsOs || minutes <= 0) {
+            return;
+        }
+        autoResumeFuture = autoResumeScheduler.schedule(() -> {
+            log.warn("Auto-resume timer fired after {} min — restoring network without Server RESUME",
+                    minutes);
+            boolean ok = resumeNetwork();
+            Runnable listener = autoResumeListener;
+            if (listener != null) {
+                try {
+                    listener.run();
+                } catch (RuntimeException e) {
+                    log.warn("Auto-resume listener threw: {}", e.getMessage());
+                }
+            }
+            if (!ok) {
+                log.error("Auto-resume FAILED — network may still be blocked; check Administrator privileges");
+            }
+        }, minutes, TimeUnit.MINUTES);
+    }
+
+    private void cancelAutoResume() {
+        ScheduledFuture<?> future = autoResumeFuture;
+        if (future != null) {
+            future.cancel(false);
+            autoResumeFuture = null;
+        }
     }
 
     @Override
@@ -116,9 +217,61 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
         return paused ? STATUS_PAUSED : STATUS_ACTIVE;
     }
 
+    /**
+     * Dọn rule firewall SÓT từ lần chạy trước bị kill cứng (Bug B) — chạy
+     * MỘT LẦN lúc Client khởi động, TRƯỚC khi áp chính sách mới.
+     *
+     * <p><b>Phạm vi tuyệt đối:</b> chỉ 3 tên rule do project tạo, truyền nguyên
+     * văn qua {@code name=...} (KHÔNG dùng wildcard, KHÔNG quét rule khác):</p>
+     * <ul>
+     *   <li>{@value #FIREWALL_RULE_NAME_TCP} — pause HTTP/HTTPS TCP</li>
+     *   <li>{@value #FIREWALL_RULE_NAME_UDP} — pause QUIC/DNS UDP</li>
+     *   <li>{@link BrowserBypassEnforcer#FIREWALL_RULE_NAME_QUIC} — chặn QUIC của hosts bypass</li>
+     * </ul>
+     *
+     * <p>Mỗi rule được kiểm tra tồn tại bằng {@code netsh ... show rule} trước
+     * khi xóa — rule không tồn tại thì bỏ qua (không log WARN giả). Thiếu quyền
+     * Administrator/timeout/lỗi netsh chỉ log, KHÔNG ném exception, KHÔNG chặn
+     * Client khởi động. Non-Windows no-op.</p>
+     *
+     * <p><b>Giả định:</b> một máy chỉ chạy một Client. Nếu một Client khác đang
+     * thực sự PAUSE, lần khởi động này sẽ gỡ rule của nó (không thể phân biệt
+     * rule sót do crash với rule đang hoạt động).</p>
+     */
+    public void cleanupStaleRulesOnStartup() {
+        if (!windowsOs) {
+            log.debug("Non-Windows OS — startup firewall cleanup skipped");
+            return;
+        }
+        List<String> projectRules = List.of(
+                FIREWALL_RULE_NAME_TCP,
+                FIREWALL_RULE_NAME_UDP,
+                BrowserBypassEnforcer.FIREWALL_RULE_NAME_QUIC);
+        int removed = 0;
+        for (String ruleName : projectRules) {
+            // show rule: exit 0 = đang tồn tại. Không dùng execute() thường để
+            // tránh log WARN "exit code 1" cho trường hợp bình thường (không sót).
+            if (!executeQuiet("advfirewall", "firewall", "show", "rule", "name=" + ruleName)) {
+                log.debug("Startup firewall cleanup: rule '{}' not present", ruleName);
+                continue;
+            }
+            log.warn("Startup firewall cleanup: found stale rule '{}' from a previous run — deleting it",
+                    ruleName);
+            if (execute("advfirewall", "firewall", "delete", "rule", "name=" + ruleName)) {
+                removed++;
+            } else {
+                log.warn("Startup firewall cleanup: could not delete '{}' "
+                        + "(run Client as Administrator to clean it up)", ruleName);
+            }
+        }
+        paused = false;
+        log.info("Startup firewall cleanup finished: {} stale project rule(s) removed", removed);
+    }
+
     /** Cleanup on exit: luôn khôi phục mạng khi tắt ứng dụng. Không ném exception. */
     @Override
     public void cleanup() {
+        cancelAutoResume();
         try {
             if (paused) {
                 resumeNetwork();
@@ -129,6 +282,8 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
             }
         } catch (RuntimeException e) {
             log.warn("Cleanup failed: {}", e.getMessage());
+        } finally {
+            autoResumeScheduler.shutdownNow();
         }
     }
 
@@ -138,6 +293,18 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
      * Phương thức package-private để test override (không chạy netsh thật).
      */
     boolean execute(String... netshArgs) {
+        return runNetsh(false, netshArgs);
+    }
+
+    /**
+     * Như {@link #execute(String...)} nhưng không log WARN khi exit code != 0 —
+     * dùng cho truy vấn {@code show rule} (rule không tồn tại là bình thường).
+     */
+    boolean executeQuiet(String... netshArgs) {
+        return runNetsh(true, netshArgs);
+    }
+
+    private boolean runNetsh(boolean quiet, String... netshArgs) {
         if (!windowsOs) {
             log.debug("Non-Windows OS — netsh enforcer is a no-op");
             return true; // coi như thành công trên môi trường không phải Windows (CI/Linux)
@@ -160,6 +327,11 @@ public class WindowsNetshEnforcer implements NetworkEnforcer {
             }
             int exitCode = process.exitValue();
             if (exitCode != 0) {
+                if (quiet) {
+                    log.debug("netsh exited with code {} (quiet query): {}",
+                            exitCode, String.join(" ", netshArgs));
+                    return false;
+                }
                 // WARN rõ ràng cho lập trình viên: gần như luôn do thiếu quyền
                 // Administrator (netsh advfirewall yêu cầu elevated process).
                 log.warn("netsh exited with code {} — Firewall rule FAILED. Most likely the client "

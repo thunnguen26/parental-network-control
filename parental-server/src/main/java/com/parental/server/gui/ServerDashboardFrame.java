@@ -48,6 +48,7 @@ import org.slf4j.LoggerFactory;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.UnpairPayload;
 import com.parental.common.protocol.payload.StreamControlPayload;
+import com.parental.common.protocol.ActionType;
 import com.parental.common.protocol.MessageType;
 import com.parental.server.db.ActivityDao;
 import com.parental.server.db.BlockedDomainDao;
@@ -243,11 +244,19 @@ public class ServerDashboardFrame extends JFrame {
         JButton remoteScreenButton = new JButton("Xem màn hình");
         remoteScreenButton.addActionListener(event -> openRemoteScreenDialog());
 
-        JPanel buttonPanel = new JPanel(new GridLayout(4, 1, 0, 4));
+        JButton usageChartButton = new JButton("Thống kê sử dụng");
+        usageChartButton.addActionListener(event -> openUsageChartDialog());
+
+        JButton powerControlButton = new JButton("Điều khiển nguồn...");
+        powerControlButton.addActionListener(event -> openPowerControlDialog());
+
+        JPanel buttonPanel = new JPanel(new GridLayout(6, 1, 0, 4));
         buttonPanel.add(addDeviceButton);
         buttonPanel.add(deleteDeviceButton);
         buttonPanel.add(policyButton);
         buttonPanel.add(remoteScreenButton);
+        buttonPanel.add(usageChartButton);
+        buttonPanel.add(powerControlButton);
 
         JPanel panel = new JPanel(new BorderLayout());
         panel.add(scrollPane, BorderLayout.CENTER);
@@ -411,6 +420,113 @@ public class ServerDashboardFrame extends JFrame {
         }
         new RemoteScreenDialog(this, selected.clientId(), serverEngine.getClientSessionManager(),
                 () -> refreshNow());
+    }
+
+    /**
+     * Điều khiển nguồn/phiên từ xa (Tính năng 3.4). Hai bước xác nhận: chọn
+     * hành động → hộp thoại xác nhận nêu rõ thiết bị đích + cảnh báo; chỉ gửi
+     * khi client ONLINE. Mọi lệnh ghi {@code command_logs} (audit) và chờ ACK.
+     */
+    private void openPowerControlDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để điều khiển nguồn");
+            return;
+        }
+        if (!"ONLINE".equals(selected.status())) {
+            appendEventLog("[!] Thiết bị đang chọn không trực tuyến — không thể gửi lệnh nguồn");
+            return;
+        }
+        if (ruleEngine == null) {
+            appendEventLog("[!] Server đang chạy không database/rule engine — không thể gửi lệnh");
+            return;
+        }
+        String[] options = {"Khóa màn hình", "Đăng xuất", "Khởi động lại", "Tắt máy", "Hủy"};
+        int choice = JOptionPane.showOptionDialog(this,
+                "Chọn thao tác cho thiết bị '" + displayName(selected) + "':",
+                "Điều khiển nguồn/phiên từ xa",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
+                options, options[options.length - 1]);
+        if (choice < 0 || choice >= 4) {
+            return;
+        }
+        ActionType action = switch (choice) {
+            case 0 -> ActionType.LOCK_SESSION;
+            case 1 -> ActionType.LOGOFF_SESSION;
+            case 2 -> ActionType.RESTART_DEVICE;
+            default -> ActionType.SHUTDOWN_DEVICE;
+        };
+        String actionLabel = options[choice];
+        boolean destructive = action == ActionType.RESTART_DEVICE
+                || action == ActionType.SHUTDOWN_DEVICE;
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Gửi lệnh '" + actionLabel + "' tới '" + displayName(selected) + "'?\n\n"
+                        + "• Thiết bị: " + selected.deviceName()
+                        + " (" + selected.ipAddress() + ")\n"
+                        + "• Hành động: " + actionLabel + "\n"
+                        + (destructive
+                                ? "• Khởi động lại/tắt máy có 5 giây để hủy trên máy con.\n" : "")
+                        + "• Lệnh được ghi audit trong command_logs.\n\n"
+                        + "Chỉ tiếp tục nếu bạn là phụ huynh/người quản lý thiết bị.",
+                "Xác nhận " + actionLabel,
+                JOptionPane.YES_NO_OPTION,
+                destructive ? JOptionPane.WARNING_MESSAGE : JOptionPane.QUESTION_MESSAGE);
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+        String clientId = selected.clientId();
+        String deviceName = displayName(selected);
+        new javax.swing.SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                return ruleEngine.sendPowerCommand(clientId, action, actionLabel
+                        + " requested by parent from Dashboard");
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String commandId = get();
+                    if (commandId != null) {
+                        appendEventLog("Đã gửi lệnh '" + actionLabel + "' tới '" + deviceName
+                                + "' (commandId=" + commandId.substring(0, 8)
+                                + "..., chờ ACK từ client)");
+                    } else {
+                        appendEventLog("[!] Gửi lệnh '" + actionLabel + "' thất bại — client offline "
+                                + "hoặc từ chối (không ACK)");
+                    }
+                } catch (Exception e) {
+                    appendEventLog("[!] Lỗi gửi lệnh nguồn: " + e.getMessage());
+                    log.error("Power command failed: {}", e.getMessage(), e);
+                }
+            }
+        }.execute();
+    }
+
+    /** Tên hiển thị đầy đủ: alias (tên gốc) hoặc tên gốc. */
+    private static String displayName(ClientRecord record) {
+        return record.alias() != null && !record.alias().isBlank()
+                ? record.alias() + " (" + record.deviceName() + ")"
+                : record.deviceName();
+    }
+
+    /**
+     * Mở dialog thống kê thời gian sử dụng (Tính năng 3.1). Hoạt động cả khi
+     * thiết bị OFFLINE — dữ liệu lịch sử vẫn nằm trong SQLite; múi giờ hiển thị
+     * là múi giờ server (nơi {@code usage_date} được ghi).
+     */
+    private void openUsageChartDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để xem thống kê");
+            return;
+        }
+        String label = selected.alias() != null && !selected.alias().isBlank()
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : selected.deviceName();
+        new UsageChartDialog(this, selected.clientId(), label, metricsDao,
+                serverEngine.getActivityDao(), java.time.ZoneId.systemDefault())
+                .setVisible(true);
     }
 
     /**
@@ -911,6 +1027,21 @@ public class ServerDashboardFrame extends JFrame {
                     lastActivityTableRefresh = java.time.Instant.EPOCH; // buộc reload bảng
                 });
             }
+
+            @Override
+            public void onConfigAck(ClientSession session, long revision,
+                    String status, String message) {
+                SwingUtilities.invokeLater(() -> {
+                    if ("APPLIED".equals(status)) {
+                        appendEventLog("[OK] Client '" + session.getClientId()
+                                + "' đã áp dụng CONFIG_SYNC rev=" + revision);
+                    } else {
+                        appendEventLog("[!] Client '" + session.getClientId()
+                                + "' áp dụng CONFIG_SYNC rev=" + revision + " CHƯA ĐẦY ĐỦ ("
+                                + status + "): " + message);
+                    }
+                });
+            }
         });
     }
 
@@ -1032,7 +1163,12 @@ public class ServerDashboardFrame extends JFrame {
             quotaBar.setString("Không giới hạn dung lượng");
         }
         if (rule != null && rule.dailyUsageLimitSeconds() > 0) {
-            long usedSeconds = metrics != null ? metrics.sessionDurationSeconds() : 0;
+            // Hiển thị TỔNG thời gian dùng trong ngày (DB) — khớp với Rule Engine;
+            // sessionDurationSeconds chỉ là thời lượng tiến trình hiện tại nên
+            // reset về 0 mỗi lần client restart (hiển thị sai/giảm hạn mức ảo).
+            long todaySeconds = metricsDao.getTodayUsageSeconds(clientId);
+            long usedSeconds = todaySeconds > 0 ? todaySeconds
+                    : (metrics != null ? metrics.sessionDurationSeconds() : 0);
             usageBar.setValue(GuiFormat.clampPercent(usedSeconds, rule.dailyUsageLimitSeconds()));
             usageBar.setString(GuiFormat.formatDuration(usedSeconds) + " / " + GuiFormat.formatDuration(rule.dailyUsageLimitSeconds()));
             usageBar.setVisible(true);

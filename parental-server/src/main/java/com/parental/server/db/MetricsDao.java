@@ -130,6 +130,59 @@ public class MetricsDao {
         return todayUsageValue(clientId, "usage_seconds");
     }
 
+    /** Một dòng tổng hợp theo ngày từ {@code metrics_daily_usage} (đã là delta, không cộng trùng). */
+    public record DailyUsage(LocalDate date, long usageSeconds,
+                             long downloadBytes, long uploadBytes) {
+    }
+
+    /**
+     * Đọc tổng hợp NGÀY từ {@code metrics_daily_usage} trong khoảng
+     * {@code [from, to]} (bao gồm 2 đầu). Chỉ SELECT dữ liệu đã được
+     * {@link #insert} cộng dồn theo delta — KHÔNG đọc lại {@code metrics_logs}
+     * cumulative để tránh cộng trùng.
+     *
+     * <p>Ngày không có dữ liệu sẽ KHÔNG xuất hiện trong list; tầng hiển thị
+     * ({@code UsageStatistics}) tự điền 0 cho các ngày trống.</p>
+     *
+     * @return danh sách tăng dần theo ngày; rỗng khi tham số sai/lỗi DB
+     */
+    public java.util.List<DailyUsage> getDailyUsage(String clientId,
+                                                    LocalDate from, LocalDate to) {
+        java.util.List<DailyUsage> result = new java.util.ArrayList<>();
+        if (clientId == null || clientId.isBlank() || from == null || to == null
+                || from.isAfter(to)) {
+            return result;
+        }
+        String sql = "SELECT usage_date, usage_seconds, download_bytes, upload_bytes "
+                + "FROM metrics_daily_usage WHERE client_id = ? AND usage_date BETWEEN ? AND ? "
+                + "ORDER BY usage_date ASC";
+        try (Connection connection = database.newConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, clientId);
+            statement.setString(2, from.toString());
+            statement.setString(3, to.toString());
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) {
+                    String rawDate = rs.getString("usage_date");
+                    LocalDate date;
+                    try {
+                        date = LocalDate.parse(rawDate);
+                    } catch (RuntimeException e) {
+                        log.warn("Ignoring invalid usage_date '{}' for client [{}]", rawDate, clientId);
+                        continue;
+                    }
+                    result.add(new DailyUsage(date,
+                            Math.max(0, rs.getLong("usage_seconds")),
+                            Math.max(0, rs.getLong("download_bytes")),
+                            Math.max(0, rs.getLong("upload_bytes"))));
+                }
+            }
+        } catch (SQLException e) {
+            log.error("Failed to read daily usage for client [{}]: {}", clientId, e.getMessage());
+        }
+        return result;
+    }
+
     private long todayUsageValue(String clientId, String expression) {
         String sql = "SELECT COALESCE(SUM(" + expression + "), 0) "
                 + "FROM metrics_daily_usage WHERE client_id = ? AND usage_date = ?";

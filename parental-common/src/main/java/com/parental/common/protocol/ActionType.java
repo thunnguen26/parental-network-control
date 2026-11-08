@@ -13,5 +13,17 @@ public enum ActionType {
      * {@code reason} mang tên tiến trình (vd {@code "somegame.exe"}). Client
      * lưu vào {@code blocked_processes.json} + taskkill ngay và quét lặp 60s.
      */
-    BLOCK_PROCESS
+    BLOCK_PROCESS,
+
+    /**
+     * Khóa phiên đăng nhập hiện tại (Tính năng 3.4). Client dùng
+     * {@code rundll32 user32.dll,LockWorkStation}; không đóng ứng dụng.
+     */
+    LOCK_SESSION,
+    /** Đăng xuất phiên hiện tại (shutdown /l) — hỏi xác nhận trên Dashboard. */
+    LOGOFF_SESSION,
+    /** Khởi động lại máy (shutdown /r /t 5) — hỏi xác nhận trên Dashboard. */
+    RESTART_DEVICE,
+    /** Tắt máy (shutdown /s /t 5) — hỏi xác nhận trên Dashboard. */
+    SHUTDOWN_DEVICE
 }

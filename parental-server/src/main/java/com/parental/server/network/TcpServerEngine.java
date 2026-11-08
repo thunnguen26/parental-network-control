@@ -149,25 +149,37 @@ public class TcpServerEngine {
         long sweepPeriod = Math.max(1, heartbeatTimeoutSeconds / 2);
         sweeper.scheduleAtFixedRate(this::sweep, Math.max(1, heartbeatTimeoutSeconds), sweepPeriod, TimeUnit.SECONDS);
 
-        Thread acceptor = new Thread(this::acceptLoop, "parental-server-acceptor");
-        acceptor.setDaemon(true);
-        acceptor.start();
-
         if (databaseManager != null) {
-            // Task 4.1: client OFFLINE khi disconnect (mọi lý do: EOF, sweep,
-            // server shutdown — đều đi qua ClientSessionManager callbacks).
-            sessionManager.addConnectionListener(new ClientConnectionListener() {
-                @Override
-                public void onClientDisconnected(String clientId, DisconnectReason reason) {
-                    clientDao.setStatus(clientId, "OFFLINE");
-                }
-            });
             // Task 4.2: Rule Engine tự phát COMMAND khi client vi phạm hạn mức
             // (khởi tạo muộn ở start() để kịp áp dụng chu kỳ quét từ setter)
             ruleEvaluationEngine = new RuleEvaluationEngine(sessionManager,
                     ruleDao, metricsDao, commandLogDao, ruleScanIntervalSeconds);
             ruleEvaluationEngine.start();
+
+            // Task 4.1: client OFFLINE khi disconnect (mọi lý do: EOF, sweep,
+            // server shutdown — đều đi qua ClientSessionManager callbacks).
+            // Đăng ký listener TRƯỚC accept loop để client đầu tiên không lọt.
+            sessionManager.addConnectionListener(new ClientConnectionListener() {
+                @Override
+                public void onClientConnected(ClientSession session) {
+                    // Đồng bộ chính sách ngay sau HANDSHAKE: client vừa restart
+                    // (hosts bị dọn khi tắt) hoặc cấu hình đổi lúc offline không
+                    // còn phải chờ phụ huynh bấm "Lưu" mới nhận lại domain/quota.
+                    if (ruleEvaluationEngine != null) {
+                        ruleEvaluationEngine.syncConfigToClient(session.getClientId());
+                    }
+                }
+
+                @Override
+                public void onClientDisconnected(String clientId, DisconnectReason reason) {
+                    clientDao.setStatus(clientId, "OFFLINE");
+                }
+            });
         }
+
+        Thread acceptor = new Thread(this::acceptLoop, "parental-server-acceptor");
+        acceptor.setDaemon(true);
+        acceptor.start();
 
         log.info("TcpServerEngine started on port {} (pool size {}, heartbeat timeout {}s)",
                 getPort(), poolSize, heartbeatTimeoutSeconds);

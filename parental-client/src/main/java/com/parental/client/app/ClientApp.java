@@ -126,9 +126,15 @@ public class ClientApp {
                 new com.parental.client.enforcement.ProcessBlockerManager();
         processBlocker.startRescanScheduler();
 
+        // Bug B: dọn firewall rule SÓT từ lần chạy trước bị kill cứng — chỉ đụng
+        // đúng 3 tên rule của project, TRƯỚC khi engine kết nối/áp chính sách.
+        // Thiếu quyền Administrator chỉ log, không chặn Client khởi động.
+        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer();
+        enforcer.cleanupStaleRulesOnStartup();
+
         TcpClientEngine clientEngine = buildEngine(config, identityManager, () ->
                 SwingUtilities.invokeLater(() -> showPairingUiAfterUnpair(identityManager)),
-                processBlocker);
+                processBlocker, enforcer);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             log.info("Shutting down client agent...");
@@ -222,8 +228,8 @@ public class ClientApp {
     private static TcpClientEngine buildEngine(ClientConfig config,
                                                ClientIdentityManager identityManager,
                                                Runnable unpairListener,
-                                               com.parental.client.enforcement.ProcessBlockerManager processBlocker) {
-        WindowsNetshEnforcer enforcer = new WindowsNetshEnforcer();
+                                               com.parental.client.enforcement.ProcessBlockerManager processBlocker,
+                                               WindowsNetshEnforcer enforcer) {
         SystemTrayAlertNotifier notifier = new SystemTrayAlertNotifier();
         // Chọn collector THEO HỆ ĐIỀU HÀNH (Linux chạy được cả khi OSHI JNI lỗi):
         //   - Linux   → /proc/net/dev (bỏ lo, delta mỗi chu kỳ) + xdotool/fallback ps.
@@ -239,21 +245,21 @@ public class ClientApp {
         // rồi flush DNS/NetBIOS cache để kết nối MỚI giải mã lại qua hosts.
         com.parental.client.enforcement.BrowserBypassEnforcer bypassEnforcer =
                 new com.parental.client.enforcement.BrowserBypassEnforcer();
-        HostsFileManager hostsFileManager = new HostsFileManager() {
-            @Override
-            public boolean applyBlockedDomains(java.util.List<String> domains) {
-                bypassEnforcer.lockBypassPaths(); // khóa đường thoát TRƯỚC khi ghi hosts
-                return super.applyBlockedDomains(domains); // (super tự flush DNS)
-            }
-
-            @Override
-            public boolean clearBlocks() {
-                bypassEnforcer.unlockBypassPaths(); // gỡ khóa khi nới lỏng/gỡ cài
-                return super.clearBlocks();
-            }
-        };
+        // Constructor có enforcer: apply/clear tự khóa/mở DoH + QUIC +
+        // URLBlocklist và trả kết quả thật (không còn anonymous override bỏ
+        // qua kết quả khóa bypass).
+        HostsFileManager hostsFileManager = new HostsFileManager(
+                HostsFileManager.defaultHostsPath(), bypassEnforcer);
+        if (!hostsFileManager.canWrite()) {
+            log.error("Client KHÔNG có quyền ghi hosts ({}) — chạy Client bằng 'Run as Administrator'; "
+                    + "nếu không, chặn domain sẽ chỉ báo PARTIAL và không có hiệu lực.",
+                    hostsFileManager.getHostsFilePath());
+        }
         ActionDispatcher actionDispatcher = new ActionDispatcher(
-                enforcer, notifier, metricsCollector, processBlocker);
+                enforcer, notifier, metricsCollector, processBlocker,
+                // Tính năng 3.4: allowlist LOCK/LOGOFF/RESTART/SHUTDOWN — không
+                // nhận shell/command tùy ý; lệnh từ Server phải qua xác nhận GUI.
+                new com.parental.client.power.WindowsPowerCommandExecutor());
 
         return new TcpClientEngine(
                 config,

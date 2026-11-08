@@ -98,7 +98,7 @@ class BrowserBypassEnforcerTest {
     }
 
     @Test
-    @DisplayName("unlockBypassPaths: xóa rule QUIC + reg delete đủ 6 giá trị DoH")
+    @DisplayName("unlockBypassPaths: xóa rule QUIC + 6 giá trị DoH + 3 URLBlocklist")
     void unlockRemovesQuicRuleAndDohPolicies() {
         RecordingEnforcer enforcer = new RecordingEnforcer();
 
@@ -107,9 +107,46 @@ class BrowserBypassEnforcerTest {
         String joined = String.join("\n", enforcer.executed);
         assertTrue(joined.contains("netsh advfirewall firewall delete rule "
                 + "name=" + BrowserBypassEnforcer.FIREWALL_RULE_NAME_QUIC), "Gỡ rule QUIC");
-        assertEquals(6, countOccurrences(joined, "reg delete"),
-                "reg delete cho từng giá trị DoH (3 trình duyệt x 2 value)");
+        assertEquals(9, countOccurrences(joined, "reg delete"),
+                "6 giá trị DoH + 3 URLBlocklist");
+        assertEquals(3, countOccurrences(joined, "URLBlocklist"),
+                "Mỗi trình duyệt phải xóa policy URLBlocklist");
         assertFalse(joined.contains("reg add"), "Unlock KHÔNG được ghi thêm policy mới");
+    }
+
+    @Test
+    @DisplayName("URLBlocklist: ghi policy chặn cả subdomain cho 3 key Chromium")
+    void urlBlocklistCoversSubdomainsWithoutWildcard() {
+        RecordingEnforcer enforcer = new RecordingEnforcer();
+
+        assertTrue(enforcer.applyUrlBlocklist(List.of("youtube.com", "facebook.com")));
+
+        assertEquals(3, enforcer.executed.size());
+        for (String command : enforcer.executed) {
+            assertTrue(command.startsWith("reg add HKLM\\SOFTWARE\\Policies\\"), command);
+            assertTrue(command.contains("/v URLBlocklist"), command);
+            assertTrue(command.contains("youtube.com") && command.contains("facebook.com"), command);
+            assertFalse(command.contains("*."), "URLBlocklist domain entry đã bao phủ subdomain: " + command);
+        }
+    }
+
+    @Test
+    @DisplayName("LockStatus: URLBlocklist lỗi → fullyLocked=false dù DoH/QUIC thành công")
+    void urlBlocklistFailureMakesLockPartial() {
+        BrowserBypassEnforcer enforcer = new BrowserBypassEnforcer(true) {
+            @Override
+            boolean execute(String... command) {
+                return !String.join(" ", command).contains("URLBlocklist");
+            }
+        };
+
+        BrowserBypassEnforcer.LockStatus status =
+                enforcer.lockBypassPathsWithStatus(List.of("youtube.com"));
+
+        assertTrue(status.dohDisabled());
+        assertTrue(status.quicBlocked());
+        assertFalse(status.urlBlocklistApplied());
+        assertFalse(status.fullyLocked(), "Không được báo khóa đủ khi URLBlocklist thất bại");
     }
 
     @Test

@@ -27,6 +27,7 @@ import com.parental.client.activity.WindowsActivityCollector;
 import com.parental.client.config.ClientConfig;
 import com.parental.client.enforcement.ActionDispatcher;
 import com.parental.client.enforcement.HostsFileManager;
+import com.parental.client.enforcement.ProcessBlockerManager;
 import com.parental.client.device.DeviceInfoCollector;
 import com.parental.client.screen.ScreenCaptureService;
 import com.parental.client.identity.ClientIdentityManager;
@@ -231,6 +232,24 @@ public class TcpClientEngine implements AutoCloseable {
                            ActionDispatcher actionDispatcher, ClientIdentityManager identityManager,
                            Runnable unpairListener, ActivityCollector activityCollector,
                            com.parental.client.enforcement.ProcessBlockerManager processBlockerManager) {
+        // Mục 3.10: Live Screen Streaming cần một ScreenCaptureService thật — trước đây
+        // field luôn null nên STREAM_CONTROL START bị bỏ qua và client không bao giờ gửi frame.
+        this(config, deviceInfoCollector, parser, commandHandler, metricsCollector,
+                hostsFileManager, actionDispatcher, identityManager, unpairListener,
+                activityCollector, processBlockerManager, new ScreenCaptureService());
+    }
+
+    /**
+     * Full constructor with injectable screen capture service (test seam).
+     * Truyền {@code null} để engine tự tạo {@link ScreenCaptureService} mặc định.
+     */
+    TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
+                    JsonProtocolParser parser, ServerCommandHandler commandHandler,
+                    NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
+                    ActionDispatcher actionDispatcher, ClientIdentityManager identityManager,
+                    Runnable unpairListener, ActivityCollector activityCollector,
+                    com.parental.client.enforcement.ProcessBlockerManager processBlockerManager,
+                    ScreenCaptureService screenCaptureService) {
         this.config = Objects.requireNonNull(config, "config");
         this.deviceInfoCollector = Objects.requireNonNull(deviceInfoCollector, "deviceInfoCollector");
         this.parser = Objects.requireNonNull(parser, "parser");
@@ -242,7 +261,8 @@ public class TcpClientEngine implements AutoCloseable {
         this.unpairListener = unpairListener;     // nullable — null = không callback UNPAIR
         this.activityCollector = activityCollector; // nullable — null = tắt ACTIVITY_REPORT
         this.processBlockerManager = processBlockerManager; // nullable — null = không sync qua CONFIG_SYNC
-        this.screenCaptureService = null;         // stream tắt theo mặc định khi chưa có lệnh từ server
+        this.screenCaptureService = screenCaptureService != null
+                ? screenCaptureService : new ScreenCaptureService();
     }
 
     // ------------------------------------------------------------------
@@ -322,6 +342,10 @@ public class TcpClientEngine implements AutoCloseable {
         stopScreenCaptureScheduler();
         shutdownMetricsScheduler();
         shutdownActivityScheduler();
+        // Tắt stream (nếu đang bật): giải phóng Robot + dừng chụp màn hình khi engine dừng.
+        if (screenCaptureService != null) {
+            screenCaptureService.stop();
+        }
         // Đóng socket ĐẦU TIÊN để đánh thức readLine() đang block trên Windows.
         closeConnectionQuietly();
         // Task 3.3: luôn khôi phục mạng khi client tắt (xóa firewall rule) —
@@ -647,6 +671,10 @@ public class TcpClientEngine implements AutoCloseable {
         if (screenCaptureService == null || !screenCaptureService.isStarted()) {
             return;
         }
+        // START lặp (mở lại dialog / server gửi lại lệnh) không được tạo thêm
+        // scheduler thứ 2: scheduler cũ vẫn chạy và không còn reference để dừng
+        // → client gửi frame trùng, tăng gấp đôi băng thông.
+        stopScreenCaptureScheduler();
         ScheduledExecutorService scheduler =
                 Executors.newSingleThreadScheduledExecutor(namedDaemonFactory("parental-client-screencapture"));
         screenCaptureScheduler = scheduler;
@@ -1099,12 +1127,17 @@ public class TcpClientEngine implements AutoCloseable {
 
     /** Gửi ACK cho lệnh COMMAND — payload chứa commandId (PROTOCOL.md Mục 3.5). */
     private void sendCommandAck(String commandId) {
+        sendAckPayload(java.util.Map.of("commandId", String.valueOf(commandId)),
+                "command " + commandId);
+    }
+
+    /** Gửi ACK chung (command/config) — một nơi khóa writeLock, không ném. */
+    private void sendAckPayload(Map<String, Object> payload, String description) {
         String line;
         try {
-            line = parser.toLine(BaseMessage.of(MessageType.ACK, config.getClientId(),
-                    java.util.Map.of("commandId", String.valueOf(commandId))));
+            line = parser.toLine(BaseMessage.of(MessageType.ACK, config.getClientId(), payload));
         } catch (ProtocolParseException e) {
-            log.error("Serialize ACK failed: {}", e.getMessage());
+            log.error("Serialize ACK failed ({}): {}", description, e.getMessage());
             return;
         }
         try {
@@ -1117,9 +1150,9 @@ public class TcpClientEngine implements AutoCloseable {
                 w.write(line);
                 w.flush();
             }
-            log.info("ACK sent for command {}", commandId);
+            log.info("ACK sent for {}", description);
         } catch (IOException e) {
-            log.warn("Failed to send ACK for command {}: {}", commandId, e.getMessage());
+            log.warn("Failed to send ACK for {}: {}", description, e.getMessage());
         }
     }
 
@@ -1134,26 +1167,77 @@ public class TcpClientEngine implements AutoCloseable {
             log.warn("CONFIG_SYNC with unexpected payload: {}", message.getPayload());
             return;
         }
-        log.info("CONFIG_SYNC received: {} blocked domains, {} blocked processes, usage limit {}s",
+        log.info("CONFIG_SYNC received: {} blocked domains, {} blocked processes, usage limit {}s (rev={})",
                 configSync.blockedDomains().size(), configSync.blockedProcesses().size(),
-                configSync.dailyUsageLimitSeconds());
+                configSync.dailyUsageLimitSeconds(), configSync.configRevision());
+
+        boolean hostsApplied = true;
+        boolean bypassLocked = true;
+        String hostsMessage = "hosts=disabled";
         if (hostsFileManager != null) {
             try {
-                hostsFileManager.applyBlockedDomains(configSync.blockedDomains());
+                HostsFileManager.ApplyResult result =
+                        hostsFileManager.applyBlockedDomainsDetailed(configSync.blockedDomains());
+                hostsApplied = result.applied();
+                bypassLocked = result.bypassFullyLocked();
+                hostsMessage = result.message();
+                if (!hostsFileManager.isBypassConfigured()
+                        && !configSync.blockedDomains().isEmpty()) {
+                    bypassLocked = false;
+                    hostsMessage += "; bypass=NOT-CONFIGURED";
+                }
             } catch (RuntimeException e) {
                 // tuyệt đối không để lỗi hosts làm chết luồng đọc socket
+                hostsApplied = false;
+                bypassLocked = false;
+                hostsMessage = "hosts: exception " + e.getMessage();
                 log.error("Applying blocked domains failed: {}", e.getMessage());
             }
+        } else if (!configSync.blockedDomains().isEmpty()) {
+            hostsApplied = false;
+            hostsMessage = "hosts: manager chưa cấu hình — không có lớp chặn domain";
         }
+
         // Mở rộng 11: đồng bộ danh sách chặn tiến trình (REPLACE-ALL) — app bị
         // gỡ khỏi danh sách = bỏ chặn (ngừng kill, mở lại bình thường).
+        boolean processApplied = true;
+        String processMessage = "processes=applied";
         if (processBlockerManager != null) {
             try {
-                processBlockerManager.replaceBlockedProcesses(configSync.blockedProcesses());
+                ProcessBlockerManager.ReplaceResult result =
+                        processBlockerManager.replaceBlockedProcessesDetailed(
+                                configSync.blockedProcesses());
+                processApplied = result.applied();
+                if (result.anyAccessDenied()) {
+                    processMessage = "processes=PARTIAL (taskkill Access Denied — app elevated vẫn chạy)";
+                }
             } catch (RuntimeException e) {
+                processApplied = false;
+                processMessage = "processes=FAILED (" + e.getMessage() + ")";
                 log.error("Applying blocked processes failed: {}", e.getMessage());
             }
+        } else if (!configSync.blockedProcesses().isEmpty()) {
+            processApplied = false;
+            processMessage = "processes=FAILED (manager chưa cấu hình)";
         }
+
+        boolean fullyApplied = hostsApplied && processApplied && bypassLocked;
+        String status = fullyApplied ? "APPLIED"
+                : (hostsApplied || processApplied) ? "PARTIAL" : "FAILED";
+        String configMessage = hostsMessage + "; " + processMessage;
+        if (configMessage.length() > 400) {
+            configMessage = configMessage.substring(0, 397) + "...";
+        }
+        if (!fullyApplied) {
+            log.warn("CONFIG_SYNC rev={} NOT fully applied: {}",
+                    configSync.configRevision(), configMessage);
+        }
+        Map<String, Object> ack = new java.util.LinkedHashMap<>();
+        ack.put("configRevision", configSync.configRevision());
+        ack.put("configStatus", status);
+        ack.put("configMessage", configMessage);
+        sendAckPayload(ack, "config rev " + configSync.configRevision() + " (" + status + ")");
+
         try {
             commandHandler.onConfigSync(configSync);
         } catch (RuntimeException e) {
@@ -1176,6 +1260,13 @@ public class TcpClientEngine implements AutoCloseable {
         shutdownHeartbeatScheduler();
         shutdownMetricsScheduler();
         shutdownActivityScheduler();
+        // Mất kết nối khi đang stream: dừng chụp luôn. Nếu để scheduler sống,
+        // sau khi reconnect client sẽ gửi STREAM_FRAME tiếp dù server đã đóng
+        // dialog / không còn ai xem (dialog không gửi được STOP khi session null).
+        stopScreenCaptureScheduler();
+        if (screenCaptureService != null) {
+            screenCaptureService.stop();
+        }
         Socket s = socket;
         socket = null;
         writer = null;

@@ -72,6 +72,15 @@ public class ClientHandler implements Runnable {
     /** Thời gian tối đa chờ gói HANDSHAKE đầu tiên (chống treo thread). */
     private static final int HANDSHAKE_TIMEOUT_MS = 30_000;
 
+    /**
+     * Giới hạn phòng thủ cho STREAM_FRAME: client thật gửi tối đa 1600px cạnh
+     * dài, JPEG ~ 0.7 nên vài trăm KB. Các ngưỡng dưới đây chặn payload độc hại
+     * (Base64 khổng lồ) trước khi giữ vào session/giải mã — tránh OOM/treo handler.
+     */
+    static final int MAX_FRAME_DIMENSION = 4096;
+    static final long MAX_FRAME_PIXELS = 8_000_000L;
+    static final int MAX_FRAME_BASE64_CHARS = 4 * 1024 * 1024;
+
     private final Socket socket;
     private final ClientSessionManager sessionManager;
     private final JsonProtocolParser parser;
@@ -237,6 +246,21 @@ public class ClientHandler implements Runnable {
                             commandLogDao.markAcked(commandId);
                         }
                     }
+                    // ACK CONFIG_SYNC (bổ sung 08/11): chỉ ghi nhận khi client
+                    // thực sự gửi status — ACK heartbeat thường không có field này.
+                    if (message.getPayload() instanceof Map<?, ?> configPayload
+                            && configPayload.get("configStatus") != null) {
+                        long revision = parseLong(configPayload.get("configRevision"));
+                        String status = String.valueOf(configPayload.get("configStatus"));
+                        String configMessage = configPayload.get("configMessage") == null
+                                ? "" : String.valueOf(configPayload.get("configMessage"));
+                        session.setLastConfigAck(revision, status, configMessage);
+                        log.info("[{}] CONFIG_SYNC ACK rev={} status={} message={}",
+                                session.getClientId(), revision, status, configMessage);
+                        if (sessionManager != null) {
+                            sessionManager.fireConfigAck(session, revision, status, configMessage);
+                        }
+                    }
                 }
                 case METRICS_REPORT -> {
                     // Task 2.3: MỌI dữ liệu inbound (không chỉ HEARTBEAT) là dấu hiệu
@@ -305,16 +329,26 @@ public class ClientHandler implements Runnable {
                 }
                 case STREAM_FRAME -> {
                     // Client gửi frame ảnh về (chỉ dùng khi server đang mở RemoteScreenDialog).
-                    if (message.getPayload() instanceof com.parental.common.protocol.payload.ScreenFramePayload frame) {
+                    // Validate trước khi lưu: payload null/rỗng/quá lớn/Base64 hỏng
+                    // phải bị loại an toàn, KHÔNG được NPE hay giữ ảnh khổng lồ.
+                    if (message.getPayload() instanceof ScreenFramePayload frame) {
+                        String invalidReason = validateStreamFrame(frame);
+                        if (invalidReason != null) {
+                            log.warn("[{}] Dropping invalid STREAM_FRAME (seq={}, {}x{}, jpegChars={}): {}",
+                                    session.getClientId(), frame.seqNo(), frame.width(),
+                                    frame.height(),
+                                    frame.jpegBase64() == null ? -1 : frame.jpegBase64().length(),
+                                    invalidReason);
+                            break;
+                        }
                         session.setLastStreamFrame(frame);
-                        log.debug("[{}] STREAM_FRAME seq={} {}x{} (jpeg {}) quality={} tsMs={}",
+                        log.debug("[{}] STREAM_FRAME seq={} {}x{} (jpeg {} chars) quality={} tsMs={}",
                                 session.getClientId(), frame.seqNo(), frame.width(),
-                                frame.height(),
-                                frame.jpegBase64().length() < 32 ? frame.jpegBase64()
-                                        : frame.jpegBase64().substring(0, 28) + "...",
+                                frame.height(), frame.jpegBase64().length(),
                                 frame.quality(), frame.tsMs());
                     } else {
-                        log.warn("[{}] STREAM_FRAME với payload không hợp lệ", session.getClientId());
+                        log.warn("[{}] STREAM_FRAME với payload không hợp lệ (null/sai kiểu)",
+                                session.getClientId());
                     }
                 }
                 default ->
@@ -322,6 +356,69 @@ public class ClientHandler implements Runnable {
             }
         }
         log.info("[{}] Client disconnected (EOF)", session.getClientId());
+    }
+
+    /**
+     * Kiểm tra một frame trước khi lưu/giải mã. Trả {@code null} nếu hợp lệ,
+     * ngược lại trả lý do ngắn gọn để log.
+     *
+     * <p>Chỉ chấp nhận JPEG (magic Base64 {@code /9j/}) — đúng như
+     * {@code ScreenCaptureService} phía client tạo ra. Kiểm tra kích thước
+     * chuỗi Base64 TRƯỚC khi decode để không cấp phát bộ nhớ theo payload
+     * độc hại; kiểm tra pixel để chặn ảnh giải nén quá lớn.</p>
+     */
+    static String validateStreamFrame(ScreenFramePayload frame) {
+        if (frame == null) {
+            return "null payload";
+        }
+        String base64 = frame.jpegBase64();
+        if (base64 == null || base64.isBlank()) {
+            return "empty jpegBase64";
+        }
+        if (frame.width() <= 0 || frame.height() <= 0) {
+            return "invalid dimensions " + frame.width() + "x" + frame.height();
+        }
+        if (frame.width() > MAX_FRAME_DIMENSION || frame.height() > MAX_FRAME_DIMENSION) {
+            return "dimension exceeds " + MAX_FRAME_DIMENSION + "px";
+        }
+        if ((long) frame.width() * frame.height() > MAX_FRAME_PIXELS) {
+            return "pixel count exceeds " + MAX_FRAME_PIXELS;
+        }
+        if (base64.length() > MAX_FRAME_BASE64_CHARS) {
+            return "jpegBase64 too large (" + base64.length() + " chars)";
+        }
+        if (base64.length() % 4 != 0 || !isBase64(base64)) {
+            return "jpegBase64 is not valid Base64";
+        }
+        // JPEG luôn bắt đầu bằng FF D8 FF; Base64 của 3 byte này là "/9j/".
+        if (!base64.startsWith("/9j/")) {
+            return "not a JPEG payload";
+        }
+        return null;
+    }
+
+    /** Quét Base64 không cấp phát mảng byte (chỉ chấp nhận bảng chữ chuẩn + padding cuối). */
+    private static boolean isBase64(String value) {
+        int padding = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '=') {
+                padding++;
+                if (padding > 2 || i < value.length() - 2) {
+                    return false;
+                }
+                continue;
+            }
+            if (padding > 0) {
+                return false; // ký tự hợp lệ sau '='
+            }
+            boolean valid = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                    || (c >= '0' && c <= '9') || c == '+' || c == '/';
+            if (!valid) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Ưu tiên clientId trong envelope; fallback sang MAC từ HandshakePayload. */
@@ -395,5 +492,16 @@ public class ClientHandler implements Runnable {
             return new PairResponsePayload(false, null, "STORE_FAILED");
         }
         return new PairResponsePayload(true, deviceToken, PairResponsePayload.MSG_PAIRED);
+    }
+
+    private static long parseLong(Object value) {
+        if (value == null) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
     }
 }

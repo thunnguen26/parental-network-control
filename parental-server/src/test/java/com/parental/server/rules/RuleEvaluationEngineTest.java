@@ -316,6 +316,29 @@ class RuleEvaluationEngineTest {
     }
 
     @Test
+    @DisplayName("Client cũ (không sessionStartTimestamp) restart → hạn mức thời gian KHÔNG reset")
+    void legacyClientRestartKeepsDailyUsage() {
+        Harness h = Harness.create();
+        FakeClientSession session = new FakeClientSession("kid-legacy");
+        h.sessions().register(session);
+        h.registerClient("kid-legacy");
+        h.ruleDao().upsertRule("kid-legacy", new ConfigSyncPayload(List.of(), 3600, 0, null, null));
+
+        // Phiên cũ (client cũ: sessionStartTimestamp = 0) đã dùng 2 giờ.
+        h.metricsDao().insert("kid-legacy", new MetricsPayload(0, 0, 0, 0, 7_200, "ACTIVE"));
+        // Client restart → duration của tiến trình mới chỉ 60s (bộ đếm reset).
+        h.metricsDao().insert("kid-legacy", new MetricsPayload(0, 0, 0, 0, 60, "ACTIVE"));
+        session.setLastMetrics(new MetricsPayload(0, 0, 0, 0, 60, "ACTIVE"));
+
+        h.engine().evaluateAll();
+
+        assertEquals(1, countCommands(session.sent, ActionType.PAUSE_NETWORK),
+                "Tổng 7.260s trong ngày > 3.600s → phải PAUSE dù phiên mới chỉ 60s");
+        assertEquals(RuleEvaluationEngine.REASON_USAGE_LIMIT,
+                lastCommand(session.sent).getPayload().reason());
+    }
+
+    @Test
     @DisplayName("Không vi phạm + chưa từng khóa → không gửi bất kỳ lệnh nào")
     void noViolationNoCommands() {
         Harness h = Harness.create();

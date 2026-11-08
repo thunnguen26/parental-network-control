@@ -25,6 +25,7 @@ import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.server.network.ClientSession;
 import com.parental.server.network.ClientHandler;
 import com.parental.server.network.ClientSessionManager;
+import com.parental.server.stream.AdaptiveStreamController;
 import java.util.Objects;
 
 /**
@@ -54,6 +55,13 @@ public final class RemoteScreenDialog extends JDialog {
     private final AtomicBoolean streaming = new AtomicBoolean(false);
     private final AtomicBoolean open = new AtomicBoolean(false);
 
+    /** Điều chỉnh FPS/JPEG theo băng thông/latency thực tế (Tính năng 3.2). */
+    private final AdaptiveStreamController adaptiveController = new AdaptiveStreamController();
+    /** seqNo frame đã hiển thị — tránh decode lại cùng frame mỗi 500ms. */
+    private long lastRenderedSeq = -1;
+    /** Thời điểm nhận frame gần nhất để hiển thị latency (ms). */
+    private long lastFrameLatencyMs = -1;
+
     /** Chặn độ lớn frame Base64 để không overflow label/heap khi network congested. */
     private static final int MAX_DECODE_PIXELS = 1920 * 1080;
 
@@ -67,6 +75,9 @@ public final class RemoteScreenDialog extends JDialog {
         setSize(640, 480);
         setMinimumSize(new Dimension(480, 360));
         setLocationRelativeTo(owner);
+        // Mặc định JDialog là HIDE_ON_CLOSE: bấm X chỉ ẩn dialog → windowClosed
+        // KHÔNG chạy → client tiếp tục chụp/gửi frame mãi. DISPOSE buộc dọn stream.
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
 
         imageLabel = new JLabel("Không có hình", JLabel.CENTER);
@@ -104,8 +115,11 @@ public final class RemoteScreenDialog extends JDialog {
         });
 
         open.set(true);
-        setVisible(true);
+        // PHẢI gửi START trước setVisible(true): dialog là MODAL nên setVisible
+        // block constructor cho tới khi dialog đóng — đặt sau sẽ khiến stream
+        // không bao giờ được bật, sau đó còn bật stream vào dialog đã dispose.
         startStreamIfOnline();
+        setVisible(true);
     }
 
     private static javax.swing.border.Border createEmptyBorder() {
@@ -121,9 +135,11 @@ public final class RemoteScreenDialog extends JDialog {
             return;
         }
         String action = start ? StreamControlPayload.ACTION_START : StreamControlPayload.ACTION_STOP;
+        AdaptiveStreamController.Settings settings = adaptiveController.currentSettings();
         try {
             BaseMessage<?> control = BaseMessage.of(MessageType.STREAM_CONTROL, ClientHandler.SERVER_ID,
-                    new StreamControlPayload(action, 0, 0, 0.7, 5L));
+                    new StreamControlPayload(action, settings.width(), settings.height(),
+                            settings.quality(), settings.fps()));
             session.send(control);
             log.debug("[RemoteScreenDialog] Gửi STREAM_CONTROL {} tới {}", action, clientId);
         } catch (Exception e) {
@@ -141,6 +157,9 @@ public final class RemoteScreenDialog extends JDialog {
         if (!streaming.compareAndSet(false, true)) {
             return;
         }
+        adaptiveController.reset();
+        lastRenderedSeq = -1;
+        lastFrameLatencyMs = -1;
         sendStreamControl(true);
         scheduleFramePoll();
     }
@@ -158,15 +177,29 @@ public final class RemoteScreenDialog extends JDialog {
                 return;
             }
             ScreenFramePayload frame = session.getLastStreamFrame();
-            if (frame != null && !frame.jpegBase64().isBlank()) {
+            if (frame != null && !frame.jpegBase64().isBlank()
+                    && frame.seqNo() != lastRenderedSeq) {
+                lastRenderedSeq = frame.seqNo();
+                long now = System.currentTimeMillis();
+                lastFrameLatencyMs = frame.tsMs() > 0 && now >= frame.tsMs()
+                        ? now - frame.tsMs() : -1;
+                adaptiveController.onFrame(now, frame.jpegBase64().length(), frame.tsMs());
+                applyAdaptiveDecision(now);
+                long latencyForFrame = lastFrameLatencyMs;
                 SwingUtilities.invokeLater(() -> {
                     BufferedImage img = decodeFrame(frame);
                     if (img != null) {
                         imageLabel.setIcon(new ImageIcon(img));
                         imageLabel.setText(null);
+                        AdaptiveStreamController.Settings settings =
+                                adaptiveController.currentSettings();
                         statusLabel.setText("LIVE • " + frame.width() + "x" + frame.height()
-                                + " • seq=" + frame.seqNo() + " • "
-                                + java.time.LocalTime.now().toString());
+                                + " • seq=" + frame.seqNo()
+                                + " • " + settings.fps() + "fps q="
+                                + String.format(java.util.Locale.ROOT, "%.2f", settings.quality())
+                                + (latencyForFrame >= 0
+                                        ? " • " + latencyForFrame + "ms" : "")
+                                + " • " + java.time.LocalTime.now());
                     }
                 });
             }
@@ -202,6 +235,23 @@ public final class RemoteScreenDialog extends JDialog {
         }
     }
 
+    /**
+     * Áp quyết định adaptive: nếu controller đổi cấu hình, gửi lại
+     * {@code STREAM_CONTROL START} với FPS/quality/width mới. Client hiện tại
+     * xử lý START lặp bằng cách thay scheduler (không nhân đôi tần suất).
+     */
+    private void applyAdaptiveDecision(long nowMs) {
+        if (!streaming.get() || !open.get()) {
+            return;
+        }
+        AdaptiveStreamController.Decision decision = adaptiveController.evaluate(nowMs);
+        if (decision.changed()) {
+            log.info("[RemoteScreenDialog] Adaptive stream [{}]: chuyển sang {} ({})",
+                    clientId, decision.settings().describe(), decision.reason());
+            sendStreamControl(true);
+        }
+    }
+
     private void setStatus(String text, boolean warn) {
         SwingUtilities.invokeLater(() -> {
             statusLabel.setText(text);
@@ -215,5 +265,8 @@ public final class RemoteScreenDialog extends JDialog {
             return;
         }
         sendStreamControl(false);
+        adaptiveController.reset();
+        lastRenderedSeq = -1;
+        lastFrameLatencyMs = -1;
     }
 }

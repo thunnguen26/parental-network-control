@@ -1,6 +1,9 @@
 package com.parental.client.screen;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,5 +76,23 @@ class ScreenCaptureServiceTest {
                 () -> ScreenCaptureService.unionScreenBounds(List.of()));
         assertThrows(IllegalArgumentException.class,
                 () -> ScreenCaptureService.fitWithin(0, 100, 100, 100));
+    }
+
+    @Test
+    @DisplayName("start() không ném exception ở môi trường không có display (headless) — engine vẫn sống")
+    void startNeverThrowsWithoutDisplay() {
+        ScreenCaptureService service = new ScreenCaptureService();
+
+        // HeadlessException là RuntimeException: trước đây nó thoát khỏi
+        // TcpClientEngine.handleStreamControl làm chết luồng đọc socket.
+        assertDoesNotThrow(() -> service.start(ScreenCaptureService.ScreenControlRequest.DEFAULT));
+
+        if (java.awt.GraphicsEnvironment.isHeadless()) {
+            assertFalse(service.isStarted(),
+                    "Không có display → stream phải tắt an toàn, không giữ trạng thái started");
+            assertNull(service.captureFrame(), "Không có frame khi chưa có Robot");
+        }
+        service.stop();
+        assertFalse(service.isStarted());
     }
 }

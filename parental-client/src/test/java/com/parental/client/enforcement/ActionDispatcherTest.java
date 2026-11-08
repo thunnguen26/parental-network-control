@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -12,6 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import com.parental.common.protocol.ActionType;
 import com.parental.common.protocol.payload.CommandPayload;
@@ -23,6 +25,9 @@ import com.parental.client.metrics.NetworkMetricsCollector;
  * (Task 3.3) — dùng Mock enforcer/notifier/collector, KHÔNG chạy netsh thật.
  */
 class ActionDispatcherTest {
+
+    @TempDir
+    Path tempDir;
 
     /** Mock enforcer ghi nhận số lần pause/resume + trạng thái. */
     private static final class MockNetworkEnforcer implements NetworkEnforcer {
@@ -158,6 +163,27 @@ class ActionDispatcherTest {
 
         assertNull(result, "Thất bại phải trả null → Engine không gửi ACK");
         assertEquals("ACTIVE", collector.status, "Status không được đổi khi thất bại");
+    }
+
+    @Test
+    @DisplayName("BLOCK_PROCESS: taskkill Access Denied → không ACK dù policy đã persist")
+    void blockProcessAccessDeniedIsNotAcked() {
+        ProcessBlockerManager denied = new ProcessBlockerManager(
+                tempDir.resolve("blocked-denied.json"), true) {
+            @Override
+            ProcessBlockerManager.KillResult killProcessWithResult(String normalizedProcessName) {
+                return ProcessBlockerManager.KillResult.ACCESS_DENIED;
+            }
+        };
+        ActionDispatcher dispatcher = new ActionDispatcher(
+                new MockNetworkEnforcer(), new MockAlertNotifier(), null, denied);
+
+        String ack = dispatcher.dispatch(new CommandPayload(
+                "cmd-block-denied", ActionType.BLOCK_PROCESS, "elevatedgame.exe"));
+
+        assertNull(ack, "App elevated vẫn chạy → Server phải thấy thất bại, không ACK");
+        assertTrue(denied.getBlockedProcesses().contains("elevatedgame.exe"),
+                "Policy vẫn persist để watchdog thử lại");
     }
 
     @Test
@@ -369,6 +395,53 @@ class ActionDispatcherTest {
         assertTrue(enforcer.resumeNetwork());
         assertEquals("ACTIVE", enforcer.getNetworkStatus());
         assertTrue(netshInvocations.get() >= 0, "Không có ProcessBuilder nào được spawn trên non-Windows");
+    }
+
+    @Test
+    @DisplayName("LOCK/LOGOFF/RESTART/SHUTDOWN: chuyển đúng action cho PowerCommandExecutor, không đụng mạng")
+    void powerCommandsUsePowerExecutor() {
+        MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
+        StubMetricsCollector collector = new StubMetricsCollector();
+        List<ActionType> executed = new ArrayList<>();
+        com.parental.client.power.PowerCommandExecutor executor = action -> {
+            executed.add(action);
+            return com.parental.client.power.PowerCommandExecutor.Result.accepted("ok");
+        };
+        ActionDispatcher dispatcher = new ActionDispatcher(
+                enforcer, new MockAlertNotifier(), collector, null, executor);
+
+        for (ActionType action : List.of(ActionType.LOCK_SESSION, ActionType.LOGOFF_SESSION,
+                ActionType.RESTART_DEVICE, ActionType.SHUTDOWN_DEVICE)) {
+            assertEquals("cmd-" + action, dispatcher.dispatch(
+                    new CommandPayload("cmd-" + action, action, "test")));
+        }
+
+        assertEquals(List.of(ActionType.LOCK_SESSION, ActionType.LOGOFF_SESSION,
+                ActionType.RESTART_DEVICE, ActionType.SHUTDOWN_DEVICE), executed);
+        assertEquals(0, enforcer.pauseCount.get(), "Lệnh nguồn không được pause mạng");
+        assertEquals(0, enforcer.resumeCount.get());
+        assertEquals("ACTIVE", collector.status);
+    }
+
+    @Test
+    @DisplayName("Power executor từ chối (OS khác/thiếu quyền) → không ACK (null)")
+    void rejectedPowerCommandIsNotAcked() {
+        ActionDispatcher dispatcher = new ActionDispatcher(
+                new MockNetworkEnforcer(), new MockAlertNotifier(), new StubMetricsCollector(), null,
+                action -> com.parental.client.power.PowerCommandExecutor.Result.rejected("no"));
+
+        assertNull(dispatcher.dispatch(new CommandPayload("cmd-power",
+                ActionType.SHUTDOWN_DEVICE, "test")));
+    }
+
+    @Test
+    @DisplayName("Power executor null → từ chối an toàn, không giả vờ thành công")
+    void powerDisabledRejectsWithoutAck() {
+        ActionDispatcher dispatcher = new ActionDispatcher(
+                new MockNetworkEnforcer(), new MockAlertNotifier(), new StubMetricsCollector());
+
+        assertNull(dispatcher.dispatch(new CommandPayload("cmd-power-2",
+                ActionType.RESTART_DEVICE, "test")));
     }
 
     @Test

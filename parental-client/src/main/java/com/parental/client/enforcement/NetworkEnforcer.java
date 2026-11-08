@@ -41,4 +41,11 @@ public interface NetworkEnforcer {
      * Không ném exception.
      */
     void cleanup();
+
+    /**
+     * Đăng ký callback khi enforcer tự RESUME bằng dead-man timer (không có
+     * lệnh RESUME từ Server). Mặc định no-op cho mock/legacy.
+     */
+    default void setAutoResumeListener(Runnable listener) {
+    }
 }

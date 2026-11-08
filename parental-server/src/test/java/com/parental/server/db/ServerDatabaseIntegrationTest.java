@@ -333,10 +333,18 @@ class ServerDatabaseIntegrationTest {
         assertTrue(engine.unpairClient(clientId, UnpairPayload.DEFAULT_REASON),
                 "Client đang online → UNPAIR phải gửi thành công");
 
-        // Client ảo nhận được gói UNPAIR trước khi socket đóng
-        String unpairLine = clientReader.readLine();
-        assertNotNull(unpairLine, "Client phải nhận gói UNPAIR trước khi bị ngắt");
-        BaseMessage<?> unpair = parser.fromLine(unpairLine);
+        // Client ảo nhận được gói UNPAIR trước khi socket đóng. Bỏ qua
+        // CONFIG_SYNC tự động gửi ngay sau HANDSHAKE (có thể còn trong buffer).
+        BaseMessage<?> unpair = null;
+        for (int attempt = 0; attempt < 10 && unpair == null; attempt++) {
+            String line = clientReader.readLine();
+            assertNotNull(line, "Client phải nhận gói UNPAIR trước khi bị ngắt");
+            BaseMessage<?> received = parser.fromLine(line);
+            if (received.getType() == MessageType.UNPAIR) {
+                unpair = received;
+            }
+        }
+        assertNotNull(unpair, "Client phải nhận gói UNPAIR trước khi bị ngắt");
         assertEquals(MessageType.UNPAIR, unpair.getType());
         var unpairPayload = assertInstanceOf(UnpairPayload.class, unpair.getPayload());
         assertEquals(UnpairPayload.DEFAULT_REASON, unpairPayload.reason());

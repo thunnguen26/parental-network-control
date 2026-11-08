@@ -94,20 +94,52 @@ public class ProcessBlockerManager {
      * @return {@code true} nếu hợp lệ và đã lưu (kill là best-effort)
      */
     public synchronized boolean blockProcess(String processName) {
+        return blockProcessDetailed(processName).persisted();
+    }
+
+    /** Kết quả kill tức thì — tách khỏi persist để không ACK giả khi app elevated. */
+    public enum KillResult {
+        KILLED, NOT_RUNNING, ACCESS_DENIED, ERROR, SKIPPED
+    }
+
+    /**
+     * @param persisted policy đã ghi bền vững (watchdog sẽ tiếp tục kill)
+     * @param killResult kết quả taskkill NGAY (ACCESS_DENIED = app vẫn đang chạy)
+     */
+    public record BlockResult(boolean persisted, KillResult killResult) {
+        /** Chỉ coi là thành công khi policy persist VÀ không bị từ chối quyền. */
+        public boolean accepted() {
+            return persisted && killResult != KillResult.ACCESS_DENIED
+                    && killResult != KillResult.ERROR;
+        }
+    }
+
+    /**
+     * Chặn + trả cả kết quả kill. Dùng bởi ActionDispatcher: taskkill bị Access
+     * Denied (app chạy elevated) → không ACK, dù policy đã lưu cho watchdog.
+     */
+    public synchronized BlockResult blockProcessDetailed(String processName) {
         String normalized = normalizeProcessName(processName);
         if (normalized == null) {
             log.warn("Cannot block invalid process name: {}", processName);
-            return false;
+            return new BlockResult(false, KillResult.ERROR);
         }
         Set<String> blocked = loadBlockedProcesses();
         if (blocked.add(normalized)) {
-            saveBlockedProcesses(blocked);
+            if (!saveBlockedProcesses(blocked)) {
+                log.warn("Process '{}' NOT blocked: could not persist list", normalized);
+                return new BlockResult(false, KillResult.ERROR);
+            }
             log.info("Process '{}' added to blocked list ({} total)", normalized, blocked.size());
         } else {
             log.info("Process '{}' already blocked — idempotent, re-killing instances", normalized);
         }
-        killProcessNow(normalized);
-        return true;
+        KillResult killResult = killProcessWithResult(normalized);
+        if (killResult == KillResult.ACCESS_DENIED) {
+            log.warn("Process '{}' persisted but taskkill was ACCESS DENIED — app có thể đang chạy "
+                    + "elevated; KHÔNG ACK thành công", normalized);
+        }
+        return new BlockResult(true, killResult);
     }
 
     /** Danh sách tiến trình đang bị chặn (đã chuẩn hóa, có đuôi .exe). */
@@ -139,6 +171,20 @@ public class ProcessBlockerManager {
      * @return {@code true} nếu ghi thành công
      */
     public synchronized boolean replaceBlockedProcesses(java.util.List<String> processNames) {
+        return replaceBlockedProcessesDetailed(processNames).persisted();
+    }
+
+    /** @param anyAccessDenied có app đang chạy elevated nên taskkill bị từ chối */
+    public record ReplaceResult(boolean persisted, boolean anyAccessDenied) {
+        /** Policy đã lưu nhưng app elevated vẫn chạy → không coi là áp dụng đủ. */
+        public boolean applied() {
+            return persisted && !anyAccessDenied;
+        }
+    }
+
+    /** REPLACE-ALL kèm kết quả kill thật (CONFIG_SYNC status không báo APPLIED giả). */
+    public synchronized ReplaceResult replaceBlockedProcessesDetailed(
+            java.util.List<String> processNames) {
         Set<String> normalized = new LinkedHashSet<>();
         if (processNames != null) {
             for (String name : processNames) {
@@ -149,14 +195,19 @@ public class ProcessBlockerManager {
             }
         }
         Set<String> previous = loadBlockedProcesses();
-        saveBlockedProcesses(normalized);
+        if (!saveBlockedProcesses(normalized)) {
+            log.warn("Blocked processes REPLACE failed — giữ nguyên danh sách cũ, không kill theo cấu hình mới");
+            return new ReplaceResult(false, false);
+        }
         log.info("Blocked processes REPLACED from server config ({} -> {} apps)",
                 previous.size(), normalized.size());
         // Kill ngay các app vẫn/vừa nằm trong danh sách — đồng bộ trạng thái
+        boolean denied = false;
         for (String name : normalized) {
             killProcessNow(name);
+            denied |= lastKillResult == KillResult.ACCESS_DENIED;
         }
-        return true;
+        return new ReplaceResult(true, denied);
     }
 
     /**
@@ -233,22 +284,33 @@ public class ProcessBlockerManager {
         return name;
     }
 
+    /** Kết quả lần kill gần nhất — test override {@link #killProcessNow} giữ SKIPPED. */
+    private volatile KillResult lastKillResult = KillResult.SKIPPED;
+
     /** Taskkill MỌI instance đang chạy — best-effort, không ném exception. */
     void killProcessNow(String normalizedProcessName) {
         if (!windowsOs) {
             log.debug("Non-Windows — taskkill skipped for {}", normalizedProcessName);
+            lastKillResult = KillResult.SKIPPED;
             return;
         }
         // Tên file Windows tối đa 260 ký tự — taskkill IM không nhận quá dài
         if (normalizedProcessName.length() > 260) {
             log.warn("Process name too long for taskkill: {}", normalizedProcessName);
+            lastKillResult = KillResult.ERROR;
             return;
         }
-        executeTaskkill(normalizedProcessName);
+        lastKillResult = executeTaskkill(normalizedProcessName);
+    }
+
+    /** Gọi kill và trả kết quả của lần gọi này (dùng seam killProcessNow cho test). */
+    KillResult killProcessWithResult(String normalizedProcessName) {
+        killProcessNow(normalizedProcessName);
+        return lastKillResult != null ? lastKillResult : KillResult.SKIPPED;
     }
 
     /** Chạy {@code taskkill /F /IM <name>} với đầy đủ phòng thủ (5s timeout). */
-    private void executeTaskkill(String processName) {
+    private KillResult executeTaskkill(String processName) {
         Process process = null;
         try {
             process = new ProcessBuilder("taskkill", "/F", "/IM", processName)
@@ -257,24 +319,34 @@ public class ProcessBlockerManager {
             if (!process.waitFor(TASKKILL_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 log.warn("taskkill timed out for {}", processName);
-                return;
+                return KillResult.ERROR;
             }
             // taskkill exit 0 = đã kill; exit 128 = không tìm thấy process (bình
-            // thường — app chưa chạy); khác → log WARN rút gọn.
+            // thường — app chưa chạy); exit 5 = Access Denied (app elevated).
             int exitCode = process.exitValue();
             if (exitCode == 0) {
                 log.info("Blocked process killed: {}", processName);
-            } else if (exitCode != 128) {
-                log.debug("taskkill exit {} for {} (có thể chưa chạy/thiếu quyền)",
-                        exitCode, processName);
+                return KillResult.KILLED;
             }
+            if (exitCode == 128) {
+                return KillResult.NOT_RUNNING;
+            }
+            if (exitCode == 5) {
+                log.warn("taskkill ACCESS DENIED for {} — app elevated/chạy quyền cao hơn Client",
+                        processName);
+                return KillResult.ACCESS_DENIED;
+            }
+            log.debug("taskkill exit {} for {} (không xác định)", exitCode, processName);
+            return KillResult.ERROR;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (process != null) {
                 process.destroyForcibly();
             }
+            return KillResult.ERROR;
         } catch (IOException | RuntimeException e) {
             log.warn("taskkill failed for {}: {}", processName, e.getMessage());
+            return KillResult.ERROR;
         }
     }
 
@@ -310,7 +382,7 @@ public class ProcessBlockerManager {
         return blocked;
     }
 
-    private void saveBlockedProcesses(Set<String> blocked) {
+    private boolean saveBlockedProcesses(Set<String> blocked) {
         try {
             if (listFilePath.getParent() != null) {
                 Files.createDirectories(listFilePath.getParent());
@@ -328,8 +400,10 @@ public class ProcessBlockerManager {
             } catch (java.nio.file.AtomicMoveNotSupportedException e) {
                 Files.move(temp, listFilePath, StandardCopyOption.REPLACE_EXISTING);
             }
+            return true;
         } catch (IOException | RuntimeException e) {
             log.warn("Failed to save blocked processes ({}): {}", listFilePath, e.getMessage());
+            return false;
         }
     }
 }

@@ -30,4 +30,13 @@ public interface ClientConnectionListener {
     default void onActivityReport(ClientSession session,
             com.parental.common.protocol.payload.ActivityReportPayload activity) {
     }
+
+    /**
+     * Client vừa ACK kết quả áp dụng CONFIG_SYNC (PROTOCOL.md Mục 3.5) —
+     * status {@code APPLIED}/{@code PARTIAL}/{@code FAILED}. Dashboard dùng để
+     * không báo "thành công" chỉ vì gói đã gửi đi.
+     */
+    default void onConfigAck(ClientSession session, long revision,
+            String status, String message) {
+    }
 }

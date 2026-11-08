@@ -28,6 +28,7 @@ import com.parental.common.protocol.JsonProtocolParser;
 import com.parental.common.protocol.MessageType;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.ScreenFramePayload;
 
 /**
  * Integration Test cho Server TCP Engine: khởi động server thật trên dynamic
@@ -369,6 +370,48 @@ class TcpServerEngineIntegrationTest {
             MetricsPayload m = engine.getSessionManager().get("client-metrics").getLastMetrics();
             return m != null && m.downloadBytes() == 20_000;
         });
+
+        client.socket().close();
+    }
+
+    @Test
+    @DisplayName("STREAM_FRAME hỏng bị loại an toàn; handler vẫn sống và nhận frame hợp lệ sau đó")
+    void invalidStreamFramesAreDroppedWithoutKillingHandler() throws Exception {
+        String clientId = "client-frames";
+        String validJpeg =
+                "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+                + "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPDs0NDT/wAALCAABAAEBAREA/8QAFAABAAAAAAAA"
+                + "AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
+        FakeClient client = connectAndHandshake(clientId, "Laptop-ConTrai");
+        awaitCondition("session sẵn sàng", Duration.ofSeconds(10),
+                () -> engine.getSessionManager().get(clientId) != null);
+        ClientSession session = engine.getSessionManager().get(clientId);
+
+        // 1) payload null/sai kiểu (JSON object rỗng) — trước đây có thể NPE.
+        client.send(parser, BaseMessage.of(MessageType.STREAM_FRAME, clientId, java.util.Map.of()));
+        // 2) jpegBase64 rỗng.
+        client.send(parser, BaseMessage.of(MessageType.STREAM_FRAME, clientId,
+                new ScreenFramePayload(960, 540, "", 0.7, 1, 1_700_000_000_000L)));
+        // 3) Base64 hợp lệ nhưng không phải JPEG.
+        client.send(parser, BaseMessage.of(MessageType.STREAM_FRAME, clientId,
+                new ScreenFramePayload(960, 540, "AAAA", 0.7, 2, 1_700_000_000_001L)));
+        // 4) kích thước phi lý.
+        client.send(parser, BaseMessage.of(MessageType.STREAM_FRAME, clientId,
+                new ScreenFramePayload(999_999, 999_999, validJpeg, 0.7, 3, 1_700_000_000_002L)));
+
+        // 5) frame hợp lệ — phải được lưu, chứng tỏ handler không chết vì 4 gói trên.
+        client.send(parser, BaseMessage.of(MessageType.STREAM_FRAME, clientId,
+                new ScreenFramePayload(960, 540, validJpeg, 0.7, 4, 1_700_000_000_003L)));
+
+        awaitCondition("frame hợp lệ được lưu vào session", Duration.ofSeconds(10),
+                () -> session.getLastStreamFrame() != null);
+        assertEquals(4, session.getLastStreamFrame().seqNo());
+
+        // Handler vẫn phản hồi HEARTBEAT sau các frame hỏng.
+        client.send(parser, BaseMessage.of(MessageType.HEARTBEAT, clientId, java.util.Map.of()));
+        String ackLine = client.reader().readLine();
+        assertNotNull(ackLine, "Handler phải còn sống sau các STREAM_FRAME hỏng");
+        assertEquals(MessageType.ACK, parser.fromLine(ackLine).getType());
 
         client.socket().close();
     }

@@ -1,6 +1,7 @@
 package com.parental.client.enforcement;
 
 import java.io.IOException;
+import java.net.IDN;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
@@ -85,6 +86,17 @@ public class HostsFileManager {
 
     private final Path hostsFilePath;
     private final Path backupFilePath;
+    /** Khóa đường lách DoH/QUIC/URLBlocklist — nullable (test/legacy không dùng). */
+    private final BrowserBypassEnforcer bypassEnforcer;
+
+    /**
+     * Kết quả áp dụng thật (không phải "đã gửi"): {@code applied} = không có
+     * lỗi chính; {@code changed} = hosts có thay đổi; {@code bypassFullyLocked}
+     * = DoH + QUIC (+ URLBlocklist nếu có domain) đều thành công.
+     */
+    public record ApplyResult(boolean applied, boolean changed,
+                              boolean bypassFullyLocked, String message) {
+    }
 
     /** Suy đường dẫn hosts theo OS hiện hành (Windows qua env SystemRoot). */
     public static Path defaultHostsPath() {
@@ -109,9 +121,19 @@ public class HostsFileManager {
      *                      KHÔNG BAO GIỜ đụng hosts thật trong test)
      */
     public HostsFileManager(Path hostsFilePath) {
+        this(hostsFilePath, null);
+    }
+
+    /**
+     * @param hostsFilePath đường dẫn hosts
+     * @param bypassEnforcer enforcer DoH/QUIC/URLBlocklist — null = chỉ hosts
+     *                       (test cũ/legacy), không giả vờ đã khóa đường lách
+     */
+    public HostsFileManager(Path hostsFilePath, BrowserBypassEnforcer bypassEnforcer) {
         this.hostsFilePath = hostsFilePath;
         this.backupFilePath = hostsFilePath.resolveSibling(
                 hostsFilePath.getFileName() + BACKUP_SUFFIX);
+        this.bypassEnforcer = bypassEnforcer;
     }
 
     public Path getHostsFilePath() {
@@ -120,6 +142,11 @@ public class HostsFileManager {
 
     public Path getBackupFilePath() {
         return backupFilePath;
+    }
+
+    /** Có enforcer DoH/QUIC/URLBlocklist được nối chưa (production phải có). */
+    public boolean isBypassConfigured() {
+        return bypassEnforcer != null;
     }
 
     // ------------------------------------------------------------------
@@ -137,11 +164,51 @@ public class HostsFileManager {
      *         hoặc I/O lỗi (đã log WARN, không ném exception)
      */
     public boolean applyBlockedDomains(List<String> domains) {
+        return applyBlockedDomainsDetailed(domains).changed();
+    }
+
+    /**
+     * Áp dụng domain và trả kết quả THẬT cho tầng ACK: hosts có ghi được
+     * không, bypass DoH/QUIC/URLBlocklist có khóa đủ không, lỗi cụ thể là gì.
+     * Không bao giờ ném exception.
+     */
+    public ApplyResult applyBlockedDomainsDetailed(List<String> domains) {
         List<String> sanitized = sanitizeDomains(domains);
         if (sanitized.isEmpty()) {
             log.info("Empty blocked-domains list — clearing hosts block instead");
-            return clearBlocks();
+            return clearBlocksDetailed();
         }
+        boolean hadBlock = false;
+        try {
+            String original = readHostsSafely();
+            hadBlock = original.contains(MARKER_START)
+                    || original.contains(LEGACY_MARKER_START);
+        } catch (IOException | RuntimeException e) {
+            log.debug("Cannot inspect current hosts block state: {}", e.getMessage());
+        }
+
+        // Khóa đường lách TRƯỚC khi ghi hosts (đúng thứ tự wiring cũ).
+        // URLBlocklist nhận cả alias/subdomain mở rộng (youtu.be, m.youtube.com...)
+        // vì policy một domain gốc không tự bao phủ alias khác tên miền.
+        List<String> policyDomains = new ArrayList<>();
+        for (String domain : sanitized) {
+            policyDomains.addAll(expandDomainAliases(domain));
+        }
+        boolean bypassOk = true;
+        String bypassMessage = "bypass=disabled";
+        if (bypassEnforcer != null) {
+            try {
+                BrowserBypassEnforcer.LockStatus status =
+                        bypassEnforcer.lockBypassPathsWithStatus(policyDomains);
+                bypassOk = status.fullyLocked();
+                bypassMessage = status.message();
+            } catch (RuntimeException e) {
+                bypassOk = false;
+                bypassMessage = "bypass error: " + e.getMessage();
+                log.warn("Browser bypass lock failed: {}", e.getMessage());
+            }
+        }
+
         try {
             String original = readHostsSafely();
             ensureBackup(original);
@@ -155,14 +222,35 @@ public class HostsFileManager {
             // Windows: flush DNS cache — thay đổi hosts có hiệu lực ngay trong
             // trình duyệt không cần restart (defensive: lỗi chỉ log, không fail).
             flushDnsCache();
-            return true;
+            String message = "hosts=applied (" + sanitized.size() + " domains); " + bypassMessage;
+            return new ApplyResult(true, true, bypassOk, message);
         } catch (AccessDeniedException e) {
             log.warn("Lacking Administrator/root privileges to modify hosts file. "
                     + "Domain blocking is bypassed. ({})", e.getMessage());
-            return false;
+            rollbackBypassIfNoOldBlock(hadBlock);
+            return new ApplyResult(false, false, bypassOk,
+                    "hosts: thiếu quyền Administrator/root (" + e.getMessage() + "); " + bypassMessage);
         } catch (IOException | RuntimeException e) {
             log.warn("Failed to update hosts file ({}): {}", hostsFilePath, e.getMessage());
-            return false;
+            rollbackBypassIfNoOldBlock(hadBlock);
+            return new ApplyResult(false, false, bypassOk,
+                    "hosts: ghi thất bại (" + e.getMessage() + "); " + bypassMessage);
+        }
+    }
+
+    /**
+     * Nếu chưa từng có block mà ghi hosts thất bại, mở lại đường lách để không
+     * để máy ở trạng thái nửa khóa (DoH off/QUIC chặn nhưng không có block).
+     */
+    private void rollbackBypassIfNoOldBlock(boolean hadBlock) {
+        if (hadBlock || bypassEnforcer == null) {
+            return;
+        }
+        try {
+            bypassEnforcer.unlockBypassPaths();
+            log.info("Bypass lock rolled back because hosts write failed and no old block exists");
+        } catch (RuntimeException e) {
+            log.warn("Bypass rollback failed: {}", e.getMessage());
         }
     }
 
@@ -175,23 +263,45 @@ public class HostsFileManager {
      *         nếu không cần ghi hoặc ghi lỗi (không ném exception)
      */
     public boolean clearBlocks() {
+        return clearBlocksDetailed().changed();
+    }
+
+    /**
+     * Xóa block và trả kết quả thật. Không có marker = thành công (không cần
+     * làm gì) — khác {@link #clearBlocks()} vốn giữ semantic "có thay đổi".
+     */
+    public ApplyResult clearBlocksDetailed() {
         try {
             String original = readHostsSafely();
-            if (!original.contains(MARKER_START)) {
+            if (!original.contains(MARKER_START) && !original.contains(LEGACY_MARKER_START)) {
                 log.debug("No parental block present in hosts file — nothing to clear");
-                return false;
+                unlockBypassIfNeeded();
+                return new ApplyResult(true, false, true, "hosts: already clear");
             }
             ensureBackup(original);
             atomicWrite(stripMarkerBlock(original).stripTrailing() + System.lineSeparator());
             log.info("Parental block removed from hosts file ({})", hostsFilePath);
-            return true;
+            unlockBypassIfNeeded();
+            return new ApplyResult(true, true, true, "hosts: cleared");
         } catch (AccessDeniedException e) {
             log.warn("Lacking Administrator/root privileges to modify hosts file. "
                     + "Domain blocking is bypassed. ({})", e.getMessage());
-            return false;
+            return new ApplyResult(false, false, false,
+                    "hosts: thiếu quyền Administrator/root (" + e.getMessage() + ")");
         } catch (IOException | RuntimeException e) {
             log.warn("Failed to clear hosts block ({}): {}", hostsFilePath, e.getMessage());
-            return false;
+            return new ApplyResult(false, false, false, "hosts: xóa block thất bại (" + e.getMessage() + ")");
+        }
+    }
+
+    private void unlockBypassIfNeeded() {
+        if (bypassEnforcer == null) {
+            return;
+        }
+        try {
+            bypassEnforcer.unlockBypassPaths();
+        } catch (RuntimeException e) {
+            log.warn("Bypass unlock failed: {}", e.getMessage());
         }
     }
 
@@ -223,19 +333,51 @@ public class HostsFileManager {
     // Helpers
     // ------------------------------------------------------------------
 
-    /** Chuẩn hóa danh sách domain: lowercase, bỏ trùng, bỏ blank — null-safe. */
+    /**
+     * Chuẩn hóa + kiểm tra domain trước khi ghi hosts: lowercase, bỏ dấu chấm
+     * cuối, bỏ {@code *.}, chuyển IDN sang punycode; chỉ nhận hostname hợp lệ
+     * (chặn newline/khoảng trắng/dấu hai chấm để không inject dòng hosts).
+     *
+     * @return domain chuẩn hóa hoặc {@code null} nếu không hợp lệ
+     */
+    static String normalizeDomain(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String cleaned = raw.trim().toLowerCase(Locale.ROOT);
+        if (cleaned.startsWith("*.")) {
+            cleaned = cleaned.substring(2);
+        }
+        while (cleaned.endsWith(".")) {
+            cleaned = cleaned.substring(0, cleaned.length() - 1);
+        }
+        if (cleaned.isEmpty() || cleaned.length() > 253) {
+            return null;
+        }
+        try {
+            cleaned = IDN.toASCII(cleaned, IDN.ALLOW_UNASSIGNED).toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (!cleaned.matches("(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
+                + "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) {
+            return null;
+        }
+        return cleaned;
+    }
+
+    /** Chuẩn hóa danh sách domain: lowercase, bỏ trùng, bỏ blank/không hợp lệ — null-safe. */
     static List<String> sanitizeDomains(List<String> domains) {
         if (domains == null || domains.isEmpty()) {
             return Collections.emptyList();
         }
         Set<String> unique = new LinkedHashSet<>();
         for (String domain : domains) {
-            if (domain == null) {
-                continue;
-            }
-            String cleaned = domain.trim().toLowerCase(Locale.ROOT);
-            if (!cleaned.isBlank()) {
+            String cleaned = normalizeDomain(domain);
+            if (cleaned != null) {
                 unique.add(cleaned);
+            } else if (domain != null && !domain.isBlank()) {
+                log.warn("Ignoring invalid blocked domain (possible hosts injection): {}", domain);
             }
         }
         return new ArrayList<>(unique);
@@ -280,6 +422,10 @@ public class HostsFileManager {
         if (!hasCurrent && !hasLegacy) {
             return content;
         }
+        // Nếu marker start bị mất end (file bị sửa tay/hỏng), KHÔNG nuốt toàn
+        // bộ phần còn lại của hosts: chỉ bỏ dòng marker start, giữ nội dung
+        // người dùng. Đây là lỗi dữ liệu thật đã gặp với marker thiếu end.
+        boolean hasAnyEnd = content.contains(MARKER_END) || content.contains(LEGACY_MARKER_END);
         StringBuilder sb = new StringBuilder(content.length());
         boolean inBlock = false;
         for (String line : content.split("\n", -1)) {
@@ -287,6 +433,10 @@ public class HostsFileManager {
             boolean isStart = trimmed.equals(MARKER_START) || trimmed.equals(LEGACY_MARKER_START);
             boolean isEnd = trimmed.equals(MARKER_END) || trimmed.equals(LEGACY_MARKER_END);
             if (isStart) {
+                if (!hasAnyEnd) {
+                    log.warn("Unclosed parental marker in hosts — removing marker only, preserving content");
+                    continue;
+                }
                 inBlock = true;
                 continue;
             }
@@ -342,7 +492,10 @@ public class HostsFileManager {
         if (domain == null || domain.isBlank()) {
             return List.of();
         }
-        String clean = domain.trim().toLowerCase(Locale.ROOT);
+        String clean = normalizeDomain(domain);
+        if (clean == null) {
+            return List.of();
+        }
         variants.add(clean);
         // Domain đã có sẵn www./m. → KHÔNG nhân bản www.www/m.m (giữ hành vi cũ)
         if (!clean.startsWith(WWW_PREFIX)) {

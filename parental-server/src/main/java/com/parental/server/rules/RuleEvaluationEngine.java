@@ -84,6 +84,9 @@ public class RuleEvaluationEngine {
 
     private ScheduledExecutorService scheduler;
     private volatile boolean running;
+    /** Số hiệu CONFIG_SYNC tăng đơn điệu — client ACK lại để chống nhầm lần đẩy. */
+    private final java.util.concurrent.atomic.AtomicLong configRevision =
+            new java.util.concurrent.atomic.AtomicLong();
 
     /** Chạy cùng DB thực (Task 4.1) — chu kỳ quét mặc định 30s. */
     public RuleEvaluationEngine(ClientSessionManager sessionManager,
@@ -249,14 +252,25 @@ public class RuleEvaluationEngine {
         return null;
     }
 
-    /** Giây đã dùng trong ngày, tích lũy từ chênh lệch metrics phía server. */
+    /**
+     * Giây đã dùng trong ngày, tích lũy từ chênh lệch metrics phía server.
+     *
+     * <p>Ưu tiên tổng tích lũy theo ngày trong DB cho CẢ client cũ (không gửi
+     * {@code sessionStartTimestamp}): trước đây client cũ dùng thẳng
+     * {@code sessionDurationSeconds} nên restart tiến trình làm đồng hồ về 0
+     * → hạn mức thời gian bị reset lậu. {@code metrics_daily_usage} đã xử lý
+     * restart bằng việc phát hiện duration giảm (xem {@code MetricsDao.insert}).
+     * Fallback về duration phiên khi chưa có bản ghi ngày nào (DB mới/lỗi ghi)
+     * để enforcement không bị mất hoàn toàn.</p>
+     */
     private long getUsedSeconds(ClientSession session) {
         MetricsPayload metrics = session.getLastMetrics();
         if (metrics == null) {
             return 0L;
         }
-        if (metrics.sessionStartTimestamp() > 0) {
-            return metricsDao.getTodayUsageSeconds(session.getClientId());
+        long dailySeconds = metricsDao.getTodayUsageSeconds(session.getClientId());
+        if (dailySeconds > 0) {
+            return dailySeconds;
         }
         return metrics.sessionDurationSeconds();
     }
@@ -312,6 +326,38 @@ public class RuleEvaluationEngine {
             log.info("[{}] Manual resume — enforcement released", clientId);
         }
         return commandId;
+    }
+
+    /**
+     * Gửi lệnh nguồn/phiên từ xa (Tính năng 3.4) — CHỈ allowlist 4 hành động,
+     * dùng chung {@link #sendCommand} để ghi {@code command_logs} (audit).
+     * Không đánh dấu "enforced" vì đây không phải khóa mạng.
+     *
+     * @param action LOCK_SESSION / LOGOFF_SESSION / RESTART_DEVICE / SHUTDOWN_DEVICE
+     * @return commandId nếu đã gửi; {@code null} nếu action ngoài allowlist,
+     *         client offline hoặc gửi lỗi
+     */
+    public String sendPowerCommand(String clientId, ActionType action, String reason) {
+        if (action == null || !isPowerAction(action)) {
+            log.warn("Power command rejected: {} is not in the allowlist", action);
+            return null;
+        }
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || session.isClosed()) {
+            log.warn("Power command {} skipped: client [{}] not online", action, clientId);
+            return null;
+        }
+        String safeReason = reason != null && !reason.isBlank()
+                ? reason : "Remote power action requested by parent";
+        return sendCommand(session, action, safeReason, false);
+    }
+
+    /** Allowlist tập trung — Dashboard và API đều dùng chung kiểm tra này. */
+    static boolean isPowerAction(ActionType action) {
+        return action == ActionType.LOCK_SESSION
+                || action == ActionType.LOGOFF_SESSION
+                || action == ActionType.RESTART_DEVICE
+                || action == ActionType.SHUTDOWN_DEVICE;
     }
 
     /**
@@ -392,16 +438,18 @@ public class RuleEvaluationEngine {
         java.util.List<String> domains = ruleDao.getBlockedDomains(clientId);
         // Mở rộng 11: đồng bộ CẢ danh sách chặn tiến trình (REPLACE-ALL)
         java.util.List<String> blockedProcesses = ruleDao.getBlockedProcesses(clientId);
+        long revision = configRevision.incrementAndGet();
         ConfigSyncPayload payload = rule != null
                 ? new ConfigSyncPayload(domains,
                         rule.dailyUsageLimitSeconds(), rule.dailyTrafficQuotaBytes(),
-                        rule.allowedStartTime(), rule.allowedEndTime(), blockedProcesses)
-                : new ConfigSyncPayload(domains, 0, 0, null, null, blockedProcesses);
+                        rule.allowedStartTime(), rule.allowedEndTime(), blockedProcesses,
+                        revision)
+                : new ConfigSyncPayload(domains, 0, 0, null, null, blockedProcesses, revision);
         boolean sent = session.send(BaseMessage.of(
                 MessageType.CONFIG_SYNC, ClientHandler.SERVER_ID, payload));
         if (sent) {
-            log.info("[{}] CONFIG_SYNC pushed ({} domains, {} blocked processes, usage {}s, quota {}B, schedule {}-{})",
-                    clientId, domains.size(), blockedProcesses.size(),
+            log.info("[{}] CONFIG_SYNC pushed (rev={}, {} domains, {} blocked processes, usage {}s, quota {}B, schedule {}-{})",
+                    clientId, revision, domains.size(), blockedProcesses.size(),
                     payload.dailyUsageLimitSeconds(), payload.dailyTrafficQuotaBytes(),
                     payload.allowedStartTime(), payload.allowedEndTime());
         }

@@ -78,6 +78,18 @@ public class ClientSessionManager {
         }
     }
 
+    /** Fire callback ACK CONFIG_SYNC cho mọi listener (Dashboard hiển thị thật). */
+    public void fireConfigAck(ClientSession session, long revision,
+            String status, String message) {
+        for (ClientConnectionListener listener : listeners) {
+            try {
+                listener.onConfigAck(session, revision, status, message);
+            } catch (RuntimeException e) {
+                log.error("ConnectionListener.onConfigAck threw: {}", e.getMessage());
+            }
+        }
+    }
+
     /**
      * Đăng ký phiên mới. Nếu clientId đã tồn tại (reconnect đè lên) thì phiên
      * cũ bị đóng trước khi thay thế (reason REPLACED) để không rò rỉ socket.

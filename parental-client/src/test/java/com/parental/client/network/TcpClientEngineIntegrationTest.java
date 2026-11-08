@@ -265,7 +265,10 @@ class TcpClientEngineIntegrationTest {
         engine = newEngine(recordingHandler);
         engine.start();
         assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
-        assertTrue(engine.isConnected());
+        // awaitHandshake() mở latch ngay khi fake server ĐỌC được HANDSHAKE,
+        // còn connector set connected=true SAU khi performHandshake() trả về.
+        // Chờ có timeout thay vì assert tức thì — tránh race/flaky.
+        awaitCondition("client connected sau handshake", AWAIT_TIMEOUT_MS, engine::isConnected);
 
         long start = System.currentTimeMillis();
         engine.stop();
@@ -290,7 +293,7 @@ class TcpClientEngineIntegrationTest {
         engine.start();
         engine.start(); // lần 2 no-op
         assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS));
-        assertTrue(engine.isConnected());
+        awaitCondition("client connected sau handshake", AWAIT_TIMEOUT_MS, engine::isConnected);
 
         engine.stop();
         engine.stop(); // lần 2 an toàn

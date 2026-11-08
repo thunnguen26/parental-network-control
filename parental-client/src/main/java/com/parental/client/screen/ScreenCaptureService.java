@@ -50,7 +50,7 @@ import com.parental.common.protocol.payload.StreamControlPayload;
  * riêng từ {@code TcpClientEngine} — không block các luồng heartbeat/COMMAND/
  * reader.</p>
  */
-public final class ScreenCaptureService {
+public class ScreenCaptureService {
 
     private static final Logger log = LoggerFactory.getLogger(ScreenCaptureService.class);
 
@@ -93,8 +93,12 @@ public final class ScreenCaptureService {
         try {
             robot = new Robot();
             robot.setAutoDelay(0);
-        } catch (AWTException e) {
+        } catch (AWTException | RuntimeException e) {
+            // HeadlessException (môi trường không có display) là RuntimeException:
+            // trước đây nó thoát ra khỏi handleStreamControl làm chết luồng đọc
+            // socket. Bắt cả 2 → stream tắt an toàn, engine vẫn chạy bình thường.
             log.error("Cannot create Robot for screen capture: {}", e.getMessage());
+            robot = null;
             started.set(false);
             return;
         }

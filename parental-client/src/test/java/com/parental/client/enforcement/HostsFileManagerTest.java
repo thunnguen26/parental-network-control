@@ -322,6 +322,70 @@ class HostsFileManagerTest {
     }
 
     @Test
+    @DisplayName("Chặn hosts injection: newline/URL/wildcard được chuẩn hóa hoặc bỏ qua")
+    void sanitizesDomainsToPreventHostsInjection() throws Exception {
+        HostsFileManager manager = newManager(OS_LIKE_CONTENT);
+
+        assertTrue(manager.applyBlockedDomains(List.of(
+                "good.com",
+                "evil.com\n0.0.0.0 injected.example",
+                "https://bad.com/path",
+                "*.wild.com",
+                "TIKTOK.Com.")));
+
+        String content = read(hostsPathOf(manager));
+        assertTrue(content.contains("0.0.0.0  good.com"));
+        assertTrue(content.contains("0.0.0.0  wild.com"), "Wildcard *. được chuẩn hóa thành domain gốc");
+        assertTrue(content.contains("0.0.0.0  tiktok.com"), "Trailing dot + hoa/thường được chuẩn hóa");
+        assertFalse(content.contains("injected.example"),
+                "Domain chứa newline KHÔNG được inject dòng hosts mới");
+        assertFalse(content.contains("https://bad.com"), "URL không phải hostname bị bỏ");
+    }
+
+    @Test
+    @DisplayName("Marker start thiếu end: không nuốt nội dung hosts phía sau")
+    void unclosedMarkerDoesNotSwallowFollowingContent() throws Exception {
+        String broken = "127.0.0.1  localhost\n"
+                + HostsFileManager.MARKER_START + "\n"
+                + "0.0.0.0  old.example\n"
+                + "# user-content-after-broken-marker\n";
+        HostsFileManager manager = newManager(broken);
+
+        assertTrue(manager.applyBlockedDomains(List.of("new.example")));
+
+        String content = read(hostsPathOf(manager));
+        assertTrue(content.contains("# user-content-after-broken-marker"),
+                "Nội dung người dùng sau marker hỏng phải được giữ");
+        assertTrue(content.contains("0.0.0.0  new.example"));
+    }
+
+    @Test
+    @DisplayName("ApplyResult phản ánh bypass khóa một phần (không báo APPLIED giả)")
+    void detailedResultReportsPartialBypass() throws Exception {
+        HostsFileManager manager = new HostsFileManager(
+                tempDir.resolve("hosts-partial"), new BrowserBypassEnforcer(true) {
+                    @Override
+                    public BrowserBypassEnforcer.LockStatus lockBypassPathsWithStatus(List<String> domains) {
+                        return new BrowserBypassEnforcer.LockStatus(
+                                true, false, false, false, "DoH=off; QUIC=FAILED");
+                    }
+
+                    @Override
+                    public void unlockBypassPaths() {
+                        // no-op test
+                    }
+                });
+
+        HostsFileManager.ApplyResult result =
+                manager.applyBlockedDomainsDetailed(List.of("youtube.com"));
+
+        assertTrue(result.applied(), "Hosts vẫn ghi được");
+        assertTrue(result.changed());
+        assertFalse(result.bypassFullyLocked(), "QUIC lỗi → không được coi là đã khóa đủ");
+        assertTrue(result.message().contains("QUIC=FAILED"));
+    }
+
+    @Test
     @DisplayName("File hosts chưa tồn tại: apply tự tạo file với block marker")
     void applyCreatesMissingHostsFile() throws Exception {
         HostsFileManager manager = newManager(null); // file chưa tồn tại

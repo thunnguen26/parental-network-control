@@ -48,6 +48,12 @@ public class ClientSession {
     /** Hoạt động gần nhất (ACTIVITY_REPORT — Mục 3.9): "đang mở gì" cho Dashboard. */
     private volatile com.parental.common.protocol.payload.ActivityReportPayload lastActivity;
 
+    /** ACK áp dụng CONFIG_SYNC gần nhất (revision/status/message) — hiển thị GUI. */
+    private volatile long lastConfigRevision;
+    private volatile String lastConfigStatus;
+    private volatile String lastConfigMessage;
+    private volatile long lastConfigAckTimestampMs;
+
     /**
      * Chữ ký dedup nhật ký: {@code process + '\u0000' + title} của bản ghi
      * HOẠT ĐỘNG gần nhất ĐÃ ghi DB (khác {@code lastActivity} — thể hiện
@@ -200,6 +206,30 @@ public class ClientSession {
 
     public void setLastStreamFrame(ScreenFramePayload lastStreamFrame) {
         this.lastStreamFrame = lastStreamFrame;
+    }
+
+    /** Ghi nhận ACK CONFIG_SYNC thật từ client (status APPLIED/PARTIAL/FAILED). */
+    public void setLastConfigAck(long revision, String status, String message) {
+        this.lastConfigRevision = revision;
+        this.lastConfigStatus = status;
+        this.lastConfigMessage = message;
+        this.lastConfigAckTimestampMs = System.currentTimeMillis();
+    }
+
+    public long getLastConfigRevision() {
+        return lastConfigRevision;
+    }
+
+    public String getLastConfigStatus() {
+        return lastConfigStatus;
+    }
+
+    public String getLastConfigMessage() {
+        return lastConfigMessage;
+    }
+
+    public long getLastConfigAckTimestampMs() {
+        return lastConfigAckTimestampMs;
     }
 
     public long getLastHeartbeatTimestamp() {

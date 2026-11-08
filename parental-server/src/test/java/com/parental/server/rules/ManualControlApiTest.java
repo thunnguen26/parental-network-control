@@ -512,4 +512,63 @@ class ManualControlApiTest {
         assertNull(h.engine().blockProcess("offline-kid", "app.exe"), "Offline → null");
         assertNull(h.engine().blockProcess("kid-m17", "  "), "Tên rỗng → null");
     }
+
+    @Test
+    @DisplayName("Tính năng 3.4: sendPowerCommand online → COMMAND đúng action + audit SENT, không khóa mạng")
+    void sendPowerCommandOnline() {
+        Harness h = Harness.create();
+        FakeClientSession session = new FakeClientSession("kid-power-1");
+        h.sessions().register(session);
+        h.registerClient("kid-power-1");
+
+        String commandId = h.engine().sendPowerCommand("kid-power-1",
+                ActionType.SHUTDOWN_DEVICE, "Tắt máy theo yêu cầu phụ huynh");
+
+        assertNotNull(commandId);
+        assertEquals(1, countMessages(session.sent, MessageType.COMMAND,
+                ActionType.SHUTDOWN_DEVICE));
+        CommandPayload payload = (CommandPayload) session.sent.get(0).getPayload();
+        assertEquals(ActionType.SHUTDOWN_DEVICE, payload.action());
+        assertEquals("Tắt máy theo yêu cầu phụ huynh", payload.reason());
+        assertEquals("SENT", h.commandLogDao().getStatus(commandId));
+        assertFalse(h.engine().isEnforced("kid-power-1"),
+                "Lệnh nguồn không được đánh dấu khóa mạng");
+        assertFalse(h.engine().isManuallyEnforced("kid-power-1"));
+    }
+
+    @Test
+    @DisplayName("Tính năng 3.4: offline/action ngoài allowlist → null, không gửi, không ghi audit")
+    void sendPowerCommandRejectsOfflineAndNonAllowlisted() {
+        Harness h = Harness.create();
+        h.registerClient("kid-power-2"); // offline
+
+        assertNull(h.engine().sendPowerCommand("kid-power-2", ActionType.LOCK_SESSION, "x"));
+
+        FakeClientSession session = new FakeClientSession("kid-power-3");
+        h.sessions().register(session);
+        h.registerClient("kid-power-3");
+
+        assertNull(h.engine().sendPowerCommand("kid-power-3", ActionType.PAUSE_NETWORK, "x"),
+                "PAUSE_NETWORK không thuộc allowlist power");
+        assertNull(h.engine().sendPowerCommand("kid-power-3", ActionType.BLOCK_PROCESS, "x"));
+        assertNull(h.engine().sendPowerCommand("kid-power-3", null, "x"));
+        assertTrue(session.sent.isEmpty(), "Không được gửi COMMAND ngoài allowlist");
+    }
+
+    @Test
+    @DisplayName("Tính năng 3.4: reason blank → reason mặc định, commandId là UUID")
+    void sendPowerCommandUsesDefaultReason() {
+        Harness h = Harness.create();
+        FakeClientSession session = new FakeClientSession("kid-power-4");
+        h.sessions().register(session);
+        h.registerClient("kid-power-4");
+
+        String commandId = h.engine().sendPowerCommand("kid-power-4",
+                ActionType.LOCK_SESSION, "  ");
+
+        assertNotNull(commandId);
+        CommandPayload payload = (CommandPayload) session.sent.get(0).getPayload();
+        assertEquals("Remote power action requested by parent", payload.reason());
+        assertEquals(commandId, payload.commandId());
+    }
 }

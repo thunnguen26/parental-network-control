@@ -45,6 +45,41 @@ class ProcessBlockerManagerTest {
     }
 
     @Test
+    @DisplayName("taskkill Access Denied → policy persist nhưng accepted=false (không ACK)")
+    void accessDeniedKillIsNotAccepted() throws Exception {
+        Path file = tempDir.resolve("blocked-denied.json");
+        ProcessBlockerManager blocker = new ProcessBlockerManager(file, true) {
+            @Override
+            ProcessBlockerManager.KillResult killProcessWithResult(String normalizedProcessName) {
+                return ProcessBlockerManager.KillResult.ACCESS_DENIED;
+            }
+        };
+
+        ProcessBlockerManager.BlockResult result = blocker.blockProcessDetailed("elevatedgame");
+
+        assertTrue(result.persisted(), "Policy vẫn được lưu cho watchdog");
+        assertEquals(ProcessBlockerManager.KillResult.ACCESS_DENIED, result.killResult());
+        assertFalse(result.accepted(), "App elevated vẫn đang chạy → không được ACK thành công");
+        assertTrue(blocker.getBlockedProcesses().contains("elevatedgame.exe"));
+    }
+
+    @Test
+    @DisplayName("Không ghi được file danh sách → block/replace trả false, không kill giả")
+    void persistFailureIsReportedAndDoesNotKill() throws Exception {
+        Path notDirectory = tempDir.resolve("not-a-directory");
+        Files.writeString(notDirectory, "x");
+        Path impossible = notDirectory.resolve("blocked.json");
+        RecordingBlocker blocker = new RecordingBlocker(impossible, true);
+
+        assertFalse(blocker.blockProcess("somegame"),
+                "File không ghi được → không được báo đã chặn");
+        assertFalse(blocker.replaceBlockedProcesses(List.of("othergame")),
+                "REPLACE-ALL ghi thất bại → phải báo false");
+        assertTrue(blocker.killed.isEmpty(),
+                "Không được kill app khi policy chưa persist (server sẽ tưởng đã chặn)");
+    }
+
+    @Test
     @DisplayName("normalizeProcessName: thêm .exe, lowercase, từ chối rỗng/ký tự lạ/..")
     void normalizeProcessName() {
         assertEquals("somegame.exe", ProcessBlockerManager.normalizeProcessName("SomeGame"));

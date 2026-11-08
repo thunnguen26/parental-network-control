@@ -44,12 +44,21 @@ public class BrowserBypassEnforcer {
     public static final int PROCESS_TIMEOUT_SECONDS = 5;
 
     /**
+     * Các key policy Chromium mà trình duyệt đọc {@code URLBlocklist}. Dùng
+     * chung danh sách domain đang chặn: policy này chặn cả subdomain (ví dụ
+     * {@code youtube.com} chặn {@code consent.youtube.com}) và tự làm mới khi
+     * registry đổi mà không cần restart trình duyệt. Đây là lớp bổ sung cho
+     * hosts — hosts không hỗ trợ wildcard.
+     */
+    static final List<String> URL_BLOCKLIST_POLICY_KEYS = List.of(
+            "HKLM\\SOFTWARE\\Policies\\Chromium",
+            "HKLM\\SOFTWARE\\Policies\\Google\\Chrome",
+            "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge");
+
+    /**
      * Lệnh Registry tắt DoH của trình duyệt Chromium qua Group Policy — key
-     * {@code reg add ... /f} (ghi đè không hỏi). Path/property theo chính thức:
-     * Chrome = {@code HKLM\SOFTWARE\Policies\Google\Chrome}, Edge =
-     * {@code HKLM\SOFTWARE\Policies\Microsoft\Edge}, Brave dùng chung key
-     * Chromium, Cốc Cốc (browser.exe) build trên Chromium nên đọc chung key
-     * {@code Policies\Chromium}.
+     * {@code reg add ... /f} (ghi đè không hỏi). Chrome = key Google\Chrome,
+     * Edge = key Microsoft\Edge, Cốc Cốc/Brave dùng key Chromium.
      */
     static final List<String> DOH_DISABLE_COMMANDS = List.of(
             // Chromium chung (bao gồm Cốc Cốc build Chromium thuần)
@@ -61,6 +70,12 @@ public class BrowserBypassEnforcer {
             // Microsoft Edge
             "reg add HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge /v DnsOverHttpsMode /t REG_SZ /d off /f",
             "reg add HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge /v BuiltInDnsClientEnabled /t REG_DWORD /d 0 /f");
+
+    /** Kết quả khóa đường lách — dùng để báo cáo trung thực về Server/GUI. */
+    public record LockStatus(boolean dohDisabled, boolean quicBlocked,
+                             boolean urlBlocklistApplied, boolean fullyLocked,
+                             String message) {
+    }
 
     private final boolean windowsOs;
 
@@ -86,26 +101,99 @@ public class BrowserBypassEnforcer {
      * @return {@code true} nếu ít nhất 1 cơ chế lách bị vô hiệu thành công
      */
     public boolean lockBypassPaths() {
+        return lockBypassPathsWithStatus(List.of()).fullyLocked();
+    }
+
+    /**
+     * Khóa đường lách kèm trạng thái chi tiết và áp {@code URLBlocklist} cho
+     * danh sách domain. Chỉ {@code fullyLocked} khi CẢ DoH lẫn QUIC đều khóa
+     * được; nếu có domain thì {@code URLBlocklist} cũng phải ghi được. Trước
+     * đây hàm chỉ cần MỘT trong hai thành công nên vẫn báo "đã khóa" khi
+     * đường còn lại mở — đó là false success.
+     */
+    public LockStatus lockBypassPathsWithStatus(List<String> domains) {
         boolean dohOff = disableBrowserDoh();
         boolean quicBlocked = blockQuic();
+        boolean urlApplied = applyUrlBlocklist(domains);
         flushDnsAndNetbiosCache();
-        boolean any = dohOff || quicBlocked;
-        if (any) {
-            log.info("Browser bypass paths locked (dohOff={}, quicBlocked={}) — "
-                    + "hosts file enforcement is now effective", dohOff, quicBlocked);
+        boolean needsUrl = domains != null && !domains.isEmpty();
+        boolean fully = dohOff && quicBlocked && (!needsUrl || urlApplied);
+        String message = "DoH=" + (dohOff ? "off" : "FAILED")
+                + "; QUIC=" + (quicBlocked ? "blocked" : "FAILED")
+                + (needsUrl ? "; URLBlocklist=" + (urlApplied ? "applied" : "FAILED") : "");
+        if (fully) {
+            log.info("Browser bypass paths fully locked ({} ) — hosts + URLBlocklist effective", message);
         } else {
-            log.warn("Could NOT disable any browser bypass path (DoH/QUIC) — "
-                    + "browser may still bypass hosts file (kiểm tra quyền Administrator)");
+            log.warn("Browser bypass paths NOT fully locked ({}) — browser may still bypass; "
+                    + "kiểm tra quyền Administrator", message);
         }
-        return any;
+        return new LockStatus(dohOff, quicBlocked, urlApplied, fully, message);
     }
 
     /** Gỡ khóa khi resume/cleanup: mở lại QUIC + trả registry DoH về mặc định. */
     public void unlockBypassPaths() {
         removeQuicBlock();
         restoreBrowserDoh();
+        removeUrlBlocklist();
         flushDnsAndNetbiosCache();
-        log.info("Browser bypass paths unlocked — DoH registry policies removed, QUIC unblocked");
+        log.info("Browser bypass paths unlocked — DoH/URLBlocklist policies removed, QUIC unblocked");
+    }
+
+    /**
+     * Ghi policy {@code URLBlocklist} cho Chromium/Chrome/Edge. Entry dạng
+     * {@code domain.com} chặn cả subdomain; không dùng wildcard. Danh sách
+     * rỗng là no-op (unlock mới là nơi dọn policy cũ).
+     */
+    boolean applyUrlBlocklist(List<String> domains) {
+        if (!windowsOs) {
+            return true;
+        }
+        if (domains == null || domains.isEmpty()) {
+            return true;
+        }
+        StringBuilder json = new StringBuilder("[");
+        boolean first = true;
+        for (String domain : domains) {
+            if (domain == null || domain.isBlank()) {
+                continue;
+            }
+            String clean = domain.trim().toLowerCase(java.util.Locale.ROOT)
+                    .replace("\\", "").replace("\"", "");
+            if (clean.isEmpty()) {
+                continue;
+            }
+            if (!first) {
+                json.append(',');
+            }
+            json.append('"').append(clean).append('"');
+            first = false;
+        }
+        json.append(']');
+        if (first) {
+            return true; // toàn phần tử hỏng — không ghi policy rỗng
+        }
+        boolean allOk = true;
+        for (String key : URL_BLOCKLIST_POLICY_KEYS) {
+            allOk &= execute("reg", "add", key, "/v", "URLBlocklist",
+                    "/t", "REG_SZ", "/d", json.toString(), "/f");
+        }
+        if (allOk) {
+            log.info("URLBlocklist policy applied for {} domain(s) — subdomains covered",
+                    json.toString());
+        } else {
+            log.warn("URLBlocklist policy failed for at least one browser key");
+        }
+        return allOk;
+    }
+
+    /** Xóa policy URLBlocklist (khôi phục hành vi mặc định). */
+    private void removeUrlBlocklist() {
+        if (!windowsOs) {
+            return;
+        }
+        for (String key : URL_BLOCKLIST_POLICY_KEYS) {
+            execute("reg", "delete", key, "/v", "URLBlocklist", "/f");
+        }
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.parental.client.enforcement;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -87,6 +88,17 @@ class ConfigSyncHostsIntegrationTest {
         return engine;
     }
 
+    /** Hosts + bypass fake: mọi lệnh reg/netsh coi như thành công, không chạm máy thật. */
+    private HostsFileManager newHostsManager(Path hostsFile) {
+        BrowserBypassEnforcer bypass = new BrowserBypassEnforcer(true) {
+            @Override
+            boolean execute(String... command) {
+                return true;
+            }
+        };
+        return new HostsFileManager(hostsFile, bypass);
+    }
+
     private static void awaitCondition(String description, long timeoutMs,
                                        java.util.function.BooleanSupplier condition) {
         Instant deadline = Instant.now().plusMillis(timeoutMs);
@@ -109,7 +121,7 @@ class ConfigSyncHostsIntegrationTest {
     void fullBlacklistSyncUpdatesHostsFile() throws Exception {
         // Client đăng ký listener hosts trên temp file
         Path hostsFile = tempDir.resolve("hosts-test");
-        HostsFileManager hostsManager = new HostsFileManager(hostsFile);
+        HostsFileManager hostsManager = newHostsManager(hostsFile);
         String clientId = "blacklist-client-1";
 
         clientEngine = startClient(clientId, hostsManager);
@@ -142,6 +154,49 @@ class ConfigSyncHostsIntegrationTest {
         assertEquals(1,
                 content.split(java.util.regex.Pattern.quote(HostsFileManager.MARKER_START), -1).length - 1,
                 "Chỉ 1 khối marker duy nhất");
+
+        // ACK CONFIG_SYNC phải về Server kèm status thật (không chỉ "đã gửi").
+        awaitCondition("server nhận CONFIG_SYNC ACK có hosts=applied", AWAIT_TIMEOUT_MS, () -> {
+            var session = serverEngine.getSessionManager().get(clientId);
+            return session != null && "APPLIED".equals(session.getLastConfigStatus())
+                    && session.getLastConfigMessage() != null
+                    && session.getLastConfigMessage().contains("hosts=applied");
+        });
+        var session = serverEngine.getSessionManager().get(clientId);
+        assertTrue(session.getLastConfigRevision() > 0,
+                "ACK phải echo đúng revision của CONFIG_SYNC");
+        assertTrue(session.getLastConfigMessage().contains("hosts=applied"),
+                "Message phải phản ánh hosts thật sự được ghi");
+    }
+
+    @Test
+    @DisplayName("Hosts không ghi được → ACK PARTIAL kèm lỗi, KHÔNG báo APPLIED")
+    void hostsWriteFailureIsReportedAsPartial() throws Exception {
+        // Parent là file (không phải thư mục) → mọi OS đều không thể tạo hosts.
+        Path notDirectory = tempDir.resolve("not-a-directory");
+        Files.writeString(notDirectory, "x");
+        Path hostsFile = notDirectory.resolve("hosts");
+        HostsFileManager hostsManager = newHostsManager(hostsFile);
+        String clientId = "blacklist-client-4";
+
+        clientEngine = startClient(clientId, hostsManager);
+        awaitCondition("client ONLINE", AWAIT_TIMEOUT_MS, () ->
+                "ONLINE".equals(serverEngine.getClientDao().getStatus(clientId)));
+
+        serverEngine.getBlockedDomainDao().setBlockedDomains(clientId, List.of("youtube.com"));
+        assertTrue(serverEngine.pushConfigSync(clientId));
+
+        awaitCondition("server nhận ACK lỗi hosts", AWAIT_TIMEOUT_MS, () -> {
+            var session = serverEngine.getSessionManager().get(clientId);
+            return session != null && session.getLastConfigMessage() != null
+                    && session.getLastConfigMessage().contains("hosts: ghi");
+        });
+        var session = serverEngine.getSessionManager().get(clientId);
+        assertNotEquals("APPLIED", session.getLastConfigStatus(),
+                "Ghi hosts thất bại mà vẫn báo APPLIED là false success");
+        assertEquals("PARTIAL", session.getLastConfigStatus());
+        assertTrue(session.getLastConfigMessage().contains("hosts:"),
+                "Message phải nêu lỗi hosts: " + session.getLastConfigMessage());
     }
 
     @Test
@@ -149,7 +204,7 @@ class ConfigSyncHostsIntegrationTest {
     void emptyListClearsHostsBlock() throws Exception {
         Path hostsFile = tempDir.resolve("hosts-clear-test");
         Files.writeString(hostsFile, "127.0.0.1  localhost\n");
-        HostsFileManager hostsManager = new HostsFileManager(hostsFile);
+        HostsFileManager hostsManager = newHostsManager(hostsFile);
         String clientId = "blacklist-client-2";
 
         clientEngine = startClient(clientId, hostsManager);
@@ -187,7 +242,7 @@ class ConfigSyncHostsIntegrationTest {
     @DisplayName("CONFIG_SYNC đẩy đủ ConfigSyncPayload (domains + hạn mức) qua TCP")
     void configSyncPayloadCarriesFullConfig() throws Exception {
         Path hostsFile = tempDir.resolve("hosts-payload-test");
-        HostsFileManager hostsManager = new HostsFileManager(hostsFile);
+        HostsFileManager hostsManager = newHostsManager(hostsFile);
         String clientId = "blacklist-client-3";
 
         clientEngine = startClient(clientId, hostsManager);
