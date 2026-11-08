@@ -1,6 +1,7 @@
 package com.parental.client.identity;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
@@ -21,6 +22,7 @@ import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DocumentFilter;
 import javax.swing.text.PlainDocument;
+import javax.swing.border.Border;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +32,13 @@ import com.parental.client.device.DeviceInfoCollector;
 import com.parental.client.identity.PairingClient.PairingResult;
 import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.PairRequestPayload;
+import static com.parental.ui.DesktopTheme.CANVAS;
+import static com.parental.ui.DesktopTheme.CARD_BORDER;
+import static com.parental.ui.DesktopTheme.NAVY;
+import static com.parental.ui.DesktopTheme.NAVY_LIGHT;
+import static com.parental.ui.DesktopTheme.PRIMARY;
+import static com.parental.ui.DesktopTheme.TEXT_PRIMARY;
+import static com.parental.ui.DesktopTheme.roundedBorder;
 
 /**
  * Giao diện ghép đôi lần đầu (Swing/FlatLaf) — xuất hiện khi
@@ -58,7 +67,7 @@ public class ClientPairingFrame extends JFrame {
 
     private static final Logger log = LoggerFactory.getLogger(ClientPairingFrame.class);
 
-    private static final Font TITLE_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 16);
+    private static final Font TITLE_FONT = new Font("Segoe UI", Font.BOLD, 20);
 
     private final ClientIdentityManager identityManager;
     private final DeviceInfoCollector deviceInfoCollector;
@@ -120,52 +129,90 @@ public class ClientPairingFrame extends JFrame {
             }
         });
         setLayout(new BorderLayout(0, 8));
+        getContentPane().setBackground(CANVAS);
 
-        JLabel titleLabel = new JLabel("Kích hoạt thiết bị lần đầu", SwingConstants.CENTER);
+        JLabel titleLabel = new JLabel("Kích hoạt thiết bị lần đầu");
         titleLabel.setFont(TITLE_FONT);
-        titleLabel.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+        titleLabel.setForeground(Color.WHITE);
+        JLabel subtitle = new JLabel("Kết nối máy này với máy chủ phụ huynh");
+        subtitle.setForeground(new Color(0xD6, 0xE1, 0xF0));
+        JPanel heading = new JPanel(new BorderLayout(0, 4));
+        heading.setOpaque(false);
+        heading.setBackground(NAVY);
+        heading.setBorder(roundedBorder(NAVY, NAVY_LIGHT, 22,
+                new Insets(18, 24, 18, 24)));
+        heading.add(titleLabel, BorderLayout.NORTH);
+        heading.add(subtitle, BorderLayout.SOUTH);
 
         JPanel formPanel = new JPanel(new GridBagLayout());
-        formPanel.setBorder(BorderFactory.createEmptyBorder(10, 16, 10, 16));
+        formPanel.setOpaque(false);
+        formPanel.setBackground(Color.WHITE);
+        formPanel.setBorder(cardBorder());
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(6, 6, 6, 6);
+        gbc.insets = new Insets(9, 8, 9, 8);
         gbc.anchor = GridBagConstraints.WEST;
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
         gbc.gridx = 0;
         gbc.gridy = 0;
-        formPanel.add(new JLabel("IP Máy chủ:"), gbc);
+        formPanel.add(fieldLabel("Địa chỉ máy chủ"), gbc);
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         serverHostField.setText(defaultHost);
+        serverHostField.setToolTipText("Địa chỉ IP hoặc tên máy chủ đang chạy Parental Network Control");
         formPanel.add(serverHostField, gbc);
 
         gbc.gridx = 0;
         gbc.gridy = 1;
         gbc.weightx = 0;
-        formPanel.add(new JLabel("Mã PIN 6 số:"), gbc);
+        formPanel.add(fieldLabel("Mã ghép đôi"), gbc);
         gbc.gridx = 1;
         gbc.weightx = 1.0;
         pinField.setHorizontalAlignment(JTextField.CENTER);
         pinField.setFont(pinField.getFont().deriveFont(Font.BOLD, 18f));
+        pinField.setToolTipText("Nhập mã PIN 6 chữ số hiển thị trên Server");
         applyDigitsOnlyFilter(pinField);
         formPanel.add(pinField, gbc);
 
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 8));
+        buttonPanel.setOpaque(false);
         pairButton.addActionListener(event -> runPairingWorker());
+        pairButton.setBackground(PRIMARY);
+        pairButton.setForeground(Color.WHITE);
+        pairButton.setFocusPainted(false);
         buttonPanel.add(pairButton);
 
-        statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        statusLabel.setHorizontalAlignment(SwingConstants.LEFT);
+        statusLabel.setForeground(TEXT_PRIMARY);
+        statusLabel.setBorder(BorderFactory.createEmptyBorder(4, 2, 0, 2));
+        JPanel footer = new JPanel(new BorderLayout(0, 4));
+        footer.setOpaque(false);
+        footer.setBorder(BorderFactory.createEmptyBorder(0, 24, 16, 24));
+        footer.add(buttonPanel, BorderLayout.NORTH);
+        footer.add(statusLabel, BorderLayout.SOUTH);
 
-        add(titleLabel, BorderLayout.NORTH);
-        add(formPanel, BorderLayout.CENTER);
-        JPanel south = new JPanel(new BorderLayout(0, 4));
-        south.add(buttonPanel, BorderLayout.CENTER);
-        south.add(statusLabel, BorderLayout.SOUTH);
-        add(south, BorderLayout.SOUTH);
+        add(heading, BorderLayout.NORTH);
+        JPanel center = new JPanel(new BorderLayout());
+        center.setOpaque(false);
+        center.setBorder(BorderFactory.createEmptyBorder(14, 20, 4, 20));
+        center.add(formPanel, BorderLayout.CENTER);
+        add(center, BorderLayout.CENTER);
+        add(footer, BorderLayout.SOUTH);
 
-        setSize(430, 250);
+        setSize(520, 340);
+        setMinimumSize(new java.awt.Dimension(480, 320));
         setLocationRelativeTo(null);
+    }
+
+    private static JLabel fieldLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setForeground(TEXT_PRIMARY);
+        label.setFont(label.getFont().deriveFont(Font.BOLD, 13f));
+        return label;
+    }
+
+    private static Border cardBorder() {
+        return roundedBorder(Color.WHITE, CARD_BORDER, 18, new Insets(12, 14, 12, 14));
     }
 
     /** Chỉ cho nhập chữ số vào ô PIN (DocumentFilter — defensive UI). */

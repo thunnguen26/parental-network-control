@@ -25,6 +25,12 @@ import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.server.db.ClientRecord;
 import com.parental.server.db.RuleDao;
 import com.parental.server.db.RuleDao.RuleRecord;
+import static com.parental.ui.DesktopTheme.CANVAS;
+import static com.parental.ui.DesktopTheme.CARD_BORDER;
+import static com.parental.ui.DesktopTheme.PRIMARY;
+import static com.parental.ui.DesktopTheme.TEXT_PRIMARY;
+import static com.parental.ui.DesktopTheme.roundedBorder;
+import static com.parental.ui.DesktopTheme.roundPanel;
 
 /**
  * Dialog cấu hình chính sách cho MỘT client (Task 5.2 + Mở rộng 12):
@@ -130,6 +136,7 @@ final class PolicyConfigDialog extends JDialog {
 
     private void initUi() {
         setLayout(new BorderLayout(0, 8));
+        getContentPane().setBackground(CANVAS);
 
         // --- Blocked domains (Domain Blacklist Management) — nạp qua TestHook
         // (logic thuần tách riêng, headless-test được) ---
@@ -137,6 +144,7 @@ final class PolicyConfigDialog extends JDialog {
         PolicyConfigDialogTestHook.loadDomains(ruleDao, client.clientId(), domainListModel);
         JList<String> domainList = new JList<>(domainListModel);
         domainList.setVisibleRowCount(6);
+        stylePolicyList(domainList);
         domainField = new JTextField(18);
         domainField.setToolTipText("Mẹo gõ tiếng Việt: Chạy Unikey bằng Run as Administrator "
                 + "và bật 'Sử dụng clipboard cho Unicode'");
@@ -170,6 +178,7 @@ final class PolicyConfigDialog extends JDialog {
         PolicyConfigDialogTestHook.loadProcesses(ruleDao, client.clientId(), processListModel);
         JList<String> processList = new JList<>(processListModel);
         processList.setVisibleRowCount(5);
+        stylePolicyList(processList);
         processField = new JTextField(18);
         processField.setToolTipText("Ví dụ: somegame.exe — ứng dụng bị chặn sẽ bị kết thúc "
                 + "ngay và không mở lại được tới khi bỏ chặn");
@@ -189,9 +198,11 @@ final class PolicyConfigDialog extends JDialog {
         });
 
         JPanel processesPanel = new JPanel(new BorderLayout(0, 4));
-        processesPanel.setBorder(BorderFactory.createTitledBorder(
-                "Quản lý chặn ứng dụng / tiến trình (.exe)"));
-        processesPanel.add(new JScrollPane(processList), BorderLayout.CENTER);
+        stylePolicyPanel(processesPanel, "QUẢN LÝ ỨNG DỤNG / TIẾN TRÌNH");
+        JScrollPane processesScroll = new JScrollPane(processList);
+        processesScroll.setBorder(roundedBorder(Color.WHITE, CARD_BORDER, 12,
+                new Insets(1, 1, 1, 1)));
+        processesPanel.add(processesScroll, BorderLayout.CENTER);
         JPanel processEditPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
         processEditPanel.add(processField);
         processEditPanel.add(addProcessButton);
@@ -199,9 +210,11 @@ final class PolicyConfigDialog extends JDialog {
         processesPanel.add(processEditPanel, BorderLayout.SOUTH);
 
         JPanel domainsPanel = new JPanel(new BorderLayout(0, 4));
-        domainsPanel.setBorder(BorderFactory.createTitledBorder(
-                "Qu\u1EA3n l\u00FD Ch\u1EB7n T\u00EAn Mi\u1EC1n (Blacklist)"));
-        domainsPanel.add(new JScrollPane(domainList), BorderLayout.CENTER);
+        stylePolicyPanel(domainsPanel, "QUẢN LÝ CHẶN TÊN MIỀN");
+        JScrollPane domainsScroll = new JScrollPane(domainList);
+        domainsScroll.setBorder(roundedBorder(Color.WHITE, CARD_BORDER, 12,
+                new Insets(1, 1, 1, 1)));
+        domainsPanel.add(domainsScroll, BorderLayout.CENTER);
         JPanel domainEditPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
         domainEditPanel.add(domainField);
         domainEditPanel.add(addButton);
@@ -217,7 +230,7 @@ final class PolicyConfigDialog extends JDialog {
 
         // --- Hạn mức + khung giờ ---
         JPanel limitsPanel = new JPanel(new GridBagLayout());
-        limitsPanel.setBorder(BorderFactory.createTitledBorder("Hạn mức sử dụng"));
+        stylePolicyPanel(limitsPanel, "HẠN MỨC SỬ DỤNG");
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(4, 6, 4, 6);
         gbc.anchor = GridBagConstraints.WEST;
@@ -256,8 +269,12 @@ final class PolicyConfigDialog extends JDialog {
         // --- Nút lưu ---
         JButton saveButton = new JButton("Lưu & Đồng bộ ngay");
         saveButton.addActionListener(event -> saveAndSync());
+        saveButton.setBackground(PRIMARY);
+        saveButton.setForeground(Color.WHITE);
+        saveButton.setFocusPainted(false);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttonPanel.setOpaque(false);
         buttonPanel.add(saveButton);
 
         // --- Bố cục tab (Mở rộng 12): Tab 1 = Chặn Tên Miền, Tab 2 = Chặn
@@ -266,10 +283,31 @@ final class PolicyConfigDialog extends JDialog {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Chặn Tên Mi\u00ECnh", domainsPanel);
         tabs.addTab("Ch\u1EB7n Ti\u1EBFn Tr\u00ECnh / \u1EE8ng D\u1EE5ng", processesPanel);
+        tabs.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
 
-        add(limitsPanel, BorderLayout.NORTH);
-        add(tabs, BorderLayout.CENTER);
-        add(buttonPanel, BorderLayout.SOUTH);
+        JPanel content = new JPanel(new BorderLayout(0, 8));
+        content.setBackground(CANVAS);
+        content.setBorder(BorderFactory.createEmptyBorder(10, 10, 4, 10));
+        content.add(limitsPanel, BorderLayout.NORTH);
+        content.add(tabs, BorderLayout.CENTER);
+        add(content, BorderLayout.CENTER);
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.setOpaque(false);
+        footer.setBorder(BorderFactory.createEmptyBorder(0, 10, 8, 10));
+        footer.add(buttonPanel, BorderLayout.CENTER);
+        add(footer, BorderLayout.SOUTH);
+    }
+
+    private static void stylePolicyList(JList<String> list) {
+        list.setFixedCellHeight(30);
+        list.setSelectionBackground(new Color(0xDF, 0xEC, 0xFF));
+        list.setSelectionForeground(TEXT_PRIMARY);
+        list.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+    }
+
+    private static void stylePolicyPanel(JPanel panel, String title) {
+        panel.setBackground(Color.WHITE);
+        roundPanel(panel, title, 18);
     }
 
     /**

@@ -13,6 +13,7 @@
 
     <modules>
         <module>parental-common</module>
+        <module>parental-desktop-ui</module>
         <module>parental-server</module>
         <module>parental-client</module>
     </modules>
@@ -24,7 +25,7 @@
         <jackson.version>2.17.2</jackson.version>
         <slf4j.version>2.0.13</slf4j.version>
         <sqlite-jdbc.version>3.46.1.0</sqlite-jdbc.version>
-        <flatlaf.version>3.5.1</flatlaf.version>
+        <flatlaf.version>3.6</flatlaf.version>
         <oshi.version>6.6.5</oshi.version>
         <junit.version>5.10.2</junit.version>
         <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
@@ -36,6 +37,11 @@
             <dependency>
                 <groupId>com.parental</groupId>
                 <artifactId>parental-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.parental</groupId>
+                <artifactId>parental-desktop-ui</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

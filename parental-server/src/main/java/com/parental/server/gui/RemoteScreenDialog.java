@@ -27,6 +27,9 @@ import com.parental.server.network.ClientSession;
 import com.parental.server.network.ClientHandler;
 import com.parental.server.network.ClientSessionManager;
 import com.parental.server.stream.AdaptiveStreamController;
+import static com.parental.ui.DesktopTheme.CANVAS;
+import static com.parental.ui.DesktopTheme.PRIMARY;
+import static com.parental.ui.DesktopTheme.TEXT_PRIMARY;
 import java.util.Objects;
 
 /**
@@ -80,10 +83,14 @@ public final class RemoteScreenDialog extends JDialog {
         // KHÔNG chạy → client tiếp tục chụp/gửi frame mãi. DISPOSE buộc dọn stream.
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(8, 8));
+        getContentPane().setBackground(CANVAS);
 
         imagePanel = new ScreenImagePanel(new Dimension(960, 540), "Đang chờ khung hình...");
+        imagePanel.setBorder(javax.swing.BorderFactory.createLineBorder(
+                new java.awt.Color(0xD8, 0xE1, 0xED)));
 
         statusLabel = new JLabel("Phát hiện stream...", JLabel.CENTER);
+        statusLabel.setForeground(TEXT_PRIMARY);
 
         JPanel content = new JPanel(new BorderLayout(8, 8));
         content.setBorder(createEmptyBorder());
@@ -92,6 +99,9 @@ public final class RemoteScreenDialog extends JDialog {
 
         JButton closeButton = new JButton("Đóng");
         closeButton.addActionListener(event -> dispose());
+        closeButton.setBackground(PRIMARY);
+        closeButton.setForeground(java.awt.Color.WHITE);
+        closeButton.setFocusPainted(false);
         JButton maximizeButton = new JButton("Phóng to");
         Rectangle restoreBounds = getBounds();
         maximizeButton.addActionListener(event -> {

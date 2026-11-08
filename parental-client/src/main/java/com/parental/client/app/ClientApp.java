@@ -1,9 +1,9 @@
 package com.parental.client.app;
 
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Path;
 
 import javax.swing.SwingUtilities;
-import javax.swing.UIManager;
 
 import com.parental.client.activity.ActivityCollector;
 import com.parental.client.activity.LinuxActivityCollector;
@@ -24,6 +24,7 @@ import com.parental.client.metrics.ProcNetMetricsCollector;
 import com.parental.client.network.ServerCommandHandler;
 import com.parental.client.network.TcpClientEngine;
 import com.parental.common.protocol.JsonProtocolParser;
+import com.parental.ui.DesktopTheme;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,6 +65,16 @@ public class ClientApp {
 
     public static void main(String[] args) {
         log.info("Starting Parental Control Client Agent...");
+        if (!isHeadless()) {
+            try {
+                SwingUtilities.invokeAndWait(DesktopTheme::install);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while installing desktop theme", e);
+            } catch (InvocationTargetException e) {
+                throw new IllegalStateException("Could not install desktop theme", e.getCause());
+            }
+        }
 
         // Args tùy chọn vẫn được ưu tiên (khởi chạy thủ công), nhưng khi thiếu
         // thì dùng serverHost/serverPort ghi nhớ trong client_identity.json.
@@ -187,11 +198,6 @@ public class ClientApp {
         DeviceInfoCollector deviceInfoCollector = new DefaultDeviceInfoCollector();
 
         SwingUtilities.invokeLater(() -> {
-            try {
-                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception e) {
-                log.debug("System look-and-feel unavailable: {}", e.getMessage());
-            }
             ClientPairingFrame frame = new ClientPairingFrame(
                     identityManager, deviceInfoCollector, host,
                     () -> {

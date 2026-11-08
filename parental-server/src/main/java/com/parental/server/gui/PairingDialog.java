@@ -1,6 +1,7 @@
 package com.parental.server.gui;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
 import java.awt.event.WindowAdapter;
@@ -21,6 +22,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.parental.server.db.PairingDao;
+import static com.parental.ui.DesktopTheme.CANVAS;
+import static com.parental.ui.DesktopTheme.CARD_BORDER;
+import static com.parental.ui.DesktopTheme.NAVY;
+import static com.parental.ui.DesktopTheme.PRIMARY;
+import static com.parental.ui.DesktopTheme.SUCCESS;
+import static com.parental.ui.DesktopTheme.TEXT_PRIMARY;
+import static com.parental.ui.DesktopTheme.roundedBorder;
 
 /**
  * Dialog ghép đôi thiết bị mới (Server GUI — Device Pairing): hiển thị mã
@@ -79,13 +87,18 @@ public class PairingDialog extends JDialog {
 
     private void initUi() {
         setLayout(new BorderLayout(0, 10));
+        getContentPane().setBackground(CANVAS);
 
         // --- Khối PIN lớn giữa dialog ---
         JPanel pinPanel = new JPanel(new BorderLayout(0, 4));
-        pinPanel.setBorder(BorderFactory.createEmptyBorder(18, 24, 8, 24));
+        pinPanel.setOpaque(false);
+        pinPanel.setBorder(roundedBorder(Color.WHITE, CARD_BORDER, 22,
+                new java.awt.Insets(20, 24, 18, 24)));
         JLabel instructionLabel = new JLabel(
                 "Nhập mã này trên máy con để ghép đôi:", SwingConstants.CENTER);
+        instructionLabel.setForeground(TEXT_PRIMARY);
         pinLabel.setFont(PIN_FONT);
+        pinLabel.setForeground(PRIMARY);
         pinLabel.setHorizontalAlignment(SwingConstants.CENTER);
         pinPanel.add(instructionLabel, BorderLayout.NORTH);
         pinPanel.add(pinLabel, BorderLayout.CENTER);
@@ -93,15 +106,23 @@ public class PairingDialog extends JDialog {
         // --- Thanh đếm ngược ---
         countdownLabel.setHorizontalAlignment(SwingConstants.CENTER);
         countdownLabel.setFont(countdownLabel.getFont().deriveFont(Font.BOLD, 13f));
+        countdownLabel.setForeground(TEXT_PRIMARY);
 
         // --- Nút đổi PIN ---
         JPanel buttonPanel = new JPanel();
+        buttonPanel.setOpaque(false);
         regenerateButton.addActionListener(event -> createPinAndShow());
+        regenerateButton.setBackground(PRIMARY);
+        regenerateButton.setForeground(Color.WHITE);
+        regenerateButton.setFocusPainted(false);
         buttonPanel.add(regenerateButton);
 
         statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        statusLabel.setForeground(SUCCESS);
 
         JPanel south = new JPanel(new BorderLayout(0, 4));
+        south.setOpaque(false);
+        south.setBorder(BorderFactory.createEmptyBorder(0, 12, 12, 12));
         south.add(countdownLabel, BorderLayout.NORTH);
         south.add(buttonPanel, BorderLayout.CENTER);
         south.add(statusLabel, BorderLayout.SOUTH);
@@ -117,7 +138,8 @@ public class PairingDialog extends JDialog {
             }
         });
 
-        setSize(420, 300);
+        setSize(460, 340);
+        setMinimumSize(new java.awt.Dimension(420, 320));
         setLocationRelativeTo(getOwner());
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
     }
@@ -186,7 +208,7 @@ public class PairingDialog extends JDialog {
                             if (!isDisplayable() || !isVisible()) {
                                 return; // dialog đã đóng bằng tay — bỏ qua
                             }
-                            statusLabel.setText("✅ Thiết bị đã ghép đôi thành công!");
+                            statusLabel.setText("Thiết bị đã ghép đôi thành công");
                             stopWatchers();
                             if (onPairedCallback != null) {
                                 onPairedCallback.run();

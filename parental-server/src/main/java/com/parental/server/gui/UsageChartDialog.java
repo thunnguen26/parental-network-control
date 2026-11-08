@@ -1,6 +1,7 @@
 package com.parental.server.gui;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -26,6 +27,11 @@ import org.slf4j.LoggerFactory;
 
 import com.parental.server.db.ActivityDao;
 import com.parental.server.db.MetricsDao;
+import static com.parental.ui.DesktopTheme.CANVAS;
+import static com.parental.ui.DesktopTheme.CARD_BORDER;
+import static com.parental.ui.DesktopTheme.TEXT_PRIMARY;
+import static com.parental.ui.DesktopTheme.roundedBorder;
+import static com.parental.ui.DesktopTheme.roundedTitledBorder;
 
 /**
  * Dialog thống kê thời gian sử dụng (Tính năng 3.1) — biểu đồ ngày + tổng
@@ -78,8 +84,13 @@ public final class UsageChartDialog extends JDialog {
         setMinimumSize(new Dimension(700, 520));
         setLocationRelativeTo(owner);
         setLayout(new BorderLayout(8, 8));
+        getContentPane().setBackground(CANVAS);
 
         JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
+        top.setOpaque(false);
+        top.setBackground(Color.WHITE);
+        top.setBorder(roundedBorder(Color.WHITE, CARD_BORDER, 16,
+                new java.awt.Insets(8, 12, 8, 12)));
         top.add(new JLabel("Khoảng thời gian:"));
         top.add(periodCombo);
         top.add(refreshButton);
@@ -87,10 +98,16 @@ public final class UsageChartDialog extends JDialog {
         add(top, BorderLayout.NORTH);
 
         JPanel center = new JPanel(new BorderLayout(8, 8));
+        center.setBackground(CANVAS);
         center.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
 
         JPanel summaryPanel = new JPanel(new BorderLayout(0, 2));
+        summaryPanel.setOpaque(false);
+        summaryPanel.setBackground(Color.WHITE);
+        summaryPanel.setBorder(roundedBorder(Color.WHITE, CARD_BORDER, 16,
+                new java.awt.Insets(10, 12, 10, 12)));
         summaryLabel.setFont(summaryLabel.getFont().deriveFont(Font.BOLD, 14f));
+        summaryLabel.setForeground(TEXT_PRIMARY);
         weeklyLabel.setFont(weeklyLabel.getFont().deriveFont(Font.PLAIN, 12f));
         statusLabel.setForeground(new java.awt.Color(0x9A, 0x34, 0x12));
         summaryPanel.add(summaryLabel, BorderLayout.NORTH);
@@ -100,10 +117,12 @@ public final class UsageChartDialog extends JDialog {
         center.add(chartPanel, BorderLayout.CENTER);
 
         JPanel bottom = new JPanel(new BorderLayout(8, 6));
-        bottom.setBorder(BorderFactory.createTitledBorder(
-                "Ứng dụng xuất hiện nhiều nhất (số lần ghi nhận — không phải thời lượng)"));
+        bottom.setOpaque(false);
+        bottom.setBackground(Color.WHITE);
+        bottom.setBorder(roundedTitledBorder("ỨNG DỤNG XUẤT HIỆN NHIỀU NHẤT",
+                Color.WHITE, CARD_BORDER, 16, new java.awt.Insets(26, 10, 10, 10)));
         appsTable.setFillsViewportHeight(true);
-        appsTable.setRowHeight(22);
+        appsTable.setRowHeight(28);
         bottom.add(new JScrollPane(appsTable), BorderLayout.CENTER);
         JLabel note = new JLabel("<html>Nguồn: <b>metrics_daily_usage</b> (tổng delta theo ngày, không cộng trùng snapshot) "
                 + "và <b>activity_logs</b> (chỉ ghi khi cửa sổ đổi). "

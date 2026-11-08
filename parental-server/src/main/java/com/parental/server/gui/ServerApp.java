@@ -11,9 +11,9 @@ import javax.swing.WindowConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.formdev.flatlaf.FlatLightLaf;
 import com.parental.server.db.DatabaseManager;
 import com.parental.server.network.TcpServerEngine;
+import com.parental.ui.DesktopTheme;
 
 /**
  * Lớp chạy ứng dụng Server chính (Task 5.1): FlatLaf Light theme → khởi tạo
@@ -39,13 +39,14 @@ public final class ServerApp {
     public static void main(String[] args) {
         int port = parsePort(args);
 
-        // Theme hiện đại FlatLaf Light — đặt TRƯỚC khi tạo Swing component nào
-        FlatLightLaf.setup();
-        // SỬA LỖI GÕ TIẾNG VIỆT (Unikey/EVKey): ép font Segoe UI cho toàn bộ
-        // Swing defaults — phải trước khi tạo component đầu tiên.
-        VietnameseInputSupport.applyDefaultFont();
-
-        SwingUtilities.invokeLater(() -> startServerAndShowDashboard(port));
+        SwingUtilities.invokeLater(() -> {
+            // Cài theme trên EDT trước khi tạo component đầu tiên.
+            DesktopTheme.install();
+            // SỬA LỖI GÕ TIẾNG VIỆT (Unikey/EVKey): ép font Segoe UI cho toàn bộ
+            // Swing defaults — phải trước khi tạo component đầu tiên.
+            VietnameseInputSupport.applyDefaultFont();
+            startServerAndShowDashboard(port);
+        });
     }
 
     /** args[0] là port tùy chọn; không hợp lệ → fallback mặc định. */

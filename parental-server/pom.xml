@@ -20,17 +20,15 @@
             <groupId>com.parental</groupId>
             <artifactId>parental-common</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.parental</groupId>
+            <artifactId>parental-desktop-ui</artifactId>
+        </dependency>
 
         <!-- Database -->
         <dependency>
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
-        </dependency>
-
-        <!-- GUI: FlatLaf (Dashboard — Task 5.1) -->
-        <dependency>
-            <groupId>com.formdev</groupId>
-            <artifactId>flatlaf</artifactId>
         </dependency>
 
         <!-- Logging -->

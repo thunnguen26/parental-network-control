@@ -3,16 +3,25 @@ package com.parental.server.gui;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.GraphicsEnvironment;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -21,8 +30,11 @@ import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
+import javax.swing.Icon;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -32,24 +44,19 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
-import javax.swing.JSpinner;
-import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
-import javax.swing.RowFilter;
-import javax.swing.SpinnerNumberModel;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.parental.common.protocol.ActionType;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.UnpairPayload;
-import com.parental.common.protocol.payload.StreamControlPayload;
-import com.parental.common.protocol.ActionType;
-import com.parental.common.protocol.MessageType;
 import com.parental.server.db.ActivityDao;
 import com.parental.server.db.BlockedDomainDao;
 import com.parental.server.db.ClientDao;
@@ -60,39 +67,38 @@ import com.parental.server.db.RuleDao.RuleRecord;
 import com.parental.server.network.ClientConnectionListener;
 import com.parental.server.network.ClientSession;
 import com.parental.server.network.ClientSessionManager;
-import com.parental.server.gui.RemoteScreenDialog;
 import com.parental.server.network.DisconnectReason;
 import com.parental.server.network.TcpServerEngine;
 import com.parental.server.rules.RuleEvaluationEngine;
 
 /**
- * Cửa sổ chính Dashboard giám sát (Task 5.1) — bố cục 3 vùng:
- * <ul>
- *   <li><b>Left sidebar</b>: danh sách thiết bị (icon ● Online/Offline,
- *       tên máy, IP, trạng thái ACTIVE/PAUSED) từ {@link ClientDao} —
- *       cập nhật tức thời qua {@code ClientConnectionListener};</li>
- *   <li><b>Center</b>: chi tiết máy đang chọn — thông tin thiết bị, thẻ số
- *       liệu tức thời (download/upload speed, tổng dung lượng hôm nay) từ
- *       {@code ClientSession.getLastMetrics()} + {@code MetricsDao}, thanh
- *       đo tiến độ dung lượng/thời gian so với hạn mức rule;</li>
- *   <li><b>Bottom</b>: Event Log console ({@code JTextArea}) — luồng sự kiện
- *       kết nối/ngắt/lệnh COMMAND theo thời gian thực.</li>
- * </ul>
- *
- * <p><b>Swing Threading (Single-Thread Rule)</b>: mọi cập nhật state UI chạy
- * trong {@code SwingUtilities.invokeLater(...)}. Dữ liệu đọc từ engine/DAO
- * (DAO blocking nhẹ, SQLite local — chấp nhận được trên UI refresher 1s).
- * UI Refresher dùng {@code javax.swing.Timer} (bắn trên EDT nên an toàn
- * mặc định, không cần invokeLater bên trong tick).</p>
+ * Cửa sổ chính Dashboard giám sát (Task 5.1 & Phase 5) — thiết kế chuẩn theo ảnh mẫu:
+ * Header xanh đậm có logo khiên địa cầu và đồng hồ; Sidebar tối phân khu điều hướng,
+ * sự kiện nhanh và trạng thái hệ thống có sóng mini; Main Canvas với thẻ thiết bị,
+ * thông tin chi tiết, 3 thẻ tốc độ sóng động, thanh hạn mức rule, nhật ký người dùng
+ * và bảng Event Log chuyên dụng.
+ * Sử dụng bộ icon vector thuần và cơ chế vẽ Swing chuẩn, đảm bảo hiển thị sắc nét,
+ * không bị mất chữ hay ô vuông tofu.
  */
 public class ServerDashboardFrame extends JFrame {
 
     private static final Logger log = LoggerFactory.getLogger(ServerDashboardFrame.class);
 
-    /** Chu kỳ làm mới số liệu (ms) — spec Task 5.1: 1s. */
     static final int REFRESH_INTERVAL_MS = 1_000;
 
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss");
+    private static final DateTimeFormatter HEADER_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("HH:mm:ss  dd/MM/yyyy");
+
+    // Bảng màu hiện đại theo phong cách dịu mắt, tương phản chuẩn, chuyên nghiệp
+    private static final Color HEADER_BG = new Color(0x0B, 0x19, 0x2E);
+    private static final Color SIDEBAR_BG = new Color(0x0E, 0x1B, 0x2D);
+    private static final Color CANVAS_BG = new Color(0xF1, 0xF5, 0xF9);
+    private static final Color CARD_BG = Color.WHITE;
+    private static final Color CARD_BORDER_COLOR = new Color(0xE2, 0xE8, 0xF0);
+    private static final Color PRIMARY_ACCENT = new Color(0x25, 0x63, 0xEB);
+    private static final Color TEXT_DARK = new Color(0x0F, 0x17, 0x2A);
+    private static final Color TEXT_MUTED = new Color(0x64, 0x74, 0x8B);
 
     private final TcpServerEngine serverEngine;
     private final ClientDao clientDao;
@@ -104,6 +110,9 @@ public class ServerDashboardFrame extends JFrame {
     // --- Left sidebar ---
     private DefaultListModel<ClientRecord> deviceListModel;
     private JList<ClientRecord> deviceList;
+    private JLabel deviceCountLabel;
+    private JLabel serverStatusLabel;
+    private JLabel headerClockLabel;
 
     // --- Center detail ---
     private JTextField deviceNameField;
@@ -117,443 +126,561 @@ public class ServerDashboardFrame extends JFrame {
     private JProgressBar usageBar;
     private JLabel quotaLabel;
     private JLabel usageLabel;
+    private JLabel quotaTextLabel;
+    private JLabel usageTextLabel;
 
     // --- Bottom event log ---
     private JTextArea eventLogArea;
 
     // --- Activity Monitoring (Mục 3.9) ---
     private JTextField activeAppField;
+    private JLabel activeAppBadge;
     private javax.swing.table.DefaultTableModel activityTableModel;
     private JTable activityTable;
     private java.time.Instant lastActivityTableRefresh = java.time.Instant.EPOCH;
 
-    // --- Bộ lọc + xóa lịch sử hoạt động (Mở rộng nhật ký) ---
-    /** Số bản ghi nhật ký hiển thị trên Dashboard (tăng từ 10 → 30). */
     static final int ACTIVITY_LOG_LIMIT = 30;
-
-    /**
-     * Khoảng nghỉ tối thiểu (ms) giữa 2 lần auto-refresh của dialog "Xem toàn
-     * bộ" (Mở rộng 12) — ACTIVITY_REPORT đến dày (10s/lần, nhiều client) →
-     * throttle tránh đập DB liên tục; nút Làm mới thủ công không bị giới hạn.
-     */
     static final long ACTIVITY_DIALOG_AUTO_REFRESH_MIN_MS = 2000;
-
-    /** Chỉ số cột JTable nhật ký — dùng cho RowFilter + menu chặn nhanh. */
-    private static final int ACTIVITY_COLUMN_TIME = 0;
-    private static final int ACTIVITY_COLUMN_PROCESS = 1;
-    private static final int ACTIVITY_COLUMN_TITLE = 2;
 
     private JTextField activityFilterField;
     private javax.swing.table.TableRowSorter<javax.swing.table.TableModel> activitySorter;
     private JButton clearActivityButton;
 
-    // --- Quick actions (Task 5.2) ---
+    // --- Quick actions ---
     private JButton pauseButton;
     private JButton resumeButton;
     private JTextField alertMessageField;
     private JButton sendAlertButton;
 
-    // --- Quản trị thiết bị (Alias + Delete/Unpair) ---
+    // --- Quản trị thiết bị ---
     private JButton deleteDeviceButton;
     private JButton renameButton;
-
-    // --- Xem màn hình remote (Mục 3.10) ---
     private JButton remoteScreenButton;
 
     private Timer uiRefresher;
 
-    /** Dựng dashboard gắn với engine đang chạy (các thành phần không null). */
     public ServerDashboardFrame(TcpServerEngine serverEngine, ClientDao clientDao,
                                 MetricsDao metricsDao, RuleDao ruleDao,
                                 ClientSessionManager sessionManager,
                                 RuleEvaluationEngine ruleEngine) {
         super("Parental Network Control - Server Dashboard");
-        // Fail-fast các dependency bắt buộc — một DAO null (inject sai từ
-        // ServerApp) phải bùng nổ NGAY tại constructor, không phải NPE muộn
-        // trong vòng refresh định kỳ.
         this.serverEngine = Objects.requireNonNull(serverEngine, "serverEngine must not be null");
         this.clientDao = Objects.requireNonNull(clientDao, "clientDao must not be null");
         this.metricsDao = Objects.requireNonNull(metricsDao, "metricsDao must not be null");
         this.ruleDao = Objects.requireNonNull(ruleDao, "ruleDao must not be null");
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager must not be null");
-        // Rule Engine tùy chọn (null = chạy không DB — các quick action tự tắt).
         this.ruleEngine = ruleEngine;
+
         initUi();
         registerEngineListeners();
         startUiRefresher();
-        // Dọn dữ liệu RÁC era script PowerShell lỗi (process "ACTIVE.exe",
-        // title "not recognized") còn sót trong DB — chạy ĐÚNG 1 LẦN khi mở.
+
         if (serverEngine.getActivityDao() != null) {
             int purged = serverEngine.getActivityDao().purgeCorruptedRows();
             if (purged > 0) {
                 appendEventLog("[OK] Đã dọn " + purged
-                        + " b\u1EA3n ghi ho\u1EA1t \u0111\u1ED9ng r\u00E1c t\u1EEB era l\u1ED7i PowerShell");
+                        + " bản ghi hoạt động rác từ era lỗi PowerShell");
             }
         }
     }
 
     // ------------------------------------------------------------------
-    // UI construction
+    // UI Construction
     // ------------------------------------------------------------------
 
     private void initUi() {
-        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE); // đóng qua windowClosing handler
-        // Bố cục v2: 1100x800 thoáng hơn cho cột phải (Hạn mức + Hoạt động
-        // người dùng + JTable nhật ký cao 160px) — các panel không còn co đè
-        // lên nhau ở kích thước mặc định.
-        setSize(1100, 800);
-        setMinimumSize(new Dimension(950, 680));
-        setLocationRelativeTo(null); // canh giữa màn hình
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        if (!GraphicsEnvironment.isHeadless()) {
+            Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment()
+                    .getMaximumWindowBounds();
+            setSize(Math.min(1320, screen.width), Math.min(880, screen.height));
+            setLocationRelativeTo(null);
+        } else {
+            setSize(1320, 880);
+        }
+        setMinimumSize(new Dimension(1080, 700));
+        getContentPane().setBackground(CANVAS_BG);
         setLayout(new BorderLayout());
 
-        add(buildSidebar(), BorderLayout.WEST);
-        add(buildCenterPanel(), BorderLayout.CENTER);
-        add(buildBottomPanel(), BorderLayout.SOUTH);
+        JPanel body = new JPanel(new BorderLayout());
+        body.setBackground(CANVAS_BG);
+        body.add(buildSidebar(), BorderLayout.WEST);
+        body.add(buildCenterPanel(), BorderLayout.CENTER);
 
-        // Load danh sách thiết bị lần đầu + cập nhật trạng thái nút ngay
+        add(buildHeaderPanel(), BorderLayout.NORTH);
+        add(body, BorderLayout.CENTER);
+
         reloadDeviceList();
         updateQuickActionButtons();
         updateDeviceAdminButtons();
     }
 
+    private JPanel buildHeaderPanel() {
+        JPanel header = new JPanel(new BorderLayout(16, 0));
+        header.setBackground(HEADER_BG);
+        header.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0x1E, 0x2E, 0x44)),
+                BorderFactory.createEmptyBorder(10, 18, 10, 22)));
+
+        HeaderBrandIcon brandIcon = new HeaderBrandIcon();
+
+        JLabel title = new JLabel("Parental Network Control");
+        title.setForeground(Color.WHITE);
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 18f));
+
+        JLabel subtitle = new JLabel("Server Dashboard — Quản lý mạng gia đình / văn phòng");
+        subtitle.setForeground(new Color(0x94, 0xA3, 0xB8));
+        subtitle.setFont(subtitle.getFont().deriveFont(12f));
+
+        JPanel brandText = new JPanel();
+        brandText.setOpaque(false);
+        brandText.setLayout(new BoxLayout(brandText, BoxLayout.Y_AXIS));
+        brandText.add(title);
+        brandText.add(Box.createVerticalStrut(2));
+        brandText.add(subtitle);
+
+        JPanel brand = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        brand.setOpaque(false);
+        brand.add(brandIcon);
+        brand.add(brandText);
+
+        serverStatusLabel = new JLabel("● Server Online");
+        serverStatusLabel.setForeground(new Color(0x22, 0xC5, 0x5E));
+        serverStatusLabel.setFont(serverStatusLabel.getFont().deriveFont(Font.BOLD, 12f));
+
+        JLabel divider = new JLabel("|");
+        divider.setForeground(new Color(0x33, 0x41, 0x55));
+        divider.setFont(divider.getFont().deriveFont(13f));
+
+        headerClockLabel = new JLabel();
+        headerClockLabel.setForeground(new Color(0xCB, 0xD5, 0xE1));
+        headerClockLabel.setFont(headerClockLabel.getFont().deriveFont(12f));
+
+        JPanel status = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 8));
+        status.setOpaque(false);
+        status.add(serverStatusLabel);
+        status.add(divider);
+        status.add(headerClockLabel);
+
+        updateHeaderStatus();
+
+        header.add(brand, BorderLayout.WEST);
+        header.add(status, BorderLayout.EAST);
+        return header;
+    }
+
     private JPanel buildSidebar() {
+        JPanel sidebar = new JPanel();
+        sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS));
+        sidebar.setBackground(SIDEBAR_BG);
+        sidebar.setPreferredSize(new Dimension(268, 0));
+        sidebar.setMinimumSize(new Dimension(268, 0));
+        sidebar.setMaximumSize(new Dimension(268, Integer.MAX_VALUE));
+        sidebar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(0x1E, 0x2E, 0x44)),
+                BorderFactory.createEmptyBorder(14, 12, 14, 12)));
+
+        // 1. Nhóm Điều Hướng Chính (Top)
+        JButton navOverview = createSidebarNavButton("Tổng quan", DashboardIcons.home(16, Color.WHITE), true);
+        JButton navDeviceList = createSidebarNavButton("Danh sách thiết bị", DashboardIcons.monitor(16, new Color(0x94, 0xA3, 0xB8)), false);
+        JButton navAccessMgmt = createSidebarNavButton("Quản lý truy cập", DashboardIcons.shield(16, new Color(0x94, 0xA3, 0xB8)), false);
+        JButton navStatistics = createSidebarNavButton("Thống kê & Báo cáo", DashboardIcons.stats(16, new Color(0x94, 0xA3, 0xB8)), false);
+        JButton navAbout = createSidebarNavButton("Giới thiệu", DashboardIcons.info(16, new Color(0x94, 0xA3, 0xB8)), false);
+
+        navDeviceList.addActionListener(e -> {
+            if (deviceList != null) {
+                deviceList.requestFocusInWindow();
+            }
+        });
+        navAccessMgmt.addActionListener(e -> openPolicyDialog());
+        navStatistics.addActionListener(e -> openUsageChartDialog());
+        navAbout.addActionListener(e -> openAboutDialog());
+
+        JPanel navGroup = new JPanel();
+        navGroup.setLayout(new BoxLayout(navGroup, BoxLayout.Y_AXIS));
+        navGroup.setOpaque(false);
+        navGroup.setAlignmentX(Component.CENTER_ALIGNMENT);
+        for (JButton btn : List.of(navOverview, navDeviceList, navAccessMgmt, navStatistics, navAbout)) {
+            navGroup.add(btn);
+            navGroup.add(Box.createVerticalStrut(4));
+        }
+
+        // 2. Nhóm thao tác nhanh
+        JPanel quickHeader = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        quickHeader.setOpaque(false);
+        quickHeader.setAlignmentX(Component.CENTER_ALIGNMENT);
+        quickHeader.setPreferredSize(new Dimension(244, 26));
+        quickHeader.setMaximumSize(new Dimension(Integer.MAX_VALUE, 26));
+
+        JLabel quickSectionTitle = new JLabel("Thao tác nhanh");
+        quickSectionTitle.setIcon(DashboardIcons.lightning(14, new Color(0xF5, 0x9E, 0x0B)));
+        quickSectionTitle.setIconTextGap(8);
+        quickSectionTitle.setForeground(new Color(0x94, 0xA3, 0xB8));
+        quickSectionTitle.setFont(quickSectionTitle.getFont().deriveFont(Font.BOLD, 11f));
+        quickHeader.add(quickSectionTitle);
+
+        JButton addDeviceBtn = createSidebarActionButton("Thêm thiết bị", DashboardIcons.plus(16, new Color(0x93, 0xC5, 0xFD)));
+        addDeviceBtn.addActionListener(e -> openPairingDialog());
+
+        deleteDeviceButton = createSidebarActionButton("Xóa thiết bị", DashboardIcons.trash(16, new Color(0x93, 0xC5, 0xFD)));
+        deleteDeviceButton.setEnabled(false);
+        deleteDeviceButton.addActionListener(e -> deleteSelectedDevice());
+
+        remoteScreenButton = createSidebarActionButton("Xem màn hình", DashboardIcons.monitor(16, new Color(0x93, 0xC5, 0xFD)));
+        remoteScreenButton.addActionListener(e -> openRemoteScreenDialog());
+
+        JButton allScreensBtn = createSidebarActionButton("Quan sát đa dụng", DashboardIcons.grid(16, new Color(0x93, 0xC5, 0xFD)));
+        allScreensBtn.addActionListener(e -> openRemoteScreenWallDialog());
+
+        JButton powerBtn = createSidebarActionButton("Điều khiển nguồn", DashboardIcons.power(16, new Color(0x93, 0xC5, 0xFD)));
+        powerBtn.addActionListener(e -> openPowerControlDialog());
+
+        JPanel quickGroup = new JPanel();
+        quickGroup.setLayout(new BoxLayout(quickGroup, BoxLayout.Y_AXIS));
+        quickGroup.setOpaque(false);
+        quickGroup.setAlignmentX(Component.CENTER_ALIGNMENT);
+        for (JButton btn : List.of(addDeviceBtn, deleteDeviceButton, remoteScreenButton, allScreensBtn, powerBtn)) {
+            quickGroup.add(btn);
+            quickGroup.add(Box.createVerticalStrut(4));
+        }
+
+        // 3. Khối "Trạng thái hệ thống" ở chân sidebar
+        CardPanel statusBox = new CardPanel(12, new Color(0x1E, 0x37, 0x58));
+        statusBox.setBackground(new Color(0x12, 0x22, 0x38));
+        statusBox.setBorder(BorderFactory.createEmptyBorder(10, 14, 10, 14));
+        statusBox.setPreferredSize(new Dimension(244, 90));
+        statusBox.setMinimumSize(new Dimension(244, 90));
+        statusBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 90));
+        statusBox.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        JLabel sysTitle = new JLabel("● Trạng thái hệ thống");
+        sysTitle.setForeground(new Color(0x94, 0xA3, 0xB8));
+        sysTitle.setFont(sysTitle.getFont().deriveFont(Font.BOLD, 11f));
+
+        JLabel sysStatus = new JLabel("Hoạt động bình thường");
+        sysStatus.setForeground(new Color(0x22, 0xC5, 0x5E));
+        sysStatus.setFont(sysStatus.getFont().deriveFont(Font.BOLD, 12f));
+
+        SparklineWavePanel sysWave = SparklineWavePanel.systemStatusWave();
+        sysWave.setPreferredSize(new Dimension(216, 26));
+
+        statusBox.add(sysTitle, BorderLayout.NORTH);
+        statusBox.add(sysStatus, BorderLayout.CENTER);
+        statusBox.add(sysWave, BorderLayout.SOUTH);
+
+        sidebar.add(navGroup);
+        sidebar.add(Box.createVerticalStrut(10));
+        sidebar.add(quickHeader);
+        sidebar.add(Box.createVerticalStrut(6));
+        sidebar.add(quickGroup);
+        sidebar.add(Box.createVerticalGlue());
+        sidebar.add(statusBox);
+
+        return sidebar;
+    }
+
+    private JPanel buildCenterPanel() {
+        JPanel center = new JPanel();
+        center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+        center.setBackground(CANVAS_BG);
+        center.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
+
+        center.add(buildTopManagedAndInfoSection());
+        center.add(Box.createVerticalStrut(10));
+        center.add(buildQuotaRuleCard());
+        center.add(Box.createVerticalStrut(10));
+        center.add(buildUserActivityCard());
+        center.add(Box.createVerticalStrut(10));
+        center.add(buildEventLogCard());
+
+        JScrollPane scrollPane = new JScrollPane(center);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.getViewport().setBackground(CANVAS_BG);
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+
+        JPanel container = new JPanel(new BorderLayout());
+        container.setBackground(CANVAS_BG);
+        container.add(scrollPane, BorderLayout.CENTER);
+        return container;
+    }
+
+    private JPanel buildTopManagedAndInfoSection() {
+        JPanel section = new JPanel(new GridBagLayout());
+        section.setOpaque(false);
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.BOTH;
+        gbc.insets = new Insets(0, 0, 0, 10);
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 0.35;
+        gbc.weighty = 1.0;
+        section.add(buildManagedDevicesCard(), gbc);
+
+        gbc.insets = new Insets(0, 0, 0, 0);
+        gbc.gridx = 1;
+        gbc.weightx = 0.65;
+        section.add(buildDeviceInfoCard(), gbc);
+
+        return section;
+    }
+
+    private JPanel buildManagedDevicesCard() {
         deviceListModel = new DefaultListModel<>();
         deviceList = new JList<>(deviceListModel);
         deviceList.setCellRenderer(new DeviceCellRenderer());
+        deviceList.setBackground(Color.WHITE);
+        deviceList.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
         deviceList.addListSelectionListener(event -> {
             if (!event.getValueIsAdjusting()) {
                 refreshCenterPanel();
             }
         });
 
-        JScrollPane scrollPane = new JScrollPane(deviceList);
-        scrollPane.setPreferredSize(new Dimension(300, 0));
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Thiết bị đang quản lý"));
+        JScrollPane scroll = new JScrollPane(deviceList);
+        scroll.setBorder(BorderFactory.createLineBorder(new Color(0xE8, 0xEE, 0xF5), 1));
+        scroll.getViewport().setBackground(Color.WHITE);
 
-        // Nút ghép đôi thiết bị mới (Device Pairing) + xóa thiết bị + dialog cấu hình chính sách (Task 5.2)
-        JButton addDeviceButton = new JButton("+ Thêm thiết bị mới");
-        addDeviceButton.addActionListener(event -> openPairingDialog());
+        deviceCountLabel = new JLabel("0 thiết bị kết nối", SwingConstants.CENTER);
+        deviceCountLabel.setForeground(TEXT_MUTED);
+        deviceCountLabel.setFont(deviceCountLabel.getFont().deriveFont(11f));
+        deviceCountLabel.setBorder(BorderFactory.createEmptyBorder(6, 0, 2, 0));
 
-        deleteDeviceButton = new JButton("Xóa thiết bị");
-        deleteDeviceButton.setEnabled(false); // chỉ bật khi có thiết bị đang chọn
-        deleteDeviceButton.addActionListener(event -> deleteSelectedDevice());
+        JPanel content = new JPanel(new BorderLayout(0, 4));
+        content.setOpaque(false);
+        content.add(scroll, BorderLayout.CENTER);
+        content.add(deviceCountLabel, BorderLayout.SOUTH);
 
-        JButton policyButton = new JButton("Cấu hình chính sách...");
-        policyButton.addActionListener(event -> openPolicyDialog());
-
-        JButton remoteScreenButton = new JButton("Xem màn hình");
-        remoteScreenButton.addActionListener(event -> openRemoteScreenDialog());
-
-        JButton allScreensButton = new JButton("Quan sát tất cả máy online");
-        allScreensButton.addActionListener(event -> openRemoteScreenWallDialog());
-
-        JButton usageChartButton = new JButton("Thống kê sử dụng");
-        usageChartButton.addActionListener(event -> openUsageChartDialog());
-
-        JButton powerControlButton = new JButton("Điều khiển nguồn...");
-        powerControlButton.addActionListener(event -> openPowerControlDialog());
-
-        JPanel buttonPanel = new JPanel(new GridLayout(7, 1, 0, 4));
-        buttonPanel.add(addDeviceButton);
-        buttonPanel.add(deleteDeviceButton);
-        buttonPanel.add(policyButton);
-        buttonPanel.add(remoteScreenButton);
-        buttonPanel.add(allScreensButton);
-        buttonPanel.add(usageChartButton);
-        buttonPanel.add(powerControlButton);
-
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.add(scrollPane, BorderLayout.CENTER);
-        panel.add(buttonPanel, BorderLayout.SOUTH);
-        return panel;
+        return createCard("Thiết bị đang quản lý", DashboardIcons.monitor(16, PRIMARY_ACCENT),
+                null, content);
     }
 
-    /**
-     * Xóa thiết bị đang chọn (Delete / Unpair Client): hộp thoại xác nhận →
-     * nếu đang ONLINE: gửi UNPAIR + ngắt phiên qua {@code TcpServerEngine.unpairClient}
-     * → xóa sạch DB (transaction) qua {@code ClientDao.deleteClient} → cập nhật
-     * JList + chi tiết + Event Log. Chạy trên SwingWorker (DAO blocking).
-     */
-    private void deleteSelectedDevice() {
-        ClientRecord selected = deviceList.getSelectedValue();
-        if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để xóa");
-            return;
-        }
-        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
-        int choice = JOptionPane.showConfirmDialog(this,
-                "X\u00F3a thi\u1EBFt b\u1ECB '" + deviceDisplay + "' kh\u1ECFi danh s\u00E1ch qu\u1EA3n l\u00FD?\n\n"
-                        + "\u2022 Thi\u1EBFt b\u1ECB \u0111ang online s\u1EBD b\u1ECB ng\u1EAFt k\u1EBFt n\u1ED1i v\u00E0 quay v\u1EC1 m\u00E0n h\u00ECnh gh\u00E9p \u0111\u00F4i\n"
-                        + "\u2022 To\u00E0n b\u1ED9 d\u1EEF li\u1EC7u (h\u1EA1n m\u1EE9c, l\u1ECBch s\u1EED traffic, l\u1EC7nh) s\u1EBD b\u1ECB x\u00F3a s\u1EA1ch\n\n"
-                        + "Thao t\u00E1c kh\u00F4ng th\u1EC3 ho\u00E0n t\u1EA3c!",
-                "X\u00F3a thi\u1EBFt b\u1ECB",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.WARNING_MESSAGE);
-        if (choice != JOptionPane.YES_OPTION) {
-            return;
-        }
+    private JPanel buildDeviceInfoCard() {
+        renameButton = createWhiteActionButton("Đổi tên", DashboardIcons.edit(14, TEXT_DARK));
+        renameButton.addActionListener(e -> renameSelectedDevice());
+        renameButton.setEnabled(false);
 
-        String clientId = selected.clientId();
-        boolean wasOnline = "ONLINE".equals(selected.status());
-        new javax.swing.SwingWorker<String, Void>() {
-            @Override
-            protected String doInBackground() {
-                // 1. ONLINE → gửi UNPAIR + ngắt phiên (reason UNPAIRED)
-                if (wasOnline) {
-                    serverEngine.unpairClient(clientId, UnpairPayload.DEFAULT_REASON);
-                }
-                // 2. Xóa sạch DB (transaction: clients + rules + metrics + commands + domains)
-                return clientDao.deleteClient(clientId)
-                        ? "[OK] Đã xóa thiết bị '" + deviceDisplay
-                                + "' kh\u1ECFi danh s\u00E1ch qu\u1EA3n l\u00FD"
-                                + (wasOnline ? " (\u0111\u00E3 g\u1EEDi UNPAIR + ng\u1EAFt k\u1EBFt n\u1ED1i)" : " (offline)")
-                        : null;
-            }
+        deviceNameField = createStyledDisplayField();
+        macField = createStyledDisplayField();
+        osField = createStyledDisplayField();
+        sessionDurationField = createStyledDisplayField();
 
-            @Override
-            protected void done() {
-                try {
-                    String successMessage = get();
-                    if (successMessage != null) {
-                        appendEventLog(successMessage);
-                    } else {
-                        appendEventLog("[!] Xóa thiết bị thất bại (lỗi cơ sở dữ liệu)");
-                    }
-                } catch (Exception e) {
-                    appendEventLog("[!] Lỗi khi xóa thiết bị: " + e.getMessage());
-                    log.error("Delete device failed: {}", e.getMessage(), e);
-                }
-                refreshNow();
-            }
-        }.execute();
+        JPanel fieldsPanel = new JPanel(new GridBagLayout());
+        fieldsPanel.setOpaque(false);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(3, 4, 3, 4);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
+        fieldsPanel.add(createFieldLabel("Tên máy:"), gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0;
+        fieldsPanel.add(deviceNameField, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+        fieldsPanel.add(createFieldLabel("MAC:"), gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0;
+        fieldsPanel.add(macField, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0;
+        fieldsPanel.add(createFieldLabel("Hệ điều hành:"), gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0;
+        fieldsPanel.add(osField, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 3; gbc.weightx = 0;
+        fieldsPanel.add(createFieldLabel("Thời gian phiên:"), gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0;
+        fieldsPanel.add(sessionDurationField, gbc);
+
+        WindowsLogoPanel winLogo = new WindowsLogoPanel();
+
+        JPanel topInfoRow = new JPanel(new BorderLayout(12, 0));
+        topInfoRow.setOpaque(false);
+        topInfoRow.add(fieldsPanel, BorderLayout.CENTER);
+        topInfoRow.add(winLogo, BorderLayout.EAST);
+
+        downloadSpeedField = createMetricValueField();
+        uploadSpeedField = createMetricValueField();
+        todayTrafficField = createMetricValueField();
+
+        JPanel statCards = new JPanel(new GridLayout(1, 3, 10, 0));
+        statCards.setOpaque(false);
+        statCards.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+        statCards.add(createStatMetricCard("Tốc độ tải về", DashboardIcons.downloadCircle(22),
+                downloadSpeedField, SparklineWavePanel.blueDownloadWave()));
+        statCards.add(createStatMetricCard("Tốc độ tải lên", DashboardIcons.uploadCircle(22),
+                uploadSpeedField, SparklineWavePanel.greenUploadWave()));
+        statCards.add(createStatMetricCard("Tổng hôm nay", DashboardIcons.trafficCircle(22),
+                todayTrafficField, SparklineWavePanel.purpleTrafficWave()));
+
+        JPanel content = new JPanel();
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        content.setOpaque(false);
+        content.add(topInfoRow);
+        content.add(statCards);
+
+        return createCard("Thông tin thiết bị", DashboardIcons.info(16, new Color(0x02, 0x84, 0xC7)),
+                renameButton, content);
     }
 
-    /**
-     * Đặt biệt danh (Alias) cho thiết bị đang chọn: Input Dialog → lưu DB
-     * qua {@code ClientDao.updateAlias} (nhập r\u00F5ng → x\u00F3a biệt danh) →
-     * cập nhật danh sách + tiêu đề thông tin ngay trên EDT.
-     */
-    private void renameSelectedDevice() {
-        ClientRecord selected = deviceList.getSelectedValue();
-        if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để đổi tên");
-            return;
-        }
-        String input = (String) JOptionPane.showInputDialog(this,
-                "Nh\u1EADp bi\u1EC7t danh m\u1EDBi cho '" + selected.deviceName() + "':\n"
-                        + "(\u0111\u1EC3 tr\u1ED1ng r\u1ED3i b\u1EA5m OK \u2192 x\u00F3a bi\u1EC7t danh, v\u1EC1 t\u00EAn m\u00E1y g\u1ED1c)",
-                "Đổi tên thiết bị",
-                JOptionPane.PLAIN_MESSAGE, null, null,
-                selected.alias() != null ? selected.alias() : selected.deviceName());
-        if (input == null) {
-            return; // người dùng bấm Cancel — không đổi gì
-        }
-        String newAlias = input.trim();
-        String clientId = selected.clientId();
-        String deviceName = selected.deviceName();
+    private JPanel buildQuotaRuleCard() {
+        quotaBar = new JProgressBar(0, 100);
+        usageBar = new JProgressBar(0, 100);
+        quotaBar.setStringPainted(false);
+        usageBar.setStringPainted(false);
+        quotaBar.setPreferredSize(new Dimension(160, 14));
+        usageBar.setPreferredSize(new Dimension(160, 14));
+        quotaBar.setForeground(PRIMARY_ACCENT);
+        usageBar.setForeground(new Color(0x94, 0xA3, 0xB8));
 
-        new javax.swing.SwingWorker<String, Void>() {
-            @Override
-            protected String doInBackground() {
-                boolean saved = clientDao.updateAlias(clientId, newAlias);
-                if (saved) {
-                    clientDao.getAllClients().stream()
-                            .filter(record -> clientId.equals(record.clientId()))
-                            .findFirst()
-                            .ifPresent(updated -> latestRecord.set(updated));
-                }
-                return saved ? newAlias : null;
-            }
+        quotaLabel = new JLabel("Thời gian phiên / giới hạn:");
+        usageLabel = new JLabel("Thời gian phiên / giới hạn:");
+        quotaLabel.setFont(quotaLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        usageLabel.setFont(usageLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        quotaLabel.setForeground(TEXT_DARK);
+        usageLabel.setForeground(TEXT_DARK);
 
-            private final java.util.concurrent.atomic.AtomicReference<ClientRecord> latestRecord
-                    = new java.util.concurrent.atomic.AtomicReference<>();
+        quotaTextLabel = new JLabel("Không giới hạn dung lượng");
+        usageTextLabel = new JLabel("Không giới hạn thời gian");
+        quotaTextLabel.setFont(quotaTextLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        usageTextLabel.setFont(usageTextLabel.getFont().deriveFont(Font.PLAIN, 12f));
+        quotaTextLabel.setForeground(TEXT_DARK);
+        usageTextLabel.setForeground(TEXT_DARK);
 
-            @Override
-            protected void done() {
-                try {
-                    String savedAlias = get();
-                    if (savedAlias == null) {
-                        appendEventLog("[!] Không lưu được biệt danh (thiết bị không tồn tại trong DB)");
-                        return;
-                    }
-                    appendEventLog(savedAlias.isEmpty()
-                            ? "Đã xóa biệt danh của '" + deviceName + "' — về tên máy gốc"
-                            : "Đã đặt biệt danh '" + savedAlias + "' cho thiết bị '" + deviceName + "'");
-                } catch (Exception e) {
-                    appendEventLog("[!] Lỗi khi đổi tên: " + e.getMessage());
-                }
-                refreshNow(); // cập nhật JList + chi tiết ngay trên EDT
-            }
-        }.execute();
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 6, 4, 10);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
+        panel.add(quotaLabel, gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0;
+        panel.add(quotaBar, gbc);
+        gbc.gridx = 2; gbc.weightx = 0;
+        panel.add(quotaTextLabel, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+        panel.add(usageLabel, gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0;
+        panel.add(usageBar, gbc);
+        gbc.gridx = 2; gbc.weightx = 0;
+        panel.add(usageTextLabel, gbc);
+
+        return createCard("Hạn mức (Rule)", DashboardIcons.shield(16, PRIMARY_ACCENT),
+                null, panel);
     }
 
-    /**
-     * Mở {@link PairingDialog} hiển thị mã PIN ghép đôi (Device Pairing):
-     * PIN 6 số cỡ to + đếm ngược 5 phút + đổi PIN; tự đóng và log sự kiện khi
-     * một client ghép đôi thành công. Chỉ khả dụng khi server chạy CÓ database
-     * (cần bảng {@code pairing_sessions} + {@code clients.device_token}).
-     */
-    private void openPairingDialog() {
-        if (serverEngine.getPairingDao() == null) {
-            appendEventLog("[!] Server đang chạy không database — không thể ghép đôi thiết bị");
-            return;
-        }
-        PairingDialog dialog = new PairingDialog(this, serverEngine.getPairingDao(), () -> {
-            appendEventLog("Một thiết bị mới đã ghép đôi thành công — có thể kết nối bằng deviceToken");
-            refreshNow();
+    private JPanel buildUserActivityCard() {
+        activeAppField = new JTextField("—");
+        activeAppField.setEditable(false);
+
+        activeAppBadge = new JLabel("—", SwingConstants.CENTER);
+        activeAppBadge.setForeground(PRIMARY_ACCENT);
+        activeAppBadge.setFont(activeAppBadge.getFont().deriveFont(Font.BOLD, 12f));
+        activeAppBadge.setOpaque(true);
+        activeAppBadge.setBackground(new Color(0xE8, 0xF0, 0xFE));
+        activeAppBadge.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xBF, 0xDB, 0xFE), 1, true),
+                BorderFactory.createEmptyBorder(4, 12, 4, 12)));
+
+        JLabel filterLabel = new JLabel("Lọc tiến trình/tiêu đề:");
+        filterLabel.setForeground(TEXT_DARK);
+        filterLabel.setFont(filterLabel.getFont().deriveFont(12f));
+
+        activityFilterField = new JTextField();
+        activityFilterField.setToolTipText("Nhập tên tiến trình hoặc tiêu đề cửa sổ...");
+        attachSelectAllOnFocus(activityFilterField);
+        activityFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { applyActivityFilter(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { applyActivityFilter(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { applyActivityFilter(); }
         });
-        dialog.open();
-    }
 
-    /**
-     * Mở dialog xem màn hình remote (Mục 3.10). Chỉ khả dụng khi có thiết bị
-     * đang chọn và đang ONLINE; client online sẽ nhận {@code STREAM_CONTROL}
-     * START/STOP và trả về {@code STREAM_FRAME}.
-     */
-    private void openRemoteScreenDialog() {
-        ClientRecord selected = deviceList.getSelectedValue();
-        if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để xem màn hình");
-            return;
-        }
-        if (!"ONLINE".equals(selected.status())) {
-            appendEventLog("[!] Thiết bị đang chọn không trực tuyến — không thể xem màn hình");
-            return;
-        }
-        new RemoteScreenDialog(this, selected.clientId(), serverEngine.getClientSessionManager(),
-                () -> refreshNow());
-    }
+        clearActivityButton = createWhiteActionButton("Xóa lịch sử hoạt động", DashboardIcons.trash(14, TEXT_DARK));
+        clearActivityButton.addActionListener(e -> clearActivityHistory());
 
-    /** Mở lưới preview cho tất cả session đang online tại thời điểm mở cửa sổ. */
-    private void openRemoteScreenWallDialog() {
-        long onlineCount = sessionManager.getAllSessions().stream()
-                .filter(ClientSession::isConnected)
-                .count();
-        if (onlineCount == 0) {
-            appendEventLog("[!] Hiện không có máy online để quan sát");
-            return;
-        }
-        new RemoteScreenWallDialog(this, sessionManager, this::refreshNow);
-    }
+        JButton expandButton = createWhiteActionButton("Xem toàn bộ / Mở rộng", DashboardIcons.grid(14, TEXT_DARK));
+        expandButton.addActionListener(e -> openExpandedActivityDialog());
 
-    /**
-     * Điều khiển nguồn/phiên từ xa (Tính năng 3.4). Hai bước xác nhận: chọn
-     * hành động → hộp thoại xác nhận nêu rõ thiết bị đích + cảnh báo; chỉ gửi
-     * khi client ONLINE. Mọi lệnh ghi {@code command_logs} (audit) và chờ ACK.
-     */
-    private void openPowerControlDialog() {
-        ClientRecord selected = deviceList.getSelectedValue();
-        if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để điều khiển nguồn");
-            return;
-        }
-        if (!"ONLINE".equals(selected.status())) {
-            appendEventLog("[!] Thiết bị đang chọn không trực tuyến — không thể gửi lệnh nguồn");
-            return;
-        }
-        if (ruleEngine == null) {
-            appendEventLog("[!] Server đang chạy không database/rule engine — không thể gửi lệnh");
-            return;
-        }
-        String[] options = {"Khóa màn hình", "Đăng xuất", "Khởi động lại", "Tắt máy", "Hủy"};
-        int choice = JOptionPane.showOptionDialog(this,
-                "Chọn thao tác cho thiết bị '" + displayName(selected) + "':",
-                "Điều khiển nguồn/phiên từ xa",
-                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
-                options, options[options.length - 1]);
-        if (choice < 0 || choice >= 4) {
-            return;
-        }
-        ActionType action = switch (choice) {
-            case 0 -> ActionType.LOCK_SESSION;
-            case 1 -> ActionType.LOGOFF_SESSION;
-            case 2 -> ActionType.RESTART_DEVICE;
-            default -> ActionType.SHUTDOWN_DEVICE;
+        JPanel toolbar = new JPanel(new BorderLayout(8, 0));
+        toolbar.setOpaque(false);
+        toolbar.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+
+        JPanel searchBox = new JPanel(new BorderLayout(6, 0));
+        searchBox.setOpaque(false);
+        searchBox.add(filterLabel, BorderLayout.WEST);
+        searchBox.add(activityFilterField, BorderLayout.CENTER);
+
+        JPanel toolBtns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        toolBtns.setOpaque(false);
+        toolBtns.add(clearActivityButton);
+        toolBtns.add(expandButton);
+
+        toolbar.add(searchBox, BorderLayout.CENTER);
+        toolbar.add(toolBtns, BorderLayout.EAST);
+
+        activityTableModel = new javax.swing.table.DefaultTableModel(
+                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ", "URL / Domain"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
         };
-        String actionLabel = options[choice];
-        boolean destructive = action == ActionType.RESTART_DEVICE
-                || action == ActionType.SHUTDOWN_DEVICE;
-        int confirm = JOptionPane.showConfirmDialog(this,
-                "Gửi lệnh '" + actionLabel + "' tới '" + displayName(selected) + "'?\n\n"
-                        + "• Thiết bị: " + selected.deviceName()
-                        + " (" + selected.ipAddress() + ")\n"
-                        + "• Hành động: " + actionLabel + "\n"
-                        + (destructive
-                                ? "• Khởi động lại/tắt máy có 5 giây để hủy trên máy con.\n" : "")
-                        + "• Lệnh được ghi audit trong command_logs.\n\n"
-                        + "Chỉ tiếp tục nếu bạn là phụ huynh/người quản lý thiết bị.",
-                "Xác nhận " + actionLabel,
-                JOptionPane.YES_NO_OPTION,
-                destructive ? JOptionPane.WARNING_MESSAGE : JOptionPane.QUESTION_MESSAGE);
-        if (confirm != JOptionPane.YES_OPTION) {
-            return;
-        }
-        String clientId = selected.clientId();
-        String deviceName = displayName(selected);
-        new javax.swing.SwingWorker<String, Void>() {
-            @Override
-            protected String doInBackground() {
-                return ruleEngine.sendPowerCommand(clientId, action, actionLabel
-                        + " requested by parent from Dashboard");
-            }
+        activityTable = new JTable(activityTableModel);
+        activityTable.setRowHeight(28);
+        activityTable.setShowVerticalLines(false);
+        activityTable.setShowHorizontalLines(true);
+        activityTable.setGridColor(new Color(0xE8, 0xEE, 0xF5));
+        activityTable.setSelectionBackground(new Color(0xDF, 0xEC, 0xFF));
+        activityTable.setSelectionForeground(TEXT_DARK);
+        activityTable.getTableHeader().setPreferredSize(new Dimension(0, 30));
+        activityTable.getTableHeader().setFont(
+                activityTable.getTableHeader().getFont().deriveFont(Font.BOLD, 12f));
+        activityTable.getTableHeader().setForeground(TEXT_DARK);
+        activityTable.setFillsViewportHeight(true);
+        activityTable.getColumnModel().getColumn(0).setPreferredWidth(140);
+        activityTable.getColumnModel().getColumn(1).setPreferredWidth(120);
+        activityTable.getColumnModel().getColumn(2).setPreferredWidth(360);
+        activityTable.getColumnModel().getColumn(3).setPreferredWidth(160);
+        activityTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
 
-            @Override
-            protected void done() {
-                try {
-                    String commandId = get();
-                    if (commandId != null) {
-                        appendEventLog("Đã gửi lệnh '" + actionLabel + "' tới '" + deviceName
-                                + "' (commandId=" + commandId.substring(0, 8)
-                                + "..., chờ ACK từ client)");
-                    } else {
-                        appendEventLog("[!] Gửi lệnh '" + actionLabel + "' thất bại — client offline "
-                                + "hoặc từ chối (không ACK)");
+        activityTable.getColumnModel().getColumn(2).setCellRenderer(
+                new javax.swing.table.DefaultTableCellRenderer() {
+                    @Override
+                    public Component getTableCellRendererComponent(JTable table,
+                            Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                        setText(value == null ? "" : GuiFormat.truncateForDisplay(value.toString(), 85));
+                        setToolTipText(value == null ? null : value.toString());
+                        return this;
                     }
-                } catch (Exception e) {
-                    appendEventLog("[!] Lỗi gửi lệnh nguồn: " + e.getMessage());
-                    log.error("Power command failed: {}", e.getMessage(), e);
-                }
-            }
-        }.execute();
-    }
+                });
 
-    /** Tên hiển thị đầy đủ: alias (tên gốc) hoặc tên gốc. */
-    private static String displayName(ClientRecord record) {
-        return record.alias() != null && !record.alias().isBlank()
-                ? record.alias() + " (" + record.deviceName() + ")"
-                : record.deviceName();
-    }
+        activitySorter = new javax.swing.table.TableRowSorter<>(activityTable.getModel());
+        activityTable.setRowSorter(activitySorter);
+        attachQuickBlockPopup(activityTable);
 
-    /**
-     * Mở dialog thống kê thời gian sử dụng (Tính năng 3.1). Hoạt động cả khi
-     * thiết bị OFFLINE — dữ liệu lịch sử vẫn nằm trong SQLite; múi giờ hiển thị
-     * là múi giờ server (nơi {@code usage_date} được ghi).
-     */
-    private void openUsageChartDialog() {
-        ClientRecord selected = deviceList.getSelectedValue();
-        if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để xem thống kê");
-            return;
-        }
-        String label = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
-        new UsageChartDialog(this, selected.clientId(), label, metricsDao,
-                serverEngine.getActivityDao(), java.time.ZoneId.systemDefault())
-                .setVisible(true);
-    }
+        JScrollPane tableScroll = new JScrollPane(activityTable);
+        tableScroll.setPreferredSize(new Dimension(0, 130));
+        tableScroll.setMinimumSize(new Dimension(0, 100));
+        tableScroll.setBorder(BorderFactory.createLineBorder(new Color(0xE2, 0xE8, 0xF0), 1));
+        tableScroll.getViewport().setBackground(Color.WHITE);
 
-    /**
-     * Quick Actions Panel (Task 5.2): Tạm dừng mạng / Khôi phục mạng / Gửi
-     * cảnh báo — gọi thẳng manual API của {@link RuleEvaluationEngine}.
-     */
-    private JPanel buildQuickActionsPanel() {
-        pauseButton = new JButton("Tạm dừng mạng");
-        resumeButton = new JButton("Khôi phục mạng");
-        alertMessageField = new JTextField(18);
-        sendAlertButton = new JButton("Gửi cảnh báo");
+        JLabel quickActionTitle = new JLabel("Điều khiển nhanh (tùy chọn)");
+        quickActionTitle.setFont(quickActionTitle.getFont().deriveFont(Font.BOLD, 12f));
+        quickActionTitle.setForeground(TEXT_DARK);
+        quickActionTitle.setBorder(BorderFactory.createEmptyBorder(8, 0, 4, 0));
+
+        pauseButton = createPillActionButton("Tạm dừng mạng", DashboardIcons.monitor(15, new Color(0x1A, 0x56, 0xDB)),
+                new Color(0xEA, 0xF2, 0xFF), new Color(0x90, 0xBB, 0xF8), new Color(0x1A, 0x56, 0xDB));
+        resumeButton = createPillActionButton("Khôi phục mạng", DashboardIcons.home(15, new Color(0x64, 0x74, 0x8B)),
+                new Color(0xF1, 0xF5, 0xF9), new Color(0xCB, 0xD5, 0xE1), new Color(0x64, 0x74, 0x8B));
+        sendAlertButton = createPillActionButton("Gửi cảnh báo", DashboardIcons.power(15, new Color(0x15, 0x80, 0x3D)),
+                new Color(0xE6, 0xF7, 0xEC), new Color(0x86, 0xEF, 0xAC), new Color(0x15, 0x80, 0x3D));
+
+        alertMessageField = new JTextField(16);
 
         pauseButton.addActionListener(event -> runQuickAction(() ->
                 ruleEngine.manualPause(selectedClientId(), "Tạm dừng thủ công từ phụ huynh"),
@@ -564,24 +691,768 @@ public class ServerDashboardFrame extends JFrame {
         sendAlertButton.addActionListener(event -> {
             String message = alertMessageField.getText().trim();
             if (message.isEmpty()) {
-                appendEventLog("[!] Tin nhắn cảnh báo rỗng — bỏ qua");
-                return;
+                message = (String) JOptionPane.showInputDialog(this,
+                        "Nhập nội dung cảnh báo gửi tới thiết bị:",
+                        "Gửi cảnh báo", JOptionPane.QUESTION_MESSAGE, null, null,
+                        "Cảnh báo: Đã quá giờ sử dụng máy tính, vui lòng nghỉ ngơi!");
+                if (message == null || message.trim().isEmpty()) {
+                    return;
+                }
             }
-            runQuickAction(() -> ruleEngine.sendAlert(selectedClientId(), message),
-                    "đã gửi cảnh báo: \"" + message + "\"");
+            final String finalMsg = message.trim();
+            runQuickAction(() -> ruleEngine.sendAlert(selectedClientId(), finalMsg),
+                    "đã gửi cảnh báo: \"" + finalMsg + "\"");
             alertMessageField.setText("");
         });
 
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
-        panel.setBorder(BorderFactory.createTitledBorder("Điều khiển nhanh (thủ công)"));
-        panel.add(pauseButton);
-        panel.add(resumeButton);
-        panel.add(alertMessageField);
-        panel.add(sendAlertButton);
-        return panel;
+        JPanel actionBtnsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        actionBtnsRow.setOpaque(false);
+        actionBtnsRow.add(pauseButton);
+        actionBtnsRow.add(resumeButton);
+        actionBtnsRow.add(sendAlertButton);
+
+        JPanel content = new JPanel();
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        content.setOpaque(false);
+        content.add(toolbar);
+        content.add(tableScroll);
+        content.add(quickActionTitle);
+        content.add(actionBtnsRow);
+
+        return createCard("Hoạt động người dùng", DashboardIcons.users(16, PRIMARY_ACCENT),
+                activeAppBadge, content);
     }
 
-    /** Chạy quick action trên nền SwingWorker tránh block EDT, log kết quả. */
+    private JPanel buildEventLogCard() {
+        eventLogArea = new JTextArea(6, 40);
+        eventLogArea.setEditable(false);
+        eventLogArea.setLineWrap(true);
+        eventLogArea.setFont(new Font("Consolas", Font.PLAIN, 12));
+        eventLogArea.setBackground(new Color(0x09, 0x12, 0x22));
+        eventLogArea.setForeground(new Color(0xCB, 0xD5, 0xE1));
+        eventLogArea.setCaretColor(Color.WHITE);
+        eventLogArea.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+
+        JScrollPane scrollPane = new JScrollPane(eventLogArea);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.getViewport().setBackground(eventLogArea.getBackground());
+
+        JButton clearLogBtn = createDarkActionButton("Xóa log", DashboardIcons.trash(13, Color.WHITE));
+        clearLogBtn.addActionListener(e -> clearEventLog());
+
+        JButton exportLogBtn = createDarkActionButton("Xuất file", DashboardIcons.document(13, Color.WHITE));
+        exportLogBtn.addActionListener(e -> exportEventLogToFile());
+
+        JPanel headerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        headerButtons.setOpaque(false);
+        headerButtons.add(clearLogBtn);
+        headerButtons.add(exportLogBtn);
+
+        JLabel logTitle = new JLabel("Event Log");
+        logTitle.setIcon(DashboardIcons.document(16, new Color(0x38, 0xBD, 0xF8)));
+        logTitle.setForeground(Color.WHITE);
+        logTitle.setFont(logTitle.getFont().deriveFont(Font.BOLD, 13f));
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+        header.add(logTitle, BorderLayout.WEST);
+        header.add(headerButtons, BorderLayout.EAST);
+        header.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
+
+        JLabel greenDot = new JLabel("●");
+        greenDot.setForeground(new Color(0x22, 0xC5, 0x5E));
+        greenDot.setFont(greenDot.getFont().deriveFont(14f));
+        JPanel bottomRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        bottomRow.setOpaque(false);
+        bottomRow.add(greenDot);
+
+        CardPanel card = new CardPanel(16, new Color(0x1E, 0x2E, 0x47));
+        card.setBackground(new Color(0x0C, 0x18, 0x2D));
+        card.setPreferredSize(new Dimension(0, 150));
+        card.setMinimumSize(new Dimension(0, 120));
+        card.add(header, BorderLayout.NORTH);
+        card.add(scrollPane, BorderLayout.CENTER);
+        card.add(bottomRow, BorderLayout.SOUTH);
+
+        return card;
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers tạo UI component chuẩn mực — Vẽ nền trong paintComponent
+    // ------------------------------------------------------------------
+
+    private static class CardPanel extends JPanel {
+        private final int arc;
+        private final Color borderColor;
+
+        CardPanel(int arc, Color borderColor) {
+            super(new BorderLayout(0, 8));
+            this.arc = arc;
+            this.borderColor = borderColor;
+            setOpaque(false);
+            setBackground(CARD_BG);
+            setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(getBackground());
+                g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
+                if (borderColor != null) {
+                    g2.setColor(borderColor);
+                    g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
+                }
+            } finally {
+                g2.dispose();
+            }
+        }
+    }
+
+    private static JPanel createCard(String title, Icon icon, JComponent rightComponent, JComponent content) {
+        CardPanel card = new CardPanel(16, CARD_BORDER_COLOR);
+
+        JLabel titleLabel = new JLabel(title);
+        if (icon != null) {
+            titleLabel.setIcon(icon);
+            titleLabel.setIconTextGap(8);
+        }
+        titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 13f));
+        titleLabel.setForeground(TEXT_DARK);
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+        header.add(titleLabel, BorderLayout.WEST);
+        if (rightComponent != null) {
+            header.add(rightComponent, BorderLayout.EAST);
+        }
+        header.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+
+        card.add(header, BorderLayout.NORTH);
+        card.add(content, BorderLayout.CENTER);
+        return card;
+    }
+
+    private static JLabel createFieldLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setForeground(TEXT_MUTED);
+        label.setFont(label.getFont().deriveFont(12f));
+        return label;
+    }
+
+    private static JTextField createStyledDisplayField() {
+        JTextField field = new JTextField("—");
+        field.setEditable(false);
+        field.setOpaque(true);
+        field.setBackground(new Color(0xF8, 0xFA, 0xFC));
+        field.setForeground(TEXT_DARK);
+        field.setFont(field.getFont().deriveFont(12f));
+        field.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xE2, 0xE8, 0xF0), 1, true),
+                BorderFactory.createEmptyBorder(5, 10, 5, 10)));
+        return field;
+    }
+
+    private static JTextField createMetricValueField() {
+        JTextField field = new JTextField("—");
+        field.setEditable(false);
+        field.setOpaque(false);
+        field.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
+        field.setFont(field.getFont().deriveFont(Font.BOLD, 17f));
+        field.setForeground(TEXT_DARK);
+        return field;
+    }
+
+    private static JPanel createStatMetricCard(String title, Icon icon,
+                                               JTextField valueField, SparklineWavePanel wavePanel) {
+        CardPanel card = new CardPanel(14, new Color(0xE2, 0xE8, 0xF0));
+        card.setBorder(BorderFactory.createEmptyBorder(8, 10, 6, 10));
+
+        JLabel titleLabel = new JLabel(" " + title);
+        if (icon != null) {
+            titleLabel.setIcon(icon);
+        }
+        titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 11f));
+        titleLabel.setForeground(TEXT_MUTED);
+
+        card.add(titleLabel, BorderLayout.NORTH);
+        card.add(valueField, BorderLayout.CENTER);
+        card.add(wavePanel, BorderLayout.SOUTH);
+        return card;
+    }
+
+    private static class SidebarButton extends JButton {
+        private final boolean isPrimaryNav;
+        private final boolean active;
+        private final Color activeBg;
+        private final Color activeBorder;
+        private final Color defaultBg;
+        private final Color defaultBorder;
+        private final Color hoverBg;
+        private final Color hoverBorder;
+        private final Color defaultFg;
+        private final Color activeFg;
+        private final Color hoverFg;
+        private final int arc;
+
+        SidebarButton(String text, Icon icon, boolean isPrimaryNav, boolean active) {
+            super(text);
+            this.isPrimaryNav = isPrimaryNav;
+            this.active = active;
+            this.arc = 10;
+
+            if (icon != null) {
+                setIcon(icon);
+            }
+            setHorizontalAlignment(SwingConstants.LEFT);
+            setIconTextGap(12);
+            setFocusPainted(false);
+            setBorderPainted(false);
+            setContentAreaFilled(false);
+            setOpaque(false);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+            int height = 36;
+            setPreferredSize(new Dimension(244, height));
+            setMinimumSize(new Dimension(244, height));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, height));
+            setAlignmentX(Component.CENTER_ALIGNMENT);
+
+            setBorder(BorderFactory.createEmptyBorder(0, 14, 0, 14));
+
+            if (isPrimaryNav) {
+                if (active) {
+                    this.activeBg = new Color(0x1D, 0x4E, 0xD8);
+                    this.activeBorder = new Color(0x3B, 0x82, 0xF6);
+                    this.activeFg = Color.WHITE;
+                    this.defaultBg = this.activeBg;
+                    this.defaultBorder = this.activeBorder;
+                    this.defaultFg = this.activeFg;
+                    this.hoverBg = new Color(0x25, 0x63, 0xEB);
+                    this.hoverBorder = new Color(0x60, 0xA5, 0xFA);
+                    this.hoverFg = Color.WHITE;
+                    setFont(getFont().deriveFont(Font.BOLD, 12f));
+                } else {
+                    this.activeBg = null;
+                    this.activeBorder = null;
+                    this.activeFg = null;
+                    this.defaultBg = new Color(0x00, 0x00, 0x00, 0);
+                    this.defaultBorder = null;
+                    this.defaultFg = new Color(0x94, 0xA3, 0xB8);
+                    this.hoverBg = new Color(0x16, 0x2A, 0x46);
+                    this.hoverBorder = new Color(0x23, 0x3E, 0x66);
+                    this.hoverFg = new Color(0xF1, 0xF5, 0xF9);
+                    setFont(getFont().deriveFont(Font.PLAIN, 12f));
+                }
+            } else {
+                this.activeBg = null;
+                this.activeBorder = null;
+                this.activeFg = null;
+                this.defaultBg = new Color(0x13, 0x24, 0x3D);
+                this.defaultBorder = new Color(0x1E, 0x37, 0x58);
+                this.defaultFg = new Color(0xCB, 0xD5, 0xE1);
+                this.hoverBg = new Color(0x1A, 0x32, 0x54);
+                this.hoverBorder = new Color(0x2E, 0x52, 0x80);
+                this.hoverFg = Color.WHITE;
+                setFont(getFont().deriveFont(Font.PLAIN, 12f));
+            }
+
+            setForeground(defaultFg);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                boolean isRollover = getModel().isRollover() && isEnabled();
+                boolean isPressed = getModel().isPressed() && isEnabled();
+
+                Color bg;
+                Color border;
+                Color fg;
+
+                if (!isEnabled()) {
+                    bg = new Color(0x0C, 0x17, 0x26);
+                    border = new Color(0x15, 0x24, 0x38);
+                    fg = new Color(0x47, 0x55, 0x69);
+                } else if (active) {
+                    bg = isPressed ? activeBg.darker() : (isRollover ? hoverBg : activeBg);
+                    border = isRollover ? hoverBorder : activeBorder;
+                    fg = activeFg;
+                } else if (isRollover || isPressed) {
+                    bg = isPressed ? hoverBg.darker() : hoverBg;
+                    border = hoverBorder;
+                    fg = hoverFg;
+                } else {
+                    bg = defaultBg;
+                    border = defaultBorder;
+                    fg = defaultFg;
+                }
+
+                if (bg != null && bg.getAlpha() > 0) {
+                    g2.setColor(bg);
+                    g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
+                }
+                if (border != null) {
+                    g2.setColor(border);
+                    g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
+                }
+                setForeground(fg);
+            } finally {
+                g2.dispose();
+            }
+            super.paintComponent(g);
+        }
+    }
+
+    private static JButton createSidebarNavButton(String text, Icon icon, boolean active) {
+        return new SidebarButton(text, icon, true, active);
+    }
+
+    private static JButton createSidebarActionButton(String text, Icon icon) {
+        return new SidebarButton(text, icon, false, false);
+    }
+
+    private static JButton createWhiteActionButton(String text, Icon icon) {
+        JButton button = new JButton(text);
+        if (icon != null) {
+            button.setIcon(icon);
+        }
+        button.setForeground(new Color(0x1E, 0x29, 0x3B));
+        button.setBackground(Color.WHITE);
+        button.setOpaque(true);
+        button.setFocusPainted(false);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setFont(button.getFont().deriveFont(12f));
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xCB, 0xD5, 0xE1), 1, true),
+                BorderFactory.createEmptyBorder(5, 11, 5, 11)));
+        return button;
+    }
+
+    private static JButton createDarkActionButton(String text, Icon icon) {
+        JButton button = new JButton(text);
+        if (icon != null) {
+            button.setIcon(icon);
+        }
+        button.setForeground(Color.WHITE);
+        button.setBackground(new Color(0x18, 0x26, 0x3E));
+        button.setOpaque(true);
+        button.setFocusPainted(false);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setFont(button.getFont().deriveFont(11f));
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0x28, 0x3E, 0x60), 1, true),
+                BorderFactory.createEmptyBorder(4, 10, 4, 10)));
+        return button;
+    }
+
+    private static JButton createPillActionButton(String text, Icon icon, Color bg, Color border, Color fg) {
+        JButton button = new JButton(text);
+        if (icon != null) {
+            button.setIcon(icon);
+        }
+        button.setForeground(fg);
+        button.setBackground(bg);
+        button.setOpaque(true);
+        button.setFocusPainted(false);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setFont(button.getFont().deriveFont(Font.BOLD, 12f));
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(border, 1, true),
+                BorderFactory.createEmptyBorder(7, 14, 7, 14)));
+        return button;
+    }
+
+    // ------------------------------------------------------------------
+    // Renderer danh sách thiết bị
+    // ------------------------------------------------------------------
+
+    private static final class DeviceCellRenderer extends DefaultListCellRenderer {
+        private static final Color SELECTED_BG = new Color(0xEE, 0xF4, 0xFF);
+        private static final Color SELECTED_BORDER = new Color(0xBF, 0xDB, 0xFE);
+        private static final Color SELECTED_FG = new Color(0x1D, 0x4E, 0xD8);
+
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                                                      boolean selected, boolean focused) {
+            Component component = super.getListCellRendererComponent(list, value, index, selected, focused);
+            if (value instanceof ClientRecord record && component instanceof JLabel label) {
+                boolean online = "ONLINE".equals(record.status());
+                String bullet = online ? "●" : "○";
+                boolean hasAlias = record.alias() != null && !record.alias().isBlank();
+                String name = hasAlias ? record.alias() : record.deviceName();
+                String ip = record.ipAddress() != null ? record.ipAddress() : "—";
+
+                label.setText(bullet + "  " + name + " (" + ip + ") — " + (online ? "Online" : "Offline"));
+                label.setToolTipText((hasAlias ? record.alias() + " (" + record.deviceName() + ")"
+                        : record.deviceName()) + " · " + ip);
+
+                if (selected) {
+                    label.setBackground(SELECTED_BG);
+                    label.setForeground(SELECTED_FG);
+                    label.setFont(label.getFont().deriveFont(Font.BOLD, 12f));
+                    label.setOpaque(true);
+                    label.setBorder(BorderFactory.createCompoundBorder(
+                            BorderFactory.createLineBorder(SELECTED_BORDER, 1, true),
+                            BorderFactory.createEmptyBorder(6, 10, 6, 10)));
+                } else {
+                    label.setBackground(Color.WHITE);
+                    label.setForeground(online ? new Color(0x16, 0xA3, 0x4A) : TEXT_MUTED);
+                    label.setFont(label.getFont().deriveFont(Font.PLAIN, 12f));
+                    label.setOpaque(true);
+                    label.setBorder(BorderFactory.createEmptyBorder(7, 11, 7, 11));
+                }
+            }
+            return component;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Cập nhật trạng thái và chu kỳ dữ liệu
+    // ------------------------------------------------------------------
+
+    private void updateHeaderStatus() {
+        if (serverStatusLabel != null) {
+            boolean running = serverEngine.isRunning();
+            serverStatusLabel.setText(running ? "●  Server Online · " + serverEngine.getPort()
+                    : "●  Server Offline");
+            serverStatusLabel.setForeground(running
+                    ? new Color(0x22, 0xC5, 0x5E) : new Color(0xEF, 0x44, 0x44));
+        }
+        if (headerClockLabel != null) {
+            headerClockLabel.setText(java.time.LocalDateTime.now().format(HEADER_TIME_FORMAT));
+        }
+    }
+
+    private void registerEngineListeners() {
+        sessionManager.addConnectionListener(new ClientConnectionListener() {
+            @Override
+            public void onClientConnected(ClientSession session) {
+                SwingUtilities.invokeLater(() -> {
+                    appendEventLog("Client '" + session.getClientId() + "' đã kết nối");
+                    reloadDeviceList();
+                });
+            }
+
+            @Override
+            public void onClientDisconnected(String clientId, DisconnectReason reason) {
+                SwingUtilities.invokeLater(() -> {
+                    appendEventLog("Client '" + clientId + "' đã ngắt kết nối (" + reason + ")");
+                    reloadDeviceList();
+                });
+            }
+
+            @Override
+            public void onActivityReport(ClientSession session,
+                    com.parental.common.protocol.payload.ActivityReportPayload activity) {
+                SwingUtilities.invokeLater(() -> {
+                    lastActivityTableRefresh = java.time.Instant.EPOCH;
+                });
+            }
+
+            @Override
+            public void onConfigAck(ClientSession session, long revision,
+                    String status, String message) {
+                SwingUtilities.invokeLater(() -> {
+                    if ("APPLIED".equals(status)) {
+                        appendEventLog("[OK] Client '" + session.getClientId()
+                                + "' đã áp dụng CONFIG_SYNC rev=" + revision);
+                    } else {
+                        appendEventLog("[!] Client '" + session.getClientId()
+                                + "' áp dụng CONFIG_SYNC rev=" + revision + " CHƯA ĐẦY ĐỦ ("
+                                + status + "): " + message);
+                    }
+                });
+            }
+        });
+    }
+
+    private void startUiRefresher() {
+        uiRefresher = new Timer(REFRESH_INTERVAL_MS, event -> {
+            updateHeaderStatus();
+            refreshCenterPanel();
+        });
+        uiRefresher.start();
+    }
+
+    public void stopRefresher() {
+        if (uiRefresher != null) {
+            uiRefresher.stop();
+        }
+    }
+
+    private void reloadDeviceList() {
+        if (clientDao == null) {
+            return;
+        }
+        String previousSelection = selectedClientId();
+        deviceListModel.clear();
+        List<ClientRecord> records = clientDao.getAllClients();
+        int onlineCount = 0;
+        for (ClientRecord record : records) {
+            deviceListModel.addElement(record);
+            if ("ONLINE".equals(record.status())) {
+                onlineCount++;
+            }
+        }
+        if (deviceCountLabel != null) {
+            deviceCountLabel.setText(records.size() == 1
+                    ? "1 thiết bị kết nối"
+                    : records.size() + " thiết bị kết nối (" + onlineCount + " online)");
+        }
+        if (previousSelection != null) {
+            for (int i = 0; i < deviceListModel.size(); i++) {
+                if (previousSelection.equals(deviceListModel.get(i).clientId())) {
+                    deviceList.setSelectedIndex(i);
+                    deviceList.ensureIndexIsVisible(i);
+                    break;
+                }
+            }
+        }
+        updateQuickActionButtons();
+        updateDeviceAdminButtons();
+    }
+
+    private void refreshCenterPanel() {
+        if (clientDao == null || metricsDao == null || ruleDao == null || sessionManager == null) {
+            return;
+        }
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null && !deviceListModel.isEmpty()) {
+            if (deviceList.getSelectedIndex() < 0) {
+                deviceList.setSelectedIndex(0);
+            }
+            selected = deviceList.getSelectedValue();
+        }
+        if (selected == null) {
+            clearCenterPanel();
+            return;
+        }
+        String clientId = selected.clientId();
+
+        boolean hasAlias = selected.alias() != null && !selected.alias().isBlank();
+        deviceNameField.setText(hasAlias
+                ? selected.alias() + " (" + selected.deviceName() + ")"
+                : orDash(selected.deviceName()));
+        macField.setText(orDash(selected.macAddress()));
+        osField.setText(selected.osVersion() != null ? selected.osVersion() : "—");
+
+        ClientSession session = sessionManager.get(clientId);
+        MetricsPayload metrics = session != null ? session.getLastMetrics() : null;
+        if (metrics != null) {
+            downloadSpeedField.setText(GuiFormat.formatSpeedBps(metrics.downloadSpeedBps()));
+            uploadSpeedField.setText(GuiFormat.formatSpeedBps(metrics.uploadSpeedBps()));
+            sessionDurationField.setText(GuiFormat.formatDuration(metrics.sessionDurationSeconds()));
+        } else {
+            downloadSpeedField.setText("—");
+            uploadSpeedField.setText("—");
+            sessionDurationField.setText("—");
+        }
+
+        com.parental.common.protocol.payload.ActivityReportPayload activity =
+                session != null ? session.getLastActivity() : null;
+        if (activity != null && !activity.activeProcessName().isEmpty()) {
+            String title = activity.activeWindowTitle();
+            String display = activity.activeProcessName()
+                    + (title.isEmpty() ? "" : " — " + title);
+            activeAppField.setText(display);
+            if (activeAppBadge != null) {
+                activeAppBadge.setText(GuiFormat.truncateForDisplay(display, 80));
+            }
+        } else {
+            activeAppField.setText("—");
+            if (activeAppBadge != null) {
+                activeAppBadge.setText("—");
+            }
+        }
+
+        java.time.Instant now = java.time.Instant.now();
+        if (java.time.Duration.between(lastActivityTableRefresh, now).getSeconds() >= 2) {
+            lastActivityTableRefresh = now;
+            reloadActivityTable(clientId);
+        }
+
+        long todayBytes = metricsDao.getTodayTrafficBytes(clientId);
+        todayTrafficField.setText(GuiFormat.formatBytes(todayBytes));
+
+        RuleRecord rule = ruleDao.getRule(clientId);
+        if (rule != null && rule.dailyTrafficQuotaBytes() > 0) {
+            int pct = GuiFormat.clampPercent(todayBytes, rule.dailyTrafficQuotaBytes());
+            quotaBar.setValue(pct);
+            quotaTextLabel.setText(GuiFormat.formatBytes(todayBytes) + " / "
+                    + GuiFormat.formatBytes(rule.dailyTrafficQuotaBytes()));
+        } else {
+            quotaBar.setValue(0);
+            quotaTextLabel.setText("Không giới hạn dung lượng");
+        }
+
+        if (rule != null && rule.dailyUsageLimitSeconds() > 0) {
+            long todaySeconds = metricsDao.getTodayUsageSeconds(clientId);
+            long usedSeconds = todaySeconds > 0 ? todaySeconds
+                    : (metrics != null ? metrics.sessionDurationSeconds() : 0);
+            int pct = GuiFormat.clampPercent(usedSeconds, rule.dailyUsageLimitSeconds());
+            usageBar.setValue(pct);
+            usageTextLabel.setText(GuiFormat.formatDuration(usedSeconds) + " / "
+                    + GuiFormat.formatDuration(rule.dailyUsageLimitSeconds()));
+        } else {
+            usageBar.setValue(0);
+            usageTextLabel.setText("Không giới hạn thời gian");
+        }
+
+        boolean enforced = ruleEngine != null && ruleEngine.isEnforced(clientId);
+        if (enforced) {
+            quotaBar.setForeground(new Color(0xDC, 0x26, 0x26));
+            usageBar.setForeground(new Color(0xDC, 0x26, 0x26));
+        } else {
+            quotaBar.setForeground(PRIMARY_ACCENT);
+            usageBar.setForeground(new Color(0x94, 0xA3, 0xB8));
+        }
+        updateQuickActionButtons();
+    }
+
+    private void clearCenterPanel() {
+        deviceNameField.setText("—");
+        macField.setText("—");
+        osField.setText("—");
+        sessionDurationField.setText("—");
+        downloadSpeedField.setText("—");
+        uploadSpeedField.setText("—");
+        todayTrafficField.setText("—");
+        activeAppField.setText("—");
+        if (activeAppBadge != null) {
+            activeAppBadge.setText("—");
+        }
+        clearActivityTable();
+        quotaBar.setValue(0);
+        quotaTextLabel.setText("Chưa chọn thiết bị");
+        usageBar.setValue(0);
+        usageTextLabel.setText("Chưa chọn thiết bị");
+    }
+
+    private void reloadActivityTable(String clientId) {
+        if (serverEngine.getActivityDao() == null) {
+            return;
+        }
+        List<ActivityDao.ActivityRecord> records =
+                serverEngine.getActivityDao().getRecentActivities(clientId, ACTIVITY_LOG_LIMIT);
+        activityTableModel.setRowCount(0);
+        for (ActivityDao.ActivityRecord record : records) {
+            activityTableModel.addRow(ServerDashboardFrameTestHook.buildActivityTableRow(record));
+        }
+        activityTable.repaint();
+    }
+
+    private void applyActivityFilter() {
+        if (activitySorter == null) {
+            return;
+        }
+        activitySorter.setRowFilter(
+                ServerDashboardFrameTestHook.buildActivityRowFilter(activityFilterField.getText())
+                        .orElse(null));
+    }
+
+    private void clearActivityTable() {
+        activityTableModel.setRowCount(0);
+        if (activityFilterField != null && !activityFilterField.getText().isEmpty()) {
+            activityFilterField.setText("");
+        }
+    }
+
+    private void clearActivityHistory() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để xóa lịch sử hoạt động");
+            return;
+        }
+        String deviceDisplay = displayName(selected);
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Xóa TOÀN BỘ nhật ký hoạt động của thiết bị '" + deviceDisplay + "'?\n\n"
+                        + "Thao tác không thể hoàn tác!",
+                "Xóa lịch sử hoạt động",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+        if (choice != JOptionPane.YES_OPTION) {
+            return;
+        }
+        String clientId = selected.clientId();
+        clearActivityTable();
+        activeAppField.setText("—");
+        if (activeAppBadge != null) {
+            activeAppBadge.setText("—");
+        }
+        ClientSession liveSession = sessionManager.get(clientId);
+        if (liveSession != null) {
+            liveSession.setLastActivity(null);
+        }
+        new javax.swing.SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                return serverEngine.getActivityDao() != null
+                        ? serverEngine.getActivityDao().deleteAll(clientId)
+                        : false;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    if (get()) {
+                        appendEventLog("[OK] Đã xóa toàn bộ lịch sử hoạt động của '"
+                                + deviceDisplay + "'");
+                    } else {
+                        appendEventLog("[!] Xóa lịch sử hoạt động thất bại (lỗi cơ sở dữ liệu)");
+                    }
+                } catch (Exception e) {
+                    appendEventLog("[!] Lỗi khi xóa lịch sử hoạt động: " + e.getMessage());
+                    log.error("Clear activity history failed: {}", e.getMessage(), e);
+                }
+                lastActivityTableRefresh = java.time.Instant.EPOCH;
+                refreshNow();
+            }
+        }.execute();
+    }
+
+    private void clearEventLog() {
+        if (eventLogArea != null) {
+            eventLogArea.setText("");
+            appendEventLog("[OK] Đã xóa nhật ký hiển thị");
+        }
+    }
+
+    private void exportEventLogToFile() {
+        if (eventLogArea == null || eventLogArea.getText().isBlank()) {
+            JOptionPane.showMessageDialog(this, "Nhật ký hiện đang trống!",
+                    "Xuất nhật ký", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Lưu nhật ký Event Log");
+        fileChooser.setSelectedFile(new File("event_log_"
+                + java.time.LocalDate.now() + ".txt"));
+        int userSelection = fileChooser.showSaveDialog(this);
+        if (userSelection == JFileChooser.APPROVE_OPTION) {
+            File fileToSave = fileChooser.getSelectedFile();
+            try (FileWriter writer = new FileWriter(fileToSave, StandardCharsets.UTF_8)) {
+                writer.write(eventLogArea.getText());
+                appendEventLog("[OK] Đã xuất nhật ký ra tệp: " + fileToSave.getAbsolutePath());
+                JOptionPane.showMessageDialog(this, "Xuất file thành công!\n"
+                        + fileToSave.getAbsolutePath(), "Xuất tệp thành công", JOptionPane.INFORMATION_MESSAGE);
+            } catch (IOException e) {
+                appendEventLog("[!] Xuất tệp nhật ký thất bại: " + e.getMessage());
+                JOptionPane.showMessageDialog(this, "Lỗi khi lưu tệp: " + e.getMessage(),
+                        "Lỗi xuất tệp", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Quick Actions & Admin Handlers
+    // ------------------------------------------------------------------
+
     private void runQuickAction(java.util.function.Supplier<String> action, String successMessage) {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
@@ -615,634 +1486,285 @@ public class ServerDashboardFrame extends JFrame {
         }.execute();
     }
 
-    /** ClientId đang chọn trong sidebar (null nếu không chọn gì). */
     private String selectedClientId() {
         ClientRecord selected = deviceList.getSelectedValue();
         return selected != null ? selected.clientId() : null;
     }
 
-    /** Enable/disable nút pause/resume theo trạng thái online + enforced (EDT). */
     private void updateQuickActionButtons() {
         ClientRecord selected = deviceList.getSelectedValue();
         boolean online = selected != null && "ONLINE".equals(selected.status())
-                && ruleEngine != null; // không có rule engine → vô hiệu hóa quick action
+                && ruleEngine != null;
         boolean enforced = selected != null && ruleEngine != null && ruleEngine.isEnforced(selected.clientId());
-        pauseButton.setEnabled(online && !enforced);
-        resumeButton.setEnabled(online && enforced);
-        sendAlertButton.setEnabled(online);
-        alertMessageField.setEnabled(online);
-    }
-
-    private JPanel buildCenterPanel() {
-        deviceNameField = new JTextField();
-        macField = new JTextField();
-        osField = new JTextField();
-        sessionDurationField = new JTextField();
-        deviceNameField.setEditable(false);
-        macField.setEditable(false);
-        osField.setEditable(false);
-        sessionDurationField.setEditable(false);
-
-        // Nút Đổi tên đặt ngay cạnh trường Tên máy
-        renameButton = new JButton("Đổi tên");
-        renameButton.addActionListener(event -> renameSelectedDevice());
-        renameButton.setEnabled(false); // bật khi có thiết bị đang chọn
-
-        JPanel infoPanel = new JPanel(new GridBagLayout());
-        infoPanel.setBorder(BorderFactory.createTitledBorder("Thông tin thiết bị"));
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(4, 6, 4, 6);
-        gbc.anchor = GridBagConstraints.WEST;
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-
-        gbc.gridx = 0;
-        gbc.gridy = 0;
-        infoPanel.add(new JLabel("Tên máy:"), gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        infoPanel.add(deviceNameField, gbc);
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        infoPanel.add(renameButton, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 1;
-        gbc.weightx = 0;
-        infoPanel.add(new JLabel("MAC:"), gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        infoPanel.add(macField, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 2;
-        gbc.weightx = 0;
-        infoPanel.add(new JLabel("Hệ điều hành:"), gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        infoPanel.add(osField, gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 3;
-        gbc.weightx = 0;
-        infoPanel.add(new JLabel("Thời gian phiên:"), gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        infoPanel.add(sessionDurationField, gbc);
-
-        // --- Thẻ số liệu tức thời (metric cards) ---
-        JPanel cardsPanel = new JPanel(new GridLayout(1, 3, 10, 10));
-        cardsPanel.setBorder(BorderFactory.createTitledBorder("Giám sát tức thời"));
-        cardsPanel.add(buildMetricCard("Tốc độ tải về", downloadSpeedField = new JTextField()));
-        cardsPanel.add(buildMetricCard("Tốc độ tải lên", uploadSpeedField = new JTextField()));
-        cardsPanel.add(buildMetricCard("Tổng hôm nay", todayTrafficField = new JTextField()));
-        for (Component component : cardsPanel.getComponents()) {
-            if (component instanceof JPanel card) {
-                for (Component child : card.getComponents()) {
-                    if (child instanceof JTextField field) {
-                        field.setEditable(false);
-                        field.setHorizontalAlignment(JTextField.CENTER);
-                        field.setFont(field.getFont().deriveFont(Font.BOLD, 15f));
-                    }
-                }
-            }
+        if (pauseButton != null) {
+            pauseButton.setEnabled(online && !enforced);
         }
-
-        // --- Thanh đo hạn mức (rule) ---
-        quotaBar = new JProgressBar(0, 100);
-        usageBar = new JProgressBar(0, 100);
-        quotaBar.setStringPainted(true);
-        usageBar.setStringPainted(true);
-        quotaLabel = new JLabel("Dung lượng hôm nay / hạn mức:");
-        usageLabel = new JLabel("Thời gian phiên / giới hạn:");
-
-        JPanel rulesPanel = new JPanel(new GridBagLayout());
-        rulesPanel.setBorder(BorderFactory.createTitledBorder("Hạn mức (Rule)"));
-        GridBagConstraints rulesGbc = new GridBagConstraints();
-        rulesGbc.insets = new Insets(4, 6, 4, 6);
-        rulesGbc.fill = GridBagConstraints.HORIZONTAL;
-        rulesGbc.weightx = 1.0;
-
-        rulesGbc.gridx = 0;
-        rulesGbc.gridy = 0;
-        rulesPanel.add(quotaLabel, rulesGbc);
-        rulesGbc.gridy = 1;
-        rulesPanel.add(quotaBar, rulesGbc);
-        rulesGbc.gridy = 2;
-        rulesPanel.add(usageLabel, rulesGbc);
-        rulesGbc.gridy = 3;
-        rulesPanel.add(usageBar, rulesGbc);
-
-        // --- Hoạt động tức thời (Activity Monitoring — Mục 3.9) ---
-        JPanel activityPanel = new JPanel(new BorderLayout(8, 0));
-        activityPanel.setBorder(BorderFactory.createTitledBorder("Hoạt động người dùng"));
-        activeAppField = new JTextField("—");
-        activeAppField.setEditable(false);
-        activeAppField.setHorizontalAlignment(JTextField.CENTER);
-        activeAppField.setFont(activeAppField.getFont().deriveFont(Font.BOLD, 13f));
-        activityPanel.add(activeAppField, BorderLayout.CENTER);
-
-        // --- Nhật ký hoạt động gần đây (JTable 30 bản ghi mới nhất, 4 cột) ---
-        activityTableModel = new javax.swing.table.DefaultTableModel(
-                new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ", "URL / Domain"}, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false; // chỉ đọc
-            }
-        };
-        activityTable = new JTable(activityTableModel);
-        activityTable.getColumnModel().getColumn(0).setPreferredWidth(90);
-        activityTable.getColumnModel().getColumn(1).setPreferredWidth(110);
-        activityTable.getColumnModel().getColumn(2).setPreferredWidth(330);
-        activityTable.getColumnModel().getColumn(3).setPreferredWidth(160);
-        activityTable.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
-        // Title cửa sổ dài → cắt trong cell (chuỗi dài không phá bố cục cột)
-        activityTable.getColumnModel().getColumn(2).setCellRenderer(
-                new javax.swing.table.DefaultTableCellRenderer() {
-                    @Override
-                    public java.awt.Component getTableCellRendererComponent(JTable table,
-                            Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-                        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-                        setText(value == null ? "" : GuiFormat.truncateForDisplay(value.toString(), 80));
-                        setToolTipText(value == null ? null : value.toString());
-                        return this;
-                    }
-                });
-        // Sắp xếp + lọc dòng JTable ( ô "Lọc tiến trình/tiêu đề" )
-        activitySorter = new javax.swing.table.TableRowSorter<>(activityTable.getModel());
-        activityTable.setRowSorter(activitySorter);
-        // Menu chuột phải: chặn nhanh tên miền từ dòng nhật ký được chọn
-        attachQuickBlockPopup(activityTable);
-        JScrollPane activityScroll = new JScrollPane(activityTable);
-        // Cao 160px cố định định + chặn co hẹp — bảng nhật ký luôn trọn trong JScrollPane,
-        // không bị panel khác đè bẹp (Box.Y_AXIS tôn trọng preferred size).
-        activityScroll.setPreferredSize(new Dimension(880, 160));
-        activityScroll.setMinimumSize(new Dimension(600, 160));
-        activityScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 160));
-        activityScroll.setBorder(BorderFactory.createTitledBorder(
-                "Nhật ký hoạt động gần đây (30 bản ghi — gõ vào ô lọc để tìm nhanh)"));
-
-        // --- Ô lọc tìm kiếm tiến trình/tiêu đề (TableRowSorter) ---
-        JPanel filterPanel = new JPanel(new BorderLayout(6, 0));
-        filterPanel.add(new JLabel("Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
-        activityFilterField = new JTextField();
-        activityFilterField.setToolTipText("Ví dụ: chrome, edge, youtube — lọc theo tên tiến trình hoặc tiêu đề cửa sổ");
-        attachSelectAllOnFocus(activityFilterField);
-        activityFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            @Override
-            public void insertUpdate(javax.swing.event.DocumentEvent e) {
-                applyActivityFilter();
-            }
-
-            @Override
-            public void removeUpdate(javax.swing.event.DocumentEvent e) {
-                applyActivityFilter();
-            }
-
-            @Override
-            public void changedUpdate(javax.swing.event.DocumentEvent e) {
-                applyActivityFilter();
-            }
-        });
-        filterPanel.add(activityFilterField, BorderLayout.CENTER);
-
-        // --- Nút xóa sạch lịch sử hoạt động (activity_logs) của client đang chọn ---
-        clearActivityButton = new JButton("Xóa lịch sử hoạt động");
-        clearActivityButton.setToolTipText("Dọn sạch bản ghi nhật ký hoạt động của thiết bị đang chọn trong DB");
-        clearActivityButton.addActionListener(event -> clearActivityHistory());
-
-        // --- Nút mở rộng: xem 100 bản ghi gần nhất trong dialog lớn (title full) ---
-        JButton expandButton = new JButton("Xem toàn bộ / Mở rộng");
-        expandButton.setToolTipText("Mở cửa sổ lớn hiển thị tối đa 200 bản ghi gần nhất — tiêu đề đầy đủ, có lọc tìm kiếm");
-        expandButton.addActionListener(event -> openExpandedActivityDialog());
-
-        JPanel activityControlRow = new JPanel(new BorderLayout(8, 0));
-        activityControlRow.add(filterPanel, BorderLayout.CENTER);
-        JPanel eastButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        eastButtons.add(clearActivityButton);
-        eastButtons.add(expandButton);
-        activityControlRow.add(eastButtons, BorderLayout.EAST);
-
-        // --- Cột phải xếp DỌC bằng BoxLayout (Y-AXIS) + strut chống co đè:
-        // Hạn mức và Hoạt động người dùng không còn bị đè bẹp lên nhau. ---
-        JPanel cardsRow = new JPanel(new GridLayout(1, 1));
-        cardsRow.add(cardsPanel); // bọc để giữ chiều cao preferred của cardsPanel
-        JPanel rulesRow = new JPanel(new GridLayout(1, 1));
-        rulesRow.add(rulesPanel);
-        JPanel activityZone = new JPanel();
-        activityZone.setLayout(new BoxLayout(activityZone, BoxLayout.Y_AXIS));
-        activityZone.add(activityPanel);
-        activityZone.add(Box.createVerticalStrut(6));
-        activityZone.add(activityControlRow);
-        activityZone.add(Box.createVerticalStrut(6));
-        activityZone.add(activityScroll); // preferred 160px được tôn trọng trong Box
-
-        JPanel middle = new JPanel();
-        middle.setLayout(new BoxLayout(middle, BoxLayout.Y_AXIS));
-        middle.add(infoPanel);
-        middle.add(Box.createVerticalStrut(8));
-        middle.add(cardsRow);
-        middle.add(Box.createVerticalStrut(8));
-        middle.add(rulesRow);
-        middle.add(Box.createVerticalStrut(8));
-        middle.add(activityZone);
-
-        JPanel center = new JPanel(new BorderLayout(0, 8));
-        center.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        center.add(middle, BorderLayout.CENTER);
-        center.add(buildQuickActionsPanel(), BorderLayout.SOUTH);
-        return center;
-    }
-
-    /**
-     * Áp dụng bộ lọc tìm kiếm cho bảng nhật ký hoạt động — so khớp KHÔNG
-     * phân biệt hoa/thường trên cả 3 cột (Thời điểm/Tiến trình/Tiêu đề).
-     */
-    private void applyActivityFilter() {
-        if (activitySorter == null) {
-            return; // bảng chưa khởi tạo xong (trong initUi)
+        if (resumeButton != null) {
+            resumeButton.setEnabled(online && enforced);
         }
-        // Logic dựng filter tách vào test hook (pure function — unit test headless)
-        activitySorter.setRowFilter(
-                ServerDashboardFrameTestHook.buildActivityRowFilter(activityFilterField.getText())
-                        .orElse(null));
+        if (sendAlertButton != null) {
+            sendAlertButton.setEnabled(online);
+        }
+        if (alertMessageField != null) {
+            alertMessageField.setEnabled(online);
+        }
     }
 
-    /**
-     * Xóa sạch lịch sử hoạt động của thiết bị đang chọn: confirm dialog →
-     * {@link ActivityDao#deleteAll(String)} trên SwingWorker (DAO blocking) →
-     * reload bảng + log sự kiện.
-     */
-    private void clearActivityHistory() {
+    private void updateDeviceAdminButtons() {
+        boolean hasSelection = deviceList != null && deviceList.getSelectedValue() != null;
+        if (deleteDeviceButton != null) {
+            deleteDeviceButton.setEnabled(hasSelection);
+        }
+        if (renameButton != null) {
+            renameButton.setEnabled(hasSelection);
+        }
+        if (remoteScreenButton != null) {
+            ClientRecord selected = deviceList != null ? deviceList.getSelectedValue() : null;
+            remoteScreenButton.setEnabled(selected != null && "ONLINE".equals(selected.status()));
+        }
+    }
+
+    private void deleteSelectedDevice() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để xóa lịch sử hoạt động");
+            appendEventLog("[!] Chưa chọn thiết bị nào để xóa");
             return;
         }
-        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
+        String deviceDisplay = displayName(selected);
         int choice = JOptionPane.showConfirmDialog(this,
-                "Xóa TOÀN BỘ nhật ký hoạt động của thiết bị '" + deviceDisplay + "'?\n\n"
+                "Xóa thiết bị '" + deviceDisplay + "' khỏi danh sách quản lý?\n\n"
+                        + "• Thiết bị đang online sẽ bị ngắt kết nối và quay về màn hình ghép đôi\n"
+                        + "• Toàn bộ dữ liệu (hạn mức, lịch sử traffic, lệnh) sẽ bị xóa sạch\n\n"
                         + "Thao tác không thể hoàn tác!",
-                "Xóa lịch sử hoạt động",
+                "Xóa thiết bị",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
         if (choice != JOptionPane.YES_OPTION) {
             return;
         }
+
         String clientId = selected.clientId();
-        // XÓA TRẮNG NGAY trên EDT — phản hồi tức thì trước cả khi SwingWorker
-        // chạy xong: bảng nhật ký + ô "Hoạt động người dùng" + bộ lọc.
-        clearActivityTable();
-        activeAppField.setText("—");
-        // Xóa luôn cache "Đang mở" trong phiên (nếu client online) — nếu không
-        // refreshNow() sẽ nạp lại hoạt động cũ từ session.lastActivity.
-        ClientSession liveSession = sessionManager.get(clientId);
-        if (liveSession != null) {
-            liveSession.setLastActivity(null);
-        }
-        new javax.swing.SwingWorker<Boolean, Void>() {
+        boolean wasOnline = "ONLINE".equals(selected.status());
+        new javax.swing.SwingWorker<String, Void>() {
             @Override
-            protected Boolean doInBackground() {
-                return serverEngine.getActivityDao() != null
-                        ? serverEngine.getActivityDao().deleteAll(clientId)
-                        : false;
+            protected String doInBackground() {
+                if (wasOnline) {
+                    serverEngine.unpairClient(clientId, UnpairPayload.DEFAULT_REASON);
+                }
+                return clientDao.deleteClient(clientId)
+                        ? "[OK] Đã xóa thiết bị '" + deviceDisplay + "' khỏi danh sách quản lý"
+                        : null;
             }
 
             @Override
             protected void done() {
                 try {
-                    if (get()) {
-                        appendEventLog("[OK] Đã xóa toàn bộ lịch sử hoạt động của '"
-                                + deviceDisplay + "'");
+                    String msg = get();
+                    if (msg != null) {
+                        appendEventLog(msg);
                     } else {
-                        appendEventLog("[!] Xóa lịch sử hoạt động thất bại (lỗi cơ sở dữ liệu)");
+                        appendEventLog("[!] Xóa thiết bị thất bại (lỗi cơ sở dữ liệu)");
                     }
                 } catch (Exception e) {
-                    appendEventLog("[!] Lỗi khi xóa lịch sử hoạt động: " + e.getMessage());
-                    log.error("Clear activity history failed: {}", e.getMessage(), e);
+                    appendEventLog("[!] Lỗi khi xóa thiết bị: " + e.getMessage());
                 }
-                lastActivityTableRefresh = java.time.Instant.EPOCH; // buộc reload bảng
                 refreshNow();
             }
         }.execute();
     }
 
-    /** Thẻ metric: label trên, giá trị lớn bên dưới. */
-    private JPanel buildMetricCard(String title, JTextField valueField) {
-        JPanel card = new JPanel(new BorderLayout(0, 4));
-        card.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(190, 190, 190)),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        JLabel titleLabel = new JLabel(title);
-        titleLabel.setFont(titleLabel.getFont().deriveFont(Font.PLAIN, 12f));
-        card.add(titleLabel, BorderLayout.NORTH);
-        card.add(valueField, BorderLayout.CENTER);
-        return card;
-    }
-
-    private JPanel buildBottomPanel() {
-        eventLogArea = new JTextArea(8, 40);
-        eventLogArea.setEditable(false);
-        eventLogArea.setLineWrap(true);
-        eventLogArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        JScrollPane scrollPane = new JScrollPane(eventLogArea);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Event Log"));
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.add(scrollPane, BorderLayout.CENTER);
-        return panel;
-    }
-
-    /**
-     * Renderer dòng thiết bị: icon ● Online/Offline + tên máy + IP + trạng thái.
-     * <p>Có alias: {@code ● [Biệt danh] (Tên gốc) — Trạng thái}; không alias →
-     * giữ nguyên định dạng cũ {@code ● Tên máy (IP) — Trạng thái}.</p>
-     *
-     * <p><b>Hotfix tương phản khi chọn</b>: mặc định Swing vẽ nền xanh đậm khi
-     * item được chọn → chữ xanh lá (Online) bị "chìm", không đọc được tên máy.
-     * Khi selected: nền xanh xám nhạt {@code #E2E8F0} + toàn bộ chữ (kể cả
-     * chấm trạng thái) chuyển sang đen đậm {@code #0F172A} — luôn sắc nét ở
-     * CẢ HAI trạng thái selected/unselected.</p>
-     */
-    private static final class DeviceCellRenderer extends DefaultListCellRenderer {
-
-        /** Nền dịu mắt khi dòng được chọn (xanh xám nhạt). */
-        private static final Color SELECTED_BACKGROUND = new Color(0xE2, 0xE8, 0xF0);
-
-        /** Chữ đen đậm tương phản cao khi dòng được chọn. */
-        private static final Color SELECTED_FOREGROUND = new Color(0x0F, 0x17, 0x2A);
-
-        /** Khoảng đệm dòng để chữ không dính mép danh sách. */
-        private static final javax.swing.border.Border CELL_PADDING =
-                BorderFactory.createCompoundBorder(
-                        BorderFactory.createEmptyBorder(4, 8, 4, 8),
-                        BorderFactory.createEmptyBorder());
-
-        @Override
-        public Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                                                      boolean selected, boolean focused) {
-            Component component = super.getListCellRendererComponent(list, value, index, selected, focused);
-            if (value instanceof ClientRecord record && component instanceof JLabel label) {
-                boolean online = "ONLINE".equals(record.status());
-                String icon = online ? "●" : "○";
-                String statusText = online ? "Online" : "Offline";
-                boolean hasAlias = record.alias() != null && !record.alias().isBlank();
-                if (hasAlias) {
-                    label.setText(String.format("%s [%s] (%s) — %s", icon, record.alias(),
-                            record.deviceName(), statusText));
-                } else {
-                    label.setText(String.format("%s %s (%s) — %s", icon, record.deviceName(),
-                            record.ipAddress(), statusText));
-                }
-                if (selected) {
-                    // Selected: nền dịu + chữ đen đậm — TƯƠNG PHẢN CAO, dễ đọc.
-                    label.setBackground(SELECTED_BACKGROUND);
-                    label.setForeground(SELECTED_FOREGROUND);
-                    label.setOpaque(true);
-                } else {
-                    // Unselected: giữ màu trạng thái gốc (xanh lá Online / xám Offline).
-                    label.setForeground(online ? new Color(0, 128, 0) : Color.GRAY);
-                }
-                label.setBorder(CELL_PADDING);
-            }
-            return component;
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Engine bridge (event listeners + UI refresher)
-    // ------------------------------------------------------------------
-
-    private void registerEngineListeners() {
-        // Kết nối/ngắt → log sự kiện + reload danh sách thiết bị (invokeLater đúng EDT)
-        sessionManager.addConnectionListener(new ClientConnectionListener() {
-            @Override
-            public void onClientConnected(ClientSession session) {
-                SwingUtilities.invokeLater(() -> {
-                    appendEventLog("Client '" + session.getClientId() + "' đã kết nối");
-                    reloadDeviceList();
-                });
-            }
-
-            @Override
-            public void onClientDisconnected(String clientId, DisconnectReason reason) {
-                SwingUtilities.invokeLater(() -> {
-                    appendEventLog("Client '" + clientId + "' đã ngắt kết nối (" + reason + ")");
-                    reloadDeviceList();
-                });
-            }
-
-            @Override
-            public void onActivityReport(ClientSession session,
-                    com.parental.common.protocol.payload.ActivityReportPayload activity) {
-                // Activity Monitoring (Mục 3.9): cập nhật "Đang mở" tức thời +
-                // nhắc refresher nạp lại bảng nhật ký (DB đã có bản ghi mới);
-                // dialog "Xem toàn bộ" đang mở tự refresh qua listener riêng
-                // (Mở rộng 12 — throttled, isShowing guard).
-                SwingUtilities.invokeLater(() -> {
-                    lastActivityTableRefresh = java.time.Instant.EPOCH; // buộc reload bảng
-                });
-            }
-
-            @Override
-            public void onConfigAck(ClientSession session, long revision,
-                    String status, String message) {
-                SwingUtilities.invokeLater(() -> {
-                    if ("APPLIED".equals(status)) {
-                        appendEventLog("[OK] Client '" + session.getClientId()
-                                + "' đã áp dụng CONFIG_SYNC rev=" + revision);
-                    } else {
-                        appendEventLog("[!] Client '" + session.getClientId()
-                                + "' áp dụng CONFIG_SYNC rev=" + revision + " CHƯA ĐẦY ĐỦ ("
-                                + status + "): " + message);
-                    }
-                });
-            }
-        });
-    }
-
-    /** UI Refresher 1s (javax.swing.Timer — tick trên EDT, an toàn mặc định). */
-    private void startUiRefresher() {
-        uiRefresher = new Timer(REFRESH_INTERVAL_MS, event -> refreshCenterPanel());
-        uiRefresher.start();
-    }
-
-    /** Dừng UI refresher (gọi khi đóng dashboard trước khi stop engine). */
-    public void stopRefresher() {
-        if (uiRefresher != null) {
-            uiRefresher.stop();
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Data → UI update (luôn chạy trên EDT)
-    // ------------------------------------------------------------------
-
-    private void reloadDeviceList() {
-        if (clientDao == null) {
-            return; // Defensive: DAO chưa sẵn sàng → không touch DB, giữ UI rỗng
-        }
-        // Giữ selection hiện tại qua lần refresh (theo clientId)
-        String previousSelection = selectedClientId();
-        deviceListModel.clear();
-        for (ClientRecord record : clientDao.getAllClients()) {
-            deviceListModel.addElement(record);
-        }
-        if (previousSelection != null) {
-            for (int i = 0; i < deviceListModel.size(); i++) {
-                if (previousSelection.equals(deviceListModel.get(i).clientId())) {
-                    deviceList.setSelectedIndex(i);
-                    deviceList.ensureIndexIsVisible(i);
-                    break;
-                }
-            }
-        }
-        updateQuickActionButtons();
-        updateDeviceAdminButtons();
-    }
-
-    private void refreshCenterPanel() {
-        // Defensive: vòng refresh 1s không được crash khi DAO/Engine chưa sẵn sàng
-        if (clientDao == null || metricsDao == null || ruleDao == null || sessionManager == null) {
-            return;
-        }
+    private void renameSelectedDevice() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            // Không chọn gì: lấy client đầu tiên nếu có
-            if (!deviceListModel.isEmpty()) {
-                if (deviceList.getSelectedIndex() < 0) {
-                    deviceList.setSelectedIndex(0);
-                }
-                selected = deviceList.getSelectedValue();
-            }
+            appendEventLog("[!] Chưa chọn thiết bị nào để đổi tên");
+            return;
         }
+        String input = (String) JOptionPane.showInputDialog(this,
+                "Nhập biệt danh mới cho '" + selected.deviceName() + "':\n"
+                        + "(để trống rồi bấm OK để xóa biệt danh, về tên máy gốc)",
+                "Đổi tên thiết bị",
+                JOptionPane.PLAIN_MESSAGE, null, null,
+                selected.alias() != null ? selected.alias() : selected.deviceName());
+        if (input == null) {
+            return;
+        }
+        String newAlias = input.trim();
+        String clientId = selected.clientId();
+        String deviceName = selected.deviceName();
+
+        new javax.swing.SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                return clientDao.updateAlias(clientId, newAlias) ? newAlias : null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    String savedAlias = get();
+                    if (savedAlias == null) {
+                        appendEventLog("[!] Không lưu được biệt danh (thiết bị không tồn tại trong DB)");
+                        return;
+                    }
+                    appendEventLog(savedAlias.isEmpty()
+                            ? "Đã xóa biệt danh của '" + deviceName + "' — về tên máy gốc"
+                            : "Đã đặt biệt danh '" + savedAlias + "' cho thiết bị '" + deviceName + "'");
+                } catch (Exception e) {
+                    appendEventLog("[!] Lỗi khi đổi tên: " + e.getMessage());
+                }
+                refreshNow();
+            }
+        }.execute();
+    }
+
+    private void openPairingDialog() {
+        if (serverEngine.getPairingDao() == null) {
+            appendEventLog("[!] Server đang chạy không database — không thể ghép đôi thiết bị");
+            return;
+        }
+        PairingDialog dialog = new PairingDialog(this, serverEngine.getPairingDao(), () -> {
+            appendEventLog("Một thiết bị mới đã ghép đôi thành công — có thể kết nối bằng deviceToken");
+            refreshNow();
+        });
+        dialog.open();
+    }
+
+    private void openRemoteScreenDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
-            clearCenterPanel();
+            appendEventLog("[!] Chưa chọn thiết bị nào để xem màn hình");
+            return;
+        }
+        if (!"ONLINE".equals(selected.status())) {
+            appendEventLog("[!] Thiết bị đang chọn không trực tuyến — không thể xem màn hình");
+            return;
+        }
+        new RemoteScreenDialog(this, selected.clientId(), serverEngine.getClientSessionManager(),
+                this::refreshNow);
+    }
+
+    private void openRemoteScreenWallDialog() {
+        long onlineCount = sessionManager.getAllSessions().stream()
+                .filter(ClientSession::isConnected)
+                .count();
+        if (onlineCount == 0) {
+            appendEventLog("[!] Hiện không có máy online để quan sát");
+            return;
+        }
+        new RemoteScreenWallDialog(this, sessionManager, this::refreshNow);
+    }
+
+    private void openPowerControlDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để điều khiển nguồn");
+            return;
+        }
+        if (!"ONLINE".equals(selected.status())) {
+            appendEventLog("[!] Thiết bị đang chọn không trực tuyến — không thể gửi lệnh nguồn");
+            return;
+        }
+        if (ruleEngine == null) {
+            appendEventLog("[!] Server đang chạy không database/rule engine — không thể gửi lệnh");
+            return;
+        }
+        String[] options = {"Khóa màn hình", "Đăng xuất", "Khởi động lại", "Tắt máy", "Hủy"};
+        int choice = JOptionPane.showOptionDialog(this,
+                "Chọn thao tác cho thiết bị '" + displayName(selected) + "':",
+                "Điều khiển nguồn/phiên từ xa",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
+                options, options[options.length - 1]);
+        if (choice < 0 || choice >= 4) {
+            return;
+        }
+        ActionType action = switch (choice) {
+            case 0 -> ActionType.LOCK_SESSION;
+            case 1 -> ActionType.LOGOFF_SESSION;
+            case 2 -> ActionType.RESTART_DEVICE;
+            default -> ActionType.SHUTDOWN_DEVICE;
+        };
+        String actionLabel = options[choice];
+        boolean destructive = action == ActionType.RESTART_DEVICE || action == ActionType.SHUTDOWN_DEVICE;
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Gửi lệnh '" + actionLabel + "' tới '" + displayName(selected) + "'?\n\n"
+                        + "• Thiết bị: " + selected.deviceName() + " (" + selected.ipAddress() + ")\n"
+                        + "• Hành động: " + actionLabel + "\n"
+                        + (destructive ? "• Khởi động lại/tắt máy có 5 giây để hủy trên máy con.\n" : "")
+                        + "• Lệnh được ghi audit trong command_logs.\n\n"
+                        + "Chỉ tiếp tục nếu bạn là phụ huynh/người quản lý thiết bị.",
+                "Xác nhận " + actionLabel,
+                JOptionPane.YES_NO_OPTION,
+                destructive ? JOptionPane.WARNING_MESSAGE : JOptionPane.QUESTION_MESSAGE);
+        if (confirm != JOptionPane.YES_OPTION) {
             return;
         }
         String clientId = selected.clientId();
+        String deviceName = displayName(selected);
+        new javax.swing.SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                return ruleEngine.sendPowerCommand(clientId, action, actionLabel
+                        + " requested by parent from Dashboard");
+            }
 
-        // Thông tin thiết bị (có alias → hiển thị "alias (tên gốc)"; không → tên gốc)
-        boolean hasAlias = selected.alias() != null && !selected.alias().isBlank();
-        deviceNameField.setText(hasAlias
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : orDash(selected.deviceName()));
-        macField.setText(orDash(selected.macAddress()));
-        osField.setText(orDash(selected.osVersion()));
-
-        // Metrics tức thời từ phiên đang online
-        ClientSession session = sessionManager.get(clientId);
-        MetricsPayload metrics = session != null ? session.getLastMetrics() : null;
-        if (metrics != null) {
-            downloadSpeedField.setText(GuiFormat.formatSpeedBps(metrics.downloadSpeedBps()));
-            uploadSpeedField.setText(GuiFormat.formatSpeedBps(metrics.uploadSpeedBps()));
-            sessionDurationField.setText(GuiFormat.formatDuration(metrics.sessionDurationSeconds()));
-        } else {
-            downloadSpeedField.setText("—");
-            uploadSpeedField.setText("—");
-            sessionDurationField.setText("—");
-        }
-
-        // Hoạt động tức thời từ phiên (Activity Monitoring — Mục 3.9);
-        // cắt ngắn tiêu đề dài để không phình chiều ngang panel (hotfix bố cục).
-        com.parental.common.protocol.payload.ActivityReportPayload activity =
-                session != null ? session.getLastActivity() : null;
-        if (activity != null && !activity.activeProcessName().isEmpty()) {
-            String title = activity.activeWindowTitle();
-            String display = activity.activeProcessName()
-                    + (title.isEmpty() ? "" : " — " + title);
-            activeAppField.setText(GuiFormat.truncateForDisplay(display, 90));
-        } else {
-            activeAppField.setText("—");
-        }
-
-        // Nhật ký hoạt động gần đây (reload khi đổi thiết bị hoặc có bản ghi mới,
-        // tối đa 1 lần/2s để không đập DB liên tục)
-        java.time.Instant now = java.time.Instant.now();
-        if (java.time.Duration.between(lastActivityTableRefresh, now).getSeconds() >= 2) {
-            lastActivityTableRefresh = now;
-            reloadActivityTable(clientId);
-        }
-
-        // Tổng dung lượng hôm nay (DB)
-        long todayBytes = metricsDao.getTodayTrafficBytes(clientId);
-        todayTrafficField.setText(GuiFormat.formatBytes(todayBytes));
-
-        // Thanh đo hạn mức theo rule (không rule → ẩn thanh + ghi chú)
-        RuleRecord rule = ruleDao.getRule(clientId);
-        if (rule != null && rule.dailyTrafficQuotaBytes() > 0) {
-            quotaBar.setValue(GuiFormat.clampPercent(todayBytes, rule.dailyTrafficQuotaBytes()));
-            quotaBar.setString(GuiFormat.formatBytes(todayBytes) + " / " + GuiFormat.formatBytes(rule.dailyTrafficQuotaBytes()));
-            quotaBar.setVisible(true);
-        } else {
-            quotaBar.setValue(0);
-            quotaBar.setString("Không giới hạn dung lượng");
-        }
-        if (rule != null && rule.dailyUsageLimitSeconds() > 0) {
-            // Hiển thị TỔNG thời gian dùng trong ngày (DB) — khớp với Rule Engine;
-            // sessionDurationSeconds chỉ là thời lượng tiến trình hiện tại nên
-            // reset về 0 mỗi lần client restart (hiển thị sai/giảm hạn mức ảo).
-            long todaySeconds = metricsDao.getTodayUsageSeconds(clientId);
-            long usedSeconds = todaySeconds > 0 ? todaySeconds
-                    : (metrics != null ? metrics.sessionDurationSeconds() : 0);
-            usageBar.setValue(GuiFormat.clampPercent(usedSeconds, rule.dailyUsageLimitSeconds()));
-            usageBar.setString(GuiFormat.formatDuration(usedSeconds) + " / " + GuiFormat.formatDuration(rule.dailyUsageLimitSeconds()));
-            usageBar.setVisible(true);
-        } else {
-            usageBar.setValue(0);
-            usageBar.setString("Không giới hạn thời gian");
-        }
-
-        // Trạng thái PAUSED (đang bị khóa bởi Rule Engine)
-        boolean enforced = ruleEngine != null && ruleEngine.isEnforced(clientId);
-        if (enforced) {
-            quotaBar.setForeground(new Color(200, 0, 0));
-            usageBar.setForeground(new Color(200, 0, 0));
-        } else {
-            quotaBar.setForeground(null);
-            usageBar.setForeground(null);
-        }
-        updateQuickActionButtons();
+            @Override
+            protected void done() {
+                try {
+                    String commandId = get();
+                    if (commandId != null) {
+                        appendEventLog("Đã gửi lệnh '" + actionLabel + "' tới '" + deviceName
+                                + "' (commandId=" + commandId.substring(0, 8) + "..., chờ ACK từ client)");
+                    } else {
+                        appendEventLog("[!] Gửi lệnh '" + actionLabel + "' thất bại — client offline hoặc từ chối");
+                    }
+                } catch (Exception e) {
+                    appendEventLog("[!] Lỗi gửi lệnh nguồn: " + e.getMessage());
+                }
+            }
+        }.execute();
     }
 
-    private void clearCenterPanel() {
-        deviceNameField.setText("—");
-        macField.setText("—");
-        osField.setText("—");
-        sessionDurationField.setText("—");
-        downloadSpeedField.setText("—");
-        uploadSpeedField.setText("—");
-        todayTrafficField.setText("—");
-        activeAppField.setText("—");
-        clearActivityTable(); // xóa trắng + bỏ lọc (thay cho setRowCount(0) trực tiếp)
-        quotaBar.setValue(0);
-        quotaBar.setString("Chưa chọn thiết bị");
-        usageBar.setValue(0);
-        usageBar.setString("Chưa chọn thiết bị");
+    private void openUsageChartDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để xem thống kê");
+            return;
+        }
+        String label = displayName(selected);
+        new UsageChartDialog(this, selected.clientId(), label, metricsDao,
+                serverEngine.getActivityDao(), java.time.ZoneId.systemDefault())
+                .setVisible(true);
     }
 
-    /** Nạp 30 bản ghi hoạt động gần nhất của client vào JTable (EDT, DAO blocking nhẹ). */
-    private void reloadActivityTable(String clientId) {
-        if (serverEngine.getActivityDao() == null) {
-            return; // chạy không DB — không có nhật ký
-        }
-        List<ActivityDao.ActivityRecord> records =
-                serverEngine.getActivityDao().getRecentActivities(clientId, ACTIVITY_LOG_LIMIT);
-        activityTableModel.setRowCount(0);
-        // recorded_at ghi bằng giờ LOCAL tường minh (ActivityDao) — format qua
-        // test hook dùng chung (pure function, test headless được).
-        for (ActivityDao.ActivityRecord record : records) {
-            activityTableModel.addRow(ServerDashboardFrameTestHook.buildActivityTableRow(record));
-        }
-        activityTable.repaint();
+    private void openAboutDialog() {
+        JOptionPane.showMessageDialog(this,
+                "Parental Network Control — Hệ thống Quản lý Mạng Gia đình / Văn phòng\n\n"
+                        + "• Phiên bản: 1.0.0 (Java Swing Desktop Edition)\n"
+                        + "• Cổng TCP lắng nghe: " + serverEngine.getPort() + "\n"
+                        + "• Giao thức: LDJSON socket qua TCP với Auto-Reconnect và Quota Engine\n"
+                        + "• Bảo vệ & Giám sát: OSHI metrics, Hosts Enforcement, App Blocker, Live Stream\n\n"
+                        + "© 2026 Nhóm Đồ án Lập trình mạng — Đại học",
+                "Giới thiệu hệ thống", JOptionPane.INFORMATION_MESSAGE);
     }
 
-    /**
-     * Mở dialog "Xem toàn bộ / Mở rộng" — tối đa 200 bản ghi hoạt động gần
-     * nhất: bảng lớn 1000x650 resizable canh giữa, cột Tiêu đề hiển thị ĐẦY
-     * ĐỦ (không cắt, scroll ngang/dọc thoải mái), ô lọc thời gian thực riêng,
-     * nút Làm mới + Đóng.
-     */
+    private void openPolicyDialog() {
+        ClientRecord selected = deviceList.getSelectedValue();
+        if (selected == null) {
+            appendEventLog("[!] Chưa chọn thiết bị nào để cấu hình");
+            return;
+        }
+        PolicyConfigDialog dialog = new PolicyConfigDialog(this, selected, ruleDao, () -> {
+            boolean pushed = ruleEngine != null
+                    && ruleEngine.syncConfigToClient(selected.clientId());
+            appendEventLog(pushed
+                    ? "Đã đẩy CONFIG_SYNC xuống client '" + selected.deviceName() + "'"
+                    : "[!] Không đồng bộ được tới client '" + selected.deviceName()
+                            + "' (offline) — cấu hình đã lưu trong DB");
+            refreshNow();
+        });
+        dialog.setVisible(true);
+    }
+
     private void openExpandedActivityDialog() {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
@@ -1255,17 +1777,15 @@ public class ServerDashboardFrame extends JFrame {
             return;
         }
         String clientId = selected.clientId();
-        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
+        String deviceDisplay = displayName(selected);
 
         JDialog dialog = new JDialog(this, "Nhật ký hoạt động đầy đủ — " + deviceDisplay, true);
         dialog.setSize(1000, 650);
         dialog.setResizable(true);
         dialog.setLocationRelativeTo(this);
         dialog.setLayout(new BorderLayout(8, 8));
+        dialog.getContentPane().setBackground(CANVAS_BG);
 
-        // --- Mô hình bảng riêng: title HIỂN THỊ ĐẦY ĐỦ (không cắt), 4 cột ---
         javax.swing.table.DefaultTableModel fullModel = new javax.swing.table.DefaultTableModel(
                 new Object[] {"Thời điểm", "Tiến trình", "Tiêu đề cửa sổ", "URL / Domain"}, 0) {
             @Override
@@ -1274,20 +1794,20 @@ public class ServerDashboardFrame extends JFrame {
             }
         };
         JTable fullTable = new JTable(fullModel);
+        fullTable.setRowHeight(30);
+        fullTable.setFillsViewportHeight(true);
         fullTable.getColumnModel().getColumn(0).setPreferredWidth(140);
         fullTable.getColumnModel().getColumn(1).setPreferredWidth(110);
         fullTable.getColumnModel().getColumn(2).setPreferredWidth(500);
         fullTable.getColumnModel().getColumn(3).setPreferredWidth(190);
-        // AUTO_RESIZE_OFF → cột title giữ nguyên độ rộng, tràn thì scroll ngang
         fullTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         javax.swing.table.TableRowSorter<javax.swing.table.TableModel> fullSorter =
                 new javax.swing.table.TableRowSorter<>(fullModel);
         fullTable.setRowSorter(fullSorter);
-        // Menu chuột phải: chặn nhanh tên miền từ dòng nhật ký được chọn
         attachQuickBlockPopup(fullTable);
+
         JScrollPane fullScroll = new JScrollPane(fullTable);
-        fullScroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
-        fullScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        fullScroll.setBorder(BorderFactory.createLineBorder(new Color(0xD8, 0xE2, 0xEE), 1));
 
         Runnable reloadFullTable = () -> {
             List<ActivityDao.ActivityRecord> records = activityDao
@@ -1295,15 +1815,11 @@ public class ServerDashboardFrame extends JFrame {
                             ServerDashboardFrameTestHook.DIALOG_ROW_LIMIT);
             fullModel.setRowCount(0);
             for (ActivityDao.ActivityRecord record : records) {
-                // KHÔNG truncate — cột Tiêu đề cửa sổ giữ nguyên vẹn
                 fullModel.addRow(ServerDashboardFrameTestHook.buildActivityTableRow(record));
             }
         };
         reloadFullTable.run();
 
-        // Mở rộng 12: listener ACTIVITY_REPORT — dialog đang mở tự nạp lại
-        // (throttle 2s) khi thiết bị của nó gửi bản ghi mới; gỡ listener khi
-        // đóng dialog để không rò rỉ.
         ClientConnectionListener dialogAutoRefreshListener = new ClientConnectionListener() {
             volatile long lastAutoRefresh = 0;
 
@@ -1315,50 +1831,44 @@ public class ServerDashboardFrame extends JFrame {
                 }
                 long now = System.currentTimeMillis();
                 if (now - lastAutoRefresh < ACTIVITY_DIALOG_AUTO_REFRESH_MIN_MS) {
-                    return; // throttle — tối đa 1 lần nạp/2s
+                    return;
                 }
                 lastAutoRefresh = now;
-                SwingUtilities.invokeLater(reloadFullTable); // EDT-safe
+                SwingUtilities.invokeLater(reloadFullTable);
             }
         };
         sessionManager.addConnectionListener(dialogAutoRefreshListener);
 
-        // --- Ô lọc thời gian thực (dùng chung logic buildActivityRowFilter) ---
         JTextField fullFilterField = new JTextField();
-        fullFilterField.setToolTipText("Ví dụ: chrome, browser (Cốc Cốc), youtube — lọc theo tiến trình hoặc tiêu đề");
+        fullFilterField.setToolTipText("Lọc theo tiến trình hoặc tiêu đề...");
         attachSelectAllOnFocus(fullFilterField);
         fullFilterField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            @Override
-            public void insertUpdate(javax.swing.event.DocumentEvent e) {
-                applyFullDialogFilter(fullFilterField, fullSorter);
-            }
-
-            @Override
-            public void removeUpdate(javax.swing.event.DocumentEvent e) {
-                applyFullDialogFilter(fullFilterField, fullSorter);
-            }
-
-            @Override
-            public void changedUpdate(javax.swing.event.DocumentEvent e) {
-                applyFullDialogFilter(fullFilterField, fullSorter);
-            }
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { applyFullDialogFilter(fullFilterField, fullSorter); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { applyFullDialogFilter(fullFilterField, fullSorter); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { applyFullDialogFilter(fullFilterField, fullSorter); }
         });
 
-        JButton refreshButton = new JButton("Làm mới");
+        JButton refreshButton = createWhiteActionButton("Làm mới", DashboardIcons.grid(14, TEXT_DARK));
         refreshButton.addActionListener(event -> reloadFullTable.run());
-        JButton closeButton = new JButton("Đóng");
+        JButton closeButton = createPillActionButton("Đóng", null, PRIMARY_ACCENT, PRIMARY_ACCENT, Color.WHITE);
         closeButton.addActionListener(event -> dialog.dispose());
 
         JPanel controlRow = new JPanel(new BorderLayout(8, 0));
-        controlRow.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+        controlRow.setOpaque(true);
+        controlRow.setBackground(Color.WHITE);
+        controlRow.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xD8, 0xE2, 0xEE), 1, true),
+                BorderFactory.createEmptyBorder(10, 12, 10, 12)));
         controlRow.add(new JLabel("Lọc tiến trình/tiêu đề:"), BorderLayout.WEST);
         controlRow.add(fullFilterField, BorderLayout.CENTER);
-        JPanel dialogButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        JPanel dialogButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        dialogButtons.setOpaque(false);
         dialogButtons.add(refreshButton);
         dialogButtons.add(closeButton);
         controlRow.add(dialogButtons, BorderLayout.EAST);
 
         JPanel content = new JPanel(new BorderLayout(8, 8));
+        content.setBackground(CANVAS_BG);
         content.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
         content.add(controlRow, BorderLayout.NORTH);
         content.add(fullScroll, BorderLayout.CENTER);
@@ -1366,18 +1876,12 @@ public class ServerDashboardFrame extends JFrame {
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosed(java.awt.event.WindowEvent event) {
-                // Mở rộng 12: gỡ listener khi dialog đóng — không rò rỉ
                 sessionManager.removeConnectionListener(dialogAutoRefreshListener);
             }
         });
-        dialog.setVisible(true); // modal — đóng bằng nút Đóng hoặc Esc qua X
+        dialog.setVisible(true);
     }
 
-    /**
-     * Bật "select all khi focus" cho ô nhập liệu — dễ paste/sửa domain gõ tay.
-     * Dùng {@code FocusAdapter} (không dùng {@code FocusListener} lambda đa
-     * phương thức) và chỉ select khi focus đến từ chuột/tab (focusGained).
-     */
     private static void attachSelectAllOnFocus(javax.swing.text.JTextComponent field) {
         field.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
@@ -1387,7 +1891,6 @@ public class ServerDashboardFrame extends JFrame {
         });
     }
 
-    /** Áp filter cho bảng dialog mở rộng (dùng chung logic test hook). */
     private static void applyFullDialogFilter(JTextField filterField,
             javax.swing.table.TableRowSorter<? extends javax.swing.table.TableModel> sorter) {
         sorter.setRowFilter(ServerDashboardFrameTestHook
@@ -1395,14 +1898,9 @@ public class ServerDashboardFrame extends JFrame {
     }
 
     // ------------------------------------------------------------------
-    // Chặn nhanh tên miền từ Nhật ký hoạt động (chuột phải trên JTable)
+    // Context Menu Chặn Nhanh
     // ------------------------------------------------------------------
 
-    /**
-     * Gắn menu chuột phải "Chặn tên miền này" cho 1 bảng nhật ký hoạt động
-     * (dùng chung cho bảng Dashboard lẫn dialog "Xem toàn bộ"): trích domain
-     * gợi ý từ tiêu đề → confirm → {@code addDomain} + đẩy CONFIG_SYNC tức thì.
-     */
     private void attachQuickBlockPopup(JTable table) {
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -1417,7 +1915,6 @@ public class ServerDashboardFrame extends JFrame {
         });
     }
 
-    /** MouseEvent là popup trigger → chọn dòng dưới chuột và mở menu chặn. */
     private void maybeShowQuickBlockPopup(JTable table, java.awt.event.MouseEvent event) {
         if (!event.isPopupTrigger()) {
             return;
@@ -1426,7 +1923,7 @@ public class ServerDashboardFrame extends JFrame {
         if (viewRow < 0) {
             return;
         }
-        table.setRowSelectionInterval(viewRow, viewRow); // click dòng nào chặn dòng đó
+        table.setRowSelectionInterval(viewRow, viewRow);
         int modelRow = table.convertRowIndexToModel(viewRow);
         String processName = String.valueOf(table.getModel().getValueAt(modelRow,
                 ServerDashboardFrameTestHook.ACTIVITY_COLUMN_PROCESS));
@@ -1439,8 +1936,6 @@ public class ServerDashboardFrame extends JFrame {
         String suggestedDomain = WindowTitleDomainExtractor.suggestDomain(urlOrDomain, title);
 
         if (suggestedDomain != null) {
-            // 1-CLICK CHẶN DOMAIN: đã có domain sạch (từ address bar UIA hoặc
-            // suy luận từ tiêu đề) — bấm là confirm chặn ngay, KHÔNG bắt gõ tay.
             JMenuItem blockDomainItem = new JMenuItem(
                     ServerDashboardFrameTestHook.buildQuickBlockLabel(suggestedDomain));
             blockDomainItem.addActionListener(actionEvent ->
@@ -1451,24 +1946,15 @@ public class ServerDashboardFrame extends JFrame {
                     quickBlockDomainForClient(suggestedDomain, false));
             popup.add(editDomainItem);
         }
-        // KHÔNG có mục "(nhập tay)" — khi không trích được domain, phụ huynh
-        // vẫn chặn được qua mục tiến trình bên dưới hoặc dialog Cấu hình
-        // chính sách (nhập tay tập trung 1 chỗ, tránh menu rối).
 
-        // 1-CLICK CHẶN/BỎ CHẶN APP .EXE: kiểm tra trạng thái trong DB —
-        // chưa chặn → "Chặn tiến trình [app.exe]"; đã chặn → "Bỏ chặn tiến
-        // trình [app.exe]" (gỡ chặn nhanh 1-click, Mở rộng 11).
         if (processName != null && !processName.isBlank() && !processName.equals("—")) {
             ClientRecord selectedDevice = deviceList.getSelectedValue();
             boolean alreadyBlocked = selectedDevice != null
                     && serverEngine.getRuleDao() != null
                     && serverEngine.getRuleDao()
                             .getBlockedProcesses(selectedDevice.clientId()).stream()
-                            .anyMatch(name -> name.equalsIgnoreCase(
-                                    processName.trim().toLowerCase(java.util.Locale.ROOT))
-                                    || name.equalsIgnoreCase(processName.trim() + ".exe")
-                                    || name.equalsIgnoreCase(processName.trim()
-                                            .toLowerCase(java.util.Locale.ROOT) + ".exe"));
+                            .anyMatch(name -> name.equalsIgnoreCase(processName.trim())
+                                    || name.equalsIgnoreCase(processName.trim() + ".exe"));
             if (alreadyBlocked) {
                 JMenuItem unblockProcessItem = new JMenuItem(
                         ServerDashboardFrameTestHook.buildQuickUnblockProcessLabel(processName));
@@ -1489,14 +1975,6 @@ public class ServerDashboardFrame extends JFrame {
         }
     }
 
-    /**
-     * Luồng chặn nhanh DOMAIN cho client đang chọn.
-     *
-     * @param suggestedDomain domain gợi ý điền sẵn (null = nhập tay hoàn toàn)
-     * @param directConfirm   {@code true} = 1-click: bỏ qua ô nhập, điền luôn
-     *                        gợi ý vào confirm; {@code false} = hiện ô nhập
-     *                        cho sửa gợi ý/nhập tay
-     */
     private void quickBlockDomainForClient(String suggestedDomain, boolean directConfirm) {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
@@ -1510,21 +1988,19 @@ public class ServerDashboardFrame extends JFrame {
         }
         String input = suggestedDomain;
         if (!directConfirm || input == null || input.isBlank()) {
-            // Ô nhập cho phép sửa gợi ý hoặc nhập tay khi không trích được
             input = (String) JOptionPane.showInputDialog(this,
                     "Tên miền cần chặn cho thiết bị '" + selected.deviceName() + "':",
                     "Chặn tên miền này",
                     JOptionPane.PLAIN_MESSAGE, null, null,
                     suggestedDomain != null ? suggestedDomain : "");
             if (input == null || input.isBlank()) {
-                return; // hủy
+                return;
             }
         }
         String domain = BlockedDomainDialogHelper.normalize(input);
         if (domain == null) {
             JOptionPane.showMessageDialog(this,
-                    "Tên miền không hợp lệ: " + input
-                            + "\n(ví dụ hợp lệ: youtube.com, facebook.com)",
+                    "Tên miền không hợp lệ: " + input + "\n(ví dụ hợp lệ: youtube.com, facebook.com)",
                     "Tên miền không hợp lệ", JOptionPane.WARNING_MESSAGE);
             return;
         }
@@ -1537,11 +2013,7 @@ public class ServerDashboardFrame extends JFrame {
             return;
         }
         String clientId = selected.clientId();
-        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
-        // IDEMPOTENT ADD: domain trùng KHÔNG phải lỗi — vẫn BẮT BUỘC đẩy
-        // CONFIG_SYNC để client áp dụng lại quy tắc chặn mới nhất.
+        String deviceDisplay = displayName(selected);
         BlockedDomainDao.AddResult result = blockedDomainDao.addDomain(clientId, domain);
         if (result == BlockedDomainDao.AddResult.FAILED) {
             appendEventLog("[!] Không chặn được '" + domain + "' cho '"
@@ -1560,11 +2032,6 @@ public class ServerDashboardFrame extends JFrame {
         }
     }
 
-    /**
-     * Luồng chặn nhanh TIẾN TRÌNH (app .exe) cho client đang chọn — 1-click:
-     * confirm gửi COMMAND {@code BLOCK_PROCESS}; client lưu danh sách +
-     * taskkill tức thì + quét 60s chống mở lại app.
-     */
     private void quickBlockProcessForClient(String processName) {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
@@ -1573,8 +2040,7 @@ public class ServerDashboardFrame extends JFrame {
         }
         int choice = JOptionPane.showConfirmDialog(this,
                 "Bạn có chắc muốn chặn tiến trình [" + processName + "] cho thiết bị này?\n\n"
-                        + "Tiến trình sẽ bị kết thúc ngay và bị chặn vĩnh viễn "
-                        + "(tự mở lại sẽ bị đóng).",
+                        + "Tiến trình sẽ bị kết thúc ngay và bị chặn vĩnh viễn.",
                 "Xác nhận chặn tiến trình",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE);
@@ -1582,11 +2048,7 @@ public class ServerDashboardFrame extends JFrame {
             return;
         }
         String clientId = selected.clientId();
-        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
-        // Lưu DB TRƯỚC (menu lần sau hiển thị "Bỏ chặn") rồi gửi COMMAND
-        // BLOCK_PROCESS để client kill NGAY không đợi chu kỳ sync.
+        String deviceDisplay = displayName(selected);
         boolean saved = serverEngine.getRuleDao() != null
                 && serverEngine.getRuleDao().addBlockedProcess(clientId, processName);
         String commandId = ruleEngine != null
@@ -1594,8 +2056,7 @@ public class ServerDashboardFrame extends JFrame {
                 : null;
         if (commandId != null) {
             appendEventLog("Đã gửi lệnh chặn tiến trình '" + processName + "' cho '"
-                    + deviceDisplay + "' (client sẽ kill ngay và chặn vĩnh viễn)"
-                    + (saved ? "" : " — [!] LƯU DB THẤT BẠI, trạng thái menu có thể sai"));
+                    + deviceDisplay + "' (client sẽ kill ngay và chặn vĩnh viễn)");
         } else {
             appendEventLog("[!] Không gửi được lệnh chặn tiến trình '" + processName
                     + "' cho '" + deviceDisplay + "' (client offline)"
@@ -1603,11 +2064,6 @@ public class ServerDashboardFrame extends JFrame {
         }
     }
 
-    /**
-     * BỎ CHẶN tiến trình 1-click từ menu nhật ký (Mở rộng 11): xóa khỏi
-     * bảng {@code blocked_processes} → đẩy CONFIG_SYNC (REPLACE-ALL) → client
-     * ngừng kill, người dùng mở lại ứng dụng bình thường.
-     */
     private void quickUnblockProcessForClient(String processName) {
         ClientRecord selected = deviceList.getSelectedValue();
         if (selected == null) {
@@ -1619,8 +2075,7 @@ public class ServerDashboardFrame extends JFrame {
             return;
         }
         int choice = JOptionPane.showConfirmDialog(this,
-                "Bạn có chắc muốn BỎ chặn tiến trình [" + processName
-                        + "] cho thiết bị này?\n\n"
+                "Bạn có chắc muốn BỎ chặn tiến trình [" + processName + "] cho thiết bị này?\n\n"
                         + "Ứng dụng sẽ mở lại bình thường sau khi bỏ chặn.",
                 "Xác nhận bỏ chặn tiến trình",
                 JOptionPane.YES_NO_OPTION,
@@ -1629,150 +2084,36 @@ public class ServerDashboardFrame extends JFrame {
             return;
         }
         String clientId = selected.clientId();
-        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
-        boolean removed = serverEngine.getRuleDao()
-                .removeBlockedProcess(clientId, processName);
+        String deviceDisplay = displayName(selected);
+        boolean removed = serverEngine.getRuleDao().removeBlockedProcess(clientId, processName);
         if (!removed) {
             appendEventLog("[!] Không gỡ được '" + processName + "' (không có trong danh sách chặn)");
             return;
         }
-        // Đẩy REPLACE-ALL mới nhất xuống client — app đã gỡ khỏi danh sách
-        // → daemon quét 60s phía client ngừng kill ngay.
-        boolean pushed = ruleEngine != null
-                && ruleEngine.syncConfigToClient(clientId);
+        boolean pushed = ruleEngine != null && ruleEngine.syncConfigToClient(clientId);
         appendEventLog("Đã BỎ chặn tiến trình '" + processName + "' cho '"
                 + deviceDisplay + "'"
                 + (pushed ? " — client ngừng kill, app mở lại bình thường"
                           : " — client offline, sẽ nhận khi kết nối lại"));
     }
 
-    /**
-     * Luồng chặn nhanh cho client đang chọn: gợi ý domain từ tiêu đề →
-     * confirm → lưu DB qua {@link BlockedDomainDao#addDomain} → đẩy
-     * CONFIG_SYNC xuống client ngay → mở hosts trắng danh sách phía client.
-     */
-    private void quickBlockDomainForClient(String windowTitle) {
-        ClientRecord selected = deviceList.getSelectedValue();
-        if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để chặn tên miền");
-            return;
-        }
-        ActivityDao activityDao = serverEngine.getActivityDao();
-        BlockedDomainDao blockedDomainDao = serverEngine.getBlockedDomainDao();
-        if (blockedDomainDao == null) {
-            appendEventLog("[!] Server đang chạy không database — không chặn tên miền được");
-            return;
-        }
-        String suggestion = WindowTitleDomainExtractor.suggestDomain(windowTitle);
-
-        // Ô nhập cho phép sửa gợi ý hoặc nhập tay khi không trích được
-        String input = (String) JOptionPane.showInputDialog(this,
-                "Tên miền cần chặn cho thiết bị '" + selected.deviceName() + "':",
-                "Chặn tên miền này",
-                JOptionPane.PLAIN_MESSAGE, null, null,
-                suggestion != null ? suggestion : "");
-        if (input == null || input.isBlank()) {
-            return; // hủy
-        }
-        String domain = BlockedDomainDialogHelper.normalize(input);
-        if (domain == null) {
-            JOptionPane.showMessageDialog(this,
-                    "Tên miền không hợp lệ: " + input
-                            + "\n(ví dụ hợp lệ: youtube.com, facebook.com)",
-                    "Tên miền không hợp lệ", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        int choice = JOptionPane.showConfirmDialog(this,
-                "Bạn có chắc muốn chặn tên miền [" + domain + "] cho thiết bị này?",
-                "Xác nhận chặn tên miền",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.WARNING_MESSAGE);
-        if (choice != JOptionPane.YES_OPTION) {
-            return;
-        }
-        String clientId = selected.clientId();
-        String deviceDisplay = selected.alias() != null && !selected.alias().isBlank()
-                ? selected.alias() + " (" + selected.deviceName() + ")"
-                : selected.deviceName();
-        // IDEMPOTENT ADD: domain trùng KHÔNG phải lỗi — vẫn BẮT BUỘC đẩy
-        // CONFIG_SYNC để client áp dụng lại quy tắc chặn mới nhất (fix: trước
-        // đây trùng → false → báo sai "lỗi DB" và bỏ qua push).
-        BlockedDomainDao.AddResult result = activityDao != null
-                ? blockedDomainDao.addDomain(clientId, domain)
-                : BlockedDomainDao.AddResult.FAILED;
-        if (result == BlockedDomainDao.AddResult.FAILED) {
-            appendEventLog("[!] Không chặn được '" + domain + "' cho '"
-                    + deviceDisplay + "' (lỗi cơ sở dữ liệu)");
-            return;
-        }
-        boolean pushed = serverEngine.pushConfigSync(clientId);
-        if (result == BlockedDomainDao.AddResult.ALREADY_PRESENT) {
-            appendEventLog("Tên miền '" + domain + "' đã có trong danh sách chặn của '"
-                    + deviceDisplay + "' — đang đồng bộ lại xuống client "
-                    + (pushed ? "thành công" : "THẤT BẠI (client offline — sẽ nhận khi kết nối lại)"));
-        } else {
-            appendEventLog("Đã chặn '" + domain + "' cho '" + deviceDisplay + "'"
-                    + (pushed ? " — CONFIG_SYNC đã đẩy xuống client"
-                              : " — client offline, sẽ nhận khi kết nối lại"));
-        }
+    private static String displayName(ClientRecord record) {
+        return record.alias() != null && !record.alias().isBlank()
+                ? record.alias() + " (" + record.deviceName() + ")"
+                : record.deviceName();
     }
 
-    /** null/rỗng → "—" (dòng "—" trên UI thay cho dữ liệu thiếu). */
     private static String orDash(String text) {
         return text == null || text.isBlank() ? "—" : text;
     }
 
-    /** Xóa trắng bảng nhật ký + bỏ bộ lọc (khi không chọn thiết bị). */
-    private void clearActivityTable() {
-        activityTableModel.setRowCount(0);
-        if (activityFilterField != null && !activityFilterField.getText().isEmpty()) {
-            activityFilterField.setText(""); // reset DocumentListener → setRowFilter(null)
-        }
-    }
-
-    /** Ghi 1 dòng sự kiện vào console log kèm timestamp (đã trên EDT). */
     private void appendEventLog(String message) {
-        eventLogArea.append("[" + LocalTime.now().format(TIME_FORMAT) + "] " + message + "\n");
-        eventLogArea.setCaretPosition(eventLogArea.getDocument().getLength()); // auto-scroll cuối
-    }
-
-    /**
-     * Mở dialog cấu hình chính sách cho client đang chọn (Task 5.2). Lưu
-     * thành công → đẩy CONFIG_SYNC xuống client ngay + log sự kiện.
-     */
-    private void openPolicyDialog() {
-        ClientRecord selected = deviceList.getSelectedValue();
-        if (selected == null) {
-            appendEventLog("[!] Chưa chọn thiết bị nào để cấu hình");
-            return;
-        }
-        PolicyConfigDialog dialog = new PolicyConfigDialog(this, selected, ruleDao,
-                () -> {
-                    boolean pushed = ruleEngine != null
-                            && ruleEngine.syncConfigToClient(selected.clientId());
-                    appendEventLog(pushed
-                            ? "Đã đẩy CONFIG_SYNC xuống client '" + selected.deviceName() + "'"
-                            : "[!] Không đồng bộ được tới client '" + selected.deviceName()
-                                    + "' (offline) — cấu hình đã lưu trong DB");
-                    refreshNow();
-                });
-        dialog.setVisible(true);
-    }
-
-    /** Bật/tắt nút Xóa + Đổi tên theo việc có thiết bị đang chọn hay không. */
-    private void updateDeviceAdminButtons() {
-        boolean hasSelection = deviceList != null && deviceList.getSelectedValue() != null;
-        if (deleteDeviceButton != null) {
-            deleteDeviceButton.setEnabled(hasSelection);
-        }
-        if (renameButton != null) {
-            renameButton.setEnabled(hasSelection);
+        if (eventLogArea != null) {
+            eventLogArea.append("[" + LocalTime.now().format(TIME_FORMAT) + "] " + message + "\n");
+            eventLogArea.setCaretPosition(eventLogArea.getDocument().getLength());
         }
     }
 
-    /** Reload danh sách thiết bị + chi tiết ngay lập tức (gọi từ ngoài EDT-safe). */
     public void refreshNow() {
         if (SwingUtilities.isEventDispatchThread()) {
             reloadDeviceList();
@@ -1785,7 +2126,6 @@ public class ServerDashboardFrame extends JFrame {
         }
     }
 
-    /** Hiển thị cửa sổ giữa màn hình (tiện cho ServerApp). */
     public void showFrame() {
         setVisible(true);
     }

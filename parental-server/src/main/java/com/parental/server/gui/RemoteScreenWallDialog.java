@@ -34,6 +34,11 @@ import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.server.network.ClientHandler;
 import com.parental.server.network.ClientSession;
 import com.parental.server.network.ClientSessionManager;
+import static com.parental.ui.DesktopTheme.CANVAS;
+import static com.parental.ui.DesktopTheme.CARD_BORDER;
+import static com.parental.ui.DesktopTheme.PRIMARY;
+import static com.parental.ui.DesktopTheme.TEXT_PRIMARY;
+import static com.parental.ui.DesktopTheme.roundedBorder;
 
 /** Tiled, low-bandwidth live view of all clients online when the dialog opens. */
 public final class RemoteScreenWallDialog extends JDialog {
@@ -69,11 +74,13 @@ public final class RemoteScreenWallDialog extends JDialog {
         setSize(1100, 760);
         setLocationRelativeTo(owner);
         setLayout(new BorderLayout(8, 8));
+        getContentPane().setBackground(CANVAS);
 
         List<ClientSession> onlineSessions = sessionManager.getAllSessions().stream()
                 .filter(ClientSession::isConnected)
                 .toList();
         JPanel grid = new JPanel(new GridLayout(0, 2, 8, 8));
+        grid.setBackground(CANVAS);
         grid.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
         for (ClientSession session : onlineSessions) {
             ClientTile tile = new ClientTile(session);
@@ -82,16 +89,27 @@ public final class RemoteScreenWallDialog extends JDialog {
         }
 
         JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
+        top.setBorder(BorderFactory.createEmptyBorder(10, 12, 0, 12));
+        summaryLabel.setForeground(TEXT_PRIMARY);
         summaryLabel.setText(onlineSessions.size() + " máy online • preview "
                 + WALL_WIDTH + "×" + WALL_HEIGHT + " • " + WALL_FPS + " FPS mỗi máy");
         top.add(summaryLabel, BorderLayout.WEST);
         add(top, BorderLayout.NORTH);
-        add(new JScrollPane(grid), BorderLayout.CENTER);
+        JScrollPane gridScroll = new JScrollPane(grid);
+        gridScroll.setBorder(BorderFactory.createEmptyBorder());
+        gridScroll.getViewport().setBackground(CANVAS);
+        add(gridScroll, BorderLayout.CENTER);
 
         JButton closeButton = new JButton("Đóng");
         closeButton.addActionListener(event -> dispose());
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttons.setOpaque(false);
+        buttons.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
         detailsButton.setEnabled(false);
+        detailsButton.setBackground(PRIMARY);
+        detailsButton.setForeground(Color.WHITE);
+        detailsButton.setFocusPainted(false);
         detailsButton.addActionListener(event -> openSelectedDetails());
         buttons.add(detailsButton);
         buttons.add(closeButton);
@@ -263,6 +281,10 @@ public final class RemoteScreenWallDialog extends JDialog {
         private ClientTile(ClientSession session) {
             super(new BorderLayout(4, 4));
             this.session = session;
+            setOpaque(false);
+            setBackground(Color.WHITE);
+            setBorder(roundedBorder(Color.WHITE, CARD_BORDER, 18,
+                    new java.awt.Insets(8, 10, 8, 10)));
             String name = session.getDeviceInfo() != null
                     ? session.getDeviceInfo().deviceName() : session.getClientId();
             JLabel title = new JLabel(name + " • " + session.getRemoteAddress());
@@ -271,7 +293,6 @@ public final class RemoteScreenWallDialog extends JDialog {
             add(image, BorderLayout.CENTER);
             status.setForeground(new Color(0x33, 0x66, 0x33));
             add(status, BorderLayout.SOUTH);
-            setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
             java.awt.event.MouseAdapter selector = new java.awt.event.MouseAdapter() {
                 @Override
                 public void mousePressed(java.awt.event.MouseEvent event) {
@@ -285,8 +306,9 @@ public final class RemoteScreenWallDialog extends JDialog {
         }
 
         private void setSelected(boolean selected) {
-            setBorder(BorderFactory.createLineBorder(selected ? new Color(0x20, 0x78, 0xD4)
-                    : Color.GRAY, selected ? 3 : 1));
+            setBorder(roundedBorder(Color.WHITE,
+                    selected ? new Color(0x20, 0x78, 0xD4) : CARD_BORDER,
+                    18, new java.awt.Insets(8, 10, 8, 10)));
         }
     }
 }
