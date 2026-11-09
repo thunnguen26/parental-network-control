@@ -67,8 +67,8 @@ public class ProcessBlockerManager {
         this(Path.of(BLOCKED_PROCESSES_FILE), isWindows());
     }
 
-    /** Constructor test: truyền temp file + OS flag (không đụng file thật). */
-    ProcessBlockerManager(Path listFilePath, boolean windowsOs) {
+    /** Constructor test/integration: truyền file danh sách + OS flag (không đụng file thật). */
+    public ProcessBlockerManager(Path listFilePath, boolean windowsOs) {
         this.listFilePath = listFilePath;
         this.windowsOs = windowsOs;
     }
@@ -205,7 +205,7 @@ public class ProcessBlockerManager {
         boolean denied = false;
         for (String name : normalized) {
             killProcessNow(name);
-            denied |= lastKillResult == KillResult.ACCESS_DENIED;
+            denied |= lastKillResult.get() == KillResult.ACCESS_DENIED;
         }
         return new ReplaceResult(true, denied);
     }
@@ -284,29 +284,36 @@ public class ProcessBlockerManager {
         return name;
     }
 
-    /** Kết quả lần kill gần nhất — test override {@link #killProcessNow} giữ SKIPPED. */
-    private volatile KillResult lastKillResult = KillResult.SKIPPED;
+    /**
+     * Kết quả lần kill gần nhất TRÊN THREAD HIỆN TẠI — test override
+     * {@link #killProcessNow} giữ SKIPPED. Dùng ThreadLocal thay vì field
+     * chung để watchdog 2s không ghi đè kết quả của lệnh BLOCK_PROCESS/
+     * CONFIG_SYNC đang chạy trên thread khác (tránh ACK sai hoặc báo PARTIAL sai).
+     */
+    private final ThreadLocal<KillResult> lastKillResult =
+            ThreadLocal.withInitial(() -> KillResult.SKIPPED);
 
     /** Taskkill MỌI instance đang chạy — best-effort, không ném exception. */
     void killProcessNow(String normalizedProcessName) {
         if (!windowsOs) {
             log.debug("Non-Windows — taskkill skipped for {}", normalizedProcessName);
-            lastKillResult = KillResult.SKIPPED;
+            lastKillResult.set(KillResult.SKIPPED);
             return;
         }
         // Tên file Windows tối đa 260 ký tự — taskkill IM không nhận quá dài
         if (normalizedProcessName.length() > 260) {
             log.warn("Process name too long for taskkill: {}", normalizedProcessName);
-            lastKillResult = KillResult.ERROR;
+            lastKillResult.set(KillResult.ERROR);
             return;
         }
-        lastKillResult = executeTaskkill(normalizedProcessName);
+        lastKillResult.set(executeTaskkill(normalizedProcessName));
     }
 
     /** Gọi kill và trả kết quả của lần gọi này (dùng seam killProcessNow cho test). */
     KillResult killProcessWithResult(String normalizedProcessName) {
         killProcessNow(normalizedProcessName);
-        return lastKillResult != null ? lastKillResult : KillResult.SKIPPED;
+        KillResult result = lastKillResult.get();
+        return result != null ? result : KillResult.SKIPPED;
     }
 
     /** Chạy {@code taskkill /F /IM <name>} với đầy đủ phòng thủ (5s timeout). */
@@ -384,21 +391,26 @@ public class ProcessBlockerManager {
 
     private boolean saveBlockedProcesses(Set<String> blocked) {
         try {
-            if (listFilePath.getParent() != null) {
-                Files.createDirectories(listFilePath.getParent());
+            // Đường dẫn mặc định là tên file tương đối (không có parent) — phải
+            // quy về absolute trước khi tạo file tạm, nếu không
+            // Files.createTempFile(null, ...) sẽ ném NullPointerException và
+            // mọi lệnh BLOCK_PROCESS trên máy thật đều thất bại.
+            Path target = listFilePath.toAbsolutePath();
+            Path parent = target.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
             }
             List<String> quoted = new ArrayList<>();
             for (String name : blocked) {
                 quoted.add("\"" + name + "\"");
             }
             String content = "[" + String.join(",", quoted) + "]";
-            Path temp = Files.createTempFile(
-                    listFilePath.getParent(), "blocked-proc-", ".tmp");
+            Path temp = Files.createTempFile(parent, "blocked-proc-", ".tmp");
             Files.writeString(temp, content, StandardCharsets.UTF_8);
             try {
-                Files.move(temp, listFilePath, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                Files.move(temp, listFilePath, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
             return true;
         } catch (IOException | RuntimeException e) {

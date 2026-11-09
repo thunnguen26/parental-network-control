@@ -22,6 +22,7 @@ import com.parental.client.config.ClientConfig;
 import com.parental.client.device.DeviceInfoCollector;
 import com.parental.client.enforcement.ActionDispatcher;
 import com.parental.client.enforcement.MockNetworkEnforcer;
+import com.parental.client.enforcement.ProcessBlockerManager;
 import com.parental.client.identity.ClientIdentityManager;
 import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.JsonProtocolParser;
@@ -100,10 +101,13 @@ class ClientUnpairIntegrationTest {
         MockNetworkEnforcer enforcer = new MockNetworkEnforcer();
         List<String> unpairReasons = new CopyOnWriteArrayList<>();
         ActionDispatcher dispatcher = new ActionDispatcher(enforcer, msg -> true, null);
+        ProcessBlockerManager processBlocker = new ProcessBlockerManager(
+                tempDir.resolve("blocked-unpair.json"), false);
+        assertTrue(processBlocker.blockProcess("somegame.exe"));
 
         engine = new TcpClientEngine(shortTimingsConfig(), deviceInfoCollector,
                 new JsonProtocolParser(), new ServerCommandHandler() { }, null, null, dispatcher,
-                identityManager, () -> unpairReasons.add("notified"));
+                identityManager, () -> unpairReasons.add("notified"), null, processBlocker);
         engine.start();
         assertTrue(server.awaitHandshake(AWAIT_TIMEOUT_MS), "Handshake phải thành công");
 
@@ -127,6 +131,13 @@ class ClientUnpairIntegrationTest {
         // 4. Listener được báo (app quay về màn hình ghép đôi)
         awaitCondition("unpair listener được gọi", Duration.ofSeconds(10),
                 () -> !unpairReasons.isEmpty());
+
+        // 5. UNPAIR phải xóa chính sách chặn tiến trình — không tiếp tục kill
+        // app sau khi thiết bị đã bị gỡ khỏi quản lý.
+        assertTrue(processBlocker.getBlockedProcesses().isEmpty(),
+                "UNPAIR phải xóa danh sách chặn tiến trình");
+        assertFalse(Files.exists(processBlocker.getListFilePath()),
+                "File blocked_processes.json phải bị xóa khi unpair");
     }
 
     @Test

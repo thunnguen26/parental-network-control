@@ -232,6 +232,18 @@ public class ClientSession {
         return lastConfigAckTimestampMs;
     }
 
+    /** ACK gần nhất cho phiên điều khiển chuột/bàn phím (Mục 3.11). */
+    private volatile com.parental.common.protocol.payload.RemoteInputAckPayload lastRemoteInputAck;
+
+    public com.parental.common.protocol.payload.RemoteInputAckPayload getLastRemoteInputAck() {
+        return lastRemoteInputAck;
+    }
+
+    public void setLastRemoteInputAck(
+            com.parental.common.protocol.payload.RemoteInputAckPayload lastRemoteInputAck) {
+        this.lastRemoteInputAck = lastRemoteInputAck;
+    }
+
     public long getLastHeartbeatTimestamp() {
         return lastHeartbeatTimestamp;
     }

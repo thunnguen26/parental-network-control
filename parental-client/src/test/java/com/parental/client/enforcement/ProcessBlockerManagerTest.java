@@ -161,6 +161,24 @@ class ProcessBlockerManagerTest {
     }
 
     @Test
+    @DisplayName("Đường dẫn mặc định dạng tên file tương đối vẫn persist được (không NPE)")
+    void relativePathWithoutParentPersists() throws Exception {
+        // Production dùng Path.of("blocked_processes.json") — parent == null.
+        // Trước đây createTempFile(null, ...) ném NPE khiến mọi lệnh chặn thất bại.
+        Path relative = Path.of("blocked-relative-" + System.nanoTime() + ".json");
+        ProcessBlockerManager blocker = new ProcessBlockerManager(relative, false);
+        try {
+            assertTrue(blocker.blockProcess("somegame"),
+                    "Đường dẫn tương đối không có parent vẫn phải lưu được");
+            assertTrue(Files.exists(relative), "File danh sách phải được tạo");
+            assertEquals(List.of("somegame.exe"), blocker.getBlockedProcesses());
+        } finally {
+            blocker.clearAll();
+            Files.deleteIfExists(relative);
+        }
+    }
+
+    @Test
     @DisplayName("Non-Windows: blockProcess vẫn persist danh sách nhưng không spawn taskkill")
     void nonWindowsPersistsWithoutKill() {
         ProcessBlockerManager blocker = newManager(false);

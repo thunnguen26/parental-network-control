@@ -27,5 +27,21 @@ public enum MessageType {
      * Frame ảnh màn hình remote (Mục 3.10): client gửi hình ảnh JPEG nén
      * về server để hiển thị trên RemoteScreenDialog.
      */
-    STREAM_FRAME
+    STREAM_FRAME,
+
+    /**
+     * Điều khiển chuột/bàn phím từ xa (Mục 3.11): server xin phép hoặc thu hồi
+     * một phiên điều khiển của đúng client đang xem màn hình.
+     */
+    INPUT_CONTROL,
+    /**
+     * Sự kiện chuột/bàn phím (Mục 3.11): server chỉ gửi khi client đã chấp
+     * thuận phiên hiện tại; client từ chối mọi sự kiện ngoài phiên đó.
+     */
+    INPUT_EVENT,
+    /**
+     * Phản hồi đồng ý/trạng thái phiên điều khiển (Mục 3.11): client báo
+     * ACCEPTED/DECLINED/EXPIRED/STOPPED/REJECTED/UNAVAILABLE.
+     */
+    INPUT_ACK
 }

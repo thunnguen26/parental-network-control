@@ -6,6 +6,12 @@ import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.util.Base64;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.imageio.ImageIO;
@@ -15,17 +21,21 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
+import javax.swing.event.MouseInputAdapter;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.parental.common.protocol.BaseMessage;
 import com.parental.common.protocol.MessageType;
+import com.parental.common.protocol.payload.RemoteInputAckPayload;
 import com.parental.common.protocol.payload.ScreenFramePayload;
 import com.parental.common.protocol.payload.StreamControlPayload;
+import com.parental.server.network.ClientConnectionListener;
 import com.parental.server.network.ClientSession;
 import com.parental.server.network.ClientHandler;
 import com.parental.server.network.ClientSessionManager;
+import com.parental.server.remoteinput.ServerRemoteInputController;
 import com.parental.server.stream.AdaptiveStreamController;
 import static com.parental.ui.DesktopTheme.CANVAS;
 import static com.parental.ui.DesktopTheme.PRIMARY;
@@ -69,12 +79,65 @@ public final class RemoteScreenDialog extends JDialog {
     /** Chặn độ lớn frame Base64 để không overflow label/heap khi network congested. */
     private static final int MAX_DECODE_PIXELS = 1920 * 1080;
 
+    /** Phiên điều khiển có đồng ý (Mục 3.11) — mỗi viewer sở hữu 1 controller. */
+    private final ServerRemoteInputController inputController;
+    private final ClientConnectionListener inputAckListener;
+    /** Gửi input trên thread nền — không chặn EDT bằng I/O socket. */
+    private final ExecutorService inputSender;
+    /** Luồng riêng gửi STOP nếu hàng đợi input đầy để Client nhả input đang giữ. */
+    private final ExecutorService inputStopper;
+    private final AtomicBoolean inputQueueStopRequested = new AtomicBoolean();
+    private JButton controlButton;
+    private JLabel controlStatusLabel;
+    /** Kích thước frame đang hiển thị — dùng quy đổi tọa độ chuột. */
+    private int lastFrameWidth = -1;
+    private int lastFrameHeight = -1;
+
     public RemoteScreenDialog(JFrame owner, String clientId,
                               ClientSessionManager sessionManager, Runnable onClosed) {
         super(owner, "Xem màn hình remote - " + clientId, true);
         this.clientId = Objects.requireNonNull(clientId, "clientId");
         this.sessionManager = Objects.requireNonNull(sessionManager, "sessionManager");
         this.onClosed = Objects.requireNonNull(onClosed, "onClosed");
+
+        this.inputSender = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(64),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "remote-input-sender");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+        this.inputStopper = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "remote-input-stop");
+            thread.setDaemon(true);
+            return thread;
+        });
+        this.inputController = new ServerRemoteInputController(clientId,
+                new ServerRemoteInputController.Transport() {
+                    @Override
+                    public boolean isOnline() {
+                        ClientSession session = sessionManager.get(clientId);
+                        return session != null && session.isConnected();
+                    }
+
+                    @Override
+                    public boolean send(BaseMessage<?> message) {
+                        ClientSession session = sessionManager.get(clientId);
+                        return session != null && session.send(message);
+                    }
+                });
+        this.inputAckListener = new ClientConnectionListener() {
+            @Override
+            public void onRemoteInputAck(ClientSession session, RemoteInputAckPayload ack) {
+                if (!clientId.equals(session.getClientId())) {
+                    return;
+                }
+                if (inputController.onAck(ack)) {
+                    SwingUtilities.invokeLater(RemoteScreenDialog.this::updateControlUi);
+                }
+            }
+        };
+        sessionManager.addConnectionListener(inputAckListener);
 
         setSize(1000, 700);
         setMinimumSize(new Dimension(600, 420));
@@ -97,6 +160,11 @@ public final class RemoteScreenDialog extends JDialog {
         content.add(statusLabel, BorderLayout.NORTH);
         content.add(imagePanel, BorderLayout.CENTER);
 
+        controlButton = new JButton("Điều khiển chuột/bàn phím");
+        controlButton.addActionListener(event -> toggleRemoteInput());
+        controlStatusLabel = new JLabel("Chưa yêu cầu điều khiển", JLabel.LEFT);
+        controlStatusLabel.setForeground(TEXT_PRIMARY);
+
         JButton closeButton = new JButton("Đóng");
         closeButton.addActionListener(event -> dispose());
         closeButton.setBackground(PRIMARY);
@@ -116,18 +184,25 @@ public final class RemoteScreenDialog extends JDialog {
             }
         });
         JPanel buttonRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT));
+        buttonRow.add(controlButton);
         buttonRow.add(maximizeButton);
         buttonRow.add(closeButton);
 
         JPanel bottom = new JPanel(new BorderLayout(8, 8));
+        bottom.add(controlStatusLabel, BorderLayout.NORTH);
         bottom.add(buttonRow, BorderLayout.CENTER);
 
         add(content, BorderLayout.CENTER);
         add(bottom, BorderLayout.SOUTH);
 
+        installInputCapture();
+
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosed(java.awt.event.WindowEvent event) {
+                inputSender.shutdownNow();
+                inputStopper.shutdownNow();
+                sessionManager.removeConnectionListener(inputAckListener);
                 closeStream();
                 if (onClosed != null) {
                     onClosed.run();
@@ -198,10 +273,14 @@ public final class RemoteScreenDialog extends JDialog {
                 closeStream();
                 return;
             }
+            inputController.expireIfNeeded();
+            updateControlUi();
             ScreenFramePayload frame = session.getLastStreamFrame();
             if (frame != null && !frame.jpegBase64().isBlank()
                     && frame.seqNo() != lastRenderedSeq) {
                 lastRenderedSeq = frame.seqNo();
+                lastFrameWidth = frame.width();
+                lastFrameHeight = frame.height();
                 long now = System.currentTimeMillis();
                 lastFrameLatencyMs = frame.tsMs() > 0 && now >= frame.tsMs()
                         ? now - frame.tsMs() : -1;
@@ -256,6 +335,196 @@ public final class RemoteScreenDialog extends JDialog {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Remote input control (Mục 3.11)
+    // ------------------------------------------------------------------
+
+    /**
+     * Bật/tắt yêu cầu điều khiển. Chỉ yêu cầu khi cửa sổ xem màn hình đang mở
+     * và Client đang online; không bao giờ tự bật, luôn chờ Client chấp thuận.
+     */
+    private void toggleRemoteInput() {
+        ServerRemoteInputController.State state = inputController.getState();
+        if (state == ServerRemoteInputController.State.ACTIVE
+                || state == ServerRemoteInputController.State.WAITING_CONSENT) {
+            inputController.stop("Người quản trị đã dừng điều khiển");
+            updateControlUi();
+            return;
+        }
+        if (!streaming.get() || !open.get()) {
+            controlStatusLabel.setText("Chưa mở phiên xem màn hình — không thể điều khiển");
+            return;
+        }
+        ClientSession session = sessionManager.get(clientId);
+        if (session == null || !session.isConnected()) {
+            controlStatusLabel.setText("Client không trực tuyến — không thể điều khiển");
+            return;
+        }
+        inputQueueStopRequested.set(false);
+        inputController.requestControl();
+        updateControlUi();
+    }
+
+    /** Cập nhật nhãn/trạng thái nút điều khiển (chạy trên EDT). */
+    private void updateControlUi() {
+        if (controlButton == null || controlStatusLabel == null) {
+            return;
+        }
+        ClientSession session = sessionManager.get(clientId);
+        boolean online = session != null && session.isConnected();
+        ServerRemoteInputController.State state = inputController.getState();
+        switch (state) {
+            case WAITING_CONSENT -> {
+                controlButton.setText("Hủy yêu cầu điều khiển");
+                controlButton.setEnabled(online);
+                controlStatusLabel.setText("Đang chờ Client chấp nhận yêu cầu điều khiển...");
+                controlStatusLabel.setForeground(new java.awt.Color(0xB4, 0x53, 0x09));
+            }
+            case ACTIVE -> {
+                controlButton.setText("Dừng điều khiển");
+                controlButton.setEnabled(online);
+                controlStatusLabel.setText("ĐANG ĐIỀU KHIỂN — nhấp vào hình để dùng bàn phím; "
+                        + "nhấn Dừng để kết thúc ngay.");
+                controlStatusLabel.setForeground(new java.awt.Color(0x15, 0x80, 0x3D));
+            }
+            default -> {
+                controlButton.setText("Điều khiển chuột/bàn phím");
+                controlButton.setEnabled(online && streaming.get() && open.get());
+                controlStatusLabel.setText(inputController.getLastStatus());
+                controlStatusLabel.setForeground(TEXT_PRIMARY);
+            }
+        }
+    }
+
+    /** Gắn listener chuột/bàn phím — chỉ gửi khi phiên đang ACTIVE. */
+    private void installInputCapture() {
+        imagePanel.setFocusable(true);
+        MouseInputAdapter mouse = new MouseInputAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent event) {
+                imagePanel.requestFocusInWindow();
+                submitMouseButton(event, true);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent event) {
+                submitMouseButton(event, false);
+            }
+
+            @Override
+            public void mouseMoved(java.awt.event.MouseEvent event) {
+                submitMouseMove(event);
+            }
+
+            @Override
+            public void mouseDragged(java.awt.event.MouseEvent event) {
+                submitMouseMove(event);
+            }
+
+            @Override
+            public void mouseWheelMoved(java.awt.event.MouseWheelEvent event) {
+                java.awt.Point point = imagePoint(event.getX(), event.getY());
+                if (point == null || !isControlActive()) {
+                    return;
+                }
+                int notches = event.getWheelRotation();
+                int width = lastFrameWidth;
+                int height = lastFrameHeight;
+                submitInput(() -> inputController.sendMouseWheel(notches,
+                        point.x, point.y, width, height));
+            }
+        };
+        imagePanel.addMouseListener(mouse);
+        imagePanel.addMouseMotionListener(mouse);
+        imagePanel.addMouseWheelListener(mouse);
+        imagePanel.addKeyListener(new java.awt.event.KeyAdapter() {
+            @Override
+            public void keyPressed(java.awt.event.KeyEvent event) {
+                if (!isControlActive()) {
+                    return;
+                }
+                int keyCode = event.getKeyCode();
+                submitInput(() -> inputController.sendKey(true, keyCode));
+            }
+
+            @Override
+            public void keyReleased(java.awt.event.KeyEvent event) {
+                if (!isControlActive()) {
+                    return;
+                }
+                int keyCode = event.getKeyCode();
+                submitInput(() -> inputController.sendKey(false, keyCode));
+            }
+        });
+    }
+
+    private boolean isControlActive() {
+        return open.get() && lastFrameWidth > 0 && lastFrameHeight > 0
+                && inputController.getState() == ServerRemoteInputController.State.ACTIVE;
+    }
+
+    private void submitMouseMove(java.awt.event.MouseEvent event) {
+        if (!isControlActive()) {
+            return;
+        }
+        java.awt.Point point = imagePoint(event.getX(), event.getY());
+        if (point == null) {
+            return;
+        }
+        int width = lastFrameWidth;
+        int height = lastFrameHeight;
+        submitInput(() -> inputController.sendMouseMove(point.x, point.y, width, height));
+    }
+
+    private void submitMouseButton(java.awt.event.MouseEvent event, boolean down) {
+        if (!isControlActive()) {
+            return;
+        }
+        int button = event.getButton();
+        if (button < 1 || button > 3) {
+            return;
+        }
+        java.awt.Point point = ScreenImagePanel.toImagePointForMouseButton(
+                event.getX(), event.getY(),
+                lastFrameWidth, lastFrameHeight, imagePanel.getWidth(), imagePanel.getHeight(), down);
+        if (point == null) {
+            return;
+        }
+        int width = lastFrameWidth;
+        int height = lastFrameHeight;
+        submitInput(() -> inputController.sendMouseButton(down, button,
+                point.x, point.y, width, height));
+    }
+
+    /** Quy đổi điểm panel → pixel frame; null khi ngoài vùng ảnh. */
+    private java.awt.Point imagePoint(int panelX, int panelY) {
+        return ScreenImagePanel.toImagePoint(panelX, panelY,
+                lastFrameWidth, lastFrameHeight, imagePanel.getWidth(), imagePanel.getHeight());
+    }
+
+    /** Gửi trên thread nền, bỏ qua khi hàng đợi đầy (không block EDT). */
+    private void submitInput(Runnable task) {
+        if (!open.get()) {
+            return;
+        }
+        try {
+            inputSender.execute(task);
+        } catch (RejectedExecutionException e) {
+            if (inputQueueStopRequested.compareAndSet(false, true)) {
+                log.warn("[RemoteScreenDialog] Input queue saturated — stopping control session");
+                try {
+                    inputStopper.execute(() -> {
+                        inputController.stop("Hàng đợi input quá tải — dừng phiên an toàn");
+                        SwingUtilities.invokeLater(this::updateControlUi);
+                    });
+                } catch (RejectedExecutionException stopError) {
+                    log.warn("[RemoteScreenDialog] Could not schedule safe input stop: {}",
+                            stopError.getMessage());
+                }
+            }
+        }
+    }
+
     /**
      * Áp quyết định adaptive: nếu controller đổi cấu hình, gửi lại
      * {@code STREAM_CONTROL START} với FPS/quality/width mới. Client hiện tại
@@ -282,6 +551,10 @@ public final class RemoteScreenDialog extends JDialog {
 
     /** Dừng stream + gửi STOP. Gọi khi đóng dialog hoặc mất kết nối. */
     private void closeStream() {
+        // Mục 3.11: đóng viewer/mất kết nối phải thu hồi quyền điều khiển.
+        inputController.stop("Cửa sổ xem màn hình đã đóng hoặc mất kết nối");
+        lastFrameWidth = -1;
+        lastFrameHeight = -1;
         if (!streaming.compareAndSet(true, false)) {
             return;
         }

@@ -10,7 +10,9 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
@@ -31,6 +33,7 @@ import com.parental.client.enforcement.ProcessBlockerManager;
 import com.parental.client.device.DeviceInfoCollector;
 import com.parental.client.screen.ScreenCaptureService;
 import com.parental.client.identity.ClientIdentityManager;
+import com.parental.client.input.RemoteInputController;
 import com.parental.client.metrics.NetworkMetricsCollector;
 import com.parental.client.metrics.OshiNetworkMetricsCollector;
 import com.parental.common.protocol.BaseMessage;
@@ -41,9 +44,10 @@ import com.parental.common.protocol.payload.ActivityReportPayload;
 import com.parental.common.protocol.payload.CommandPayload;
 import com.parental.common.protocol.payload.ConfigSyncPayload;
 import com.parental.common.protocol.payload.HandshakePayload;
-import com.parental.common.protocol.payload.ScreenFramePayload;
-import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.common.protocol.payload.MetricsPayload;
+import com.parental.common.protocol.payload.RemoteInputAckPayload;
+import com.parental.common.protocol.payload.RemoteInputControlPayload;
+import com.parental.common.protocol.payload.RemoteInputEventPayload;
 import com.parental.common.protocol.payload.ScreenFramePayload;
 import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.common.protocol.payload.UnpairPayload;
@@ -139,6 +143,12 @@ public class TcpClientEngine implements AutoCloseable {
      */
     private final ScreenCaptureService screenCaptureService;
 
+    /**
+     * Phiên điều khiển chuột/bàn phím có đồng ý (Mục 3.11) — không bao giờ
+     * tự bật; engine chỉ chuyển tiếp yêu cầu/sự kiện tới controller.
+     */
+    private final RemoteInputController remoteInputController;
+
     /** Scheduler riêng gửi STREAM_FRAME định kỳ khi stream đang hoạt động. */
     private volatile ScheduledExecutorService screenCaptureScheduler;
     private volatile ScheduledFuture<?> screenCaptureTask;
@@ -156,6 +166,8 @@ public class TcpClientEngine implements AutoCloseable {
     private volatile ScheduledExecutorService metricsScheduler;
     /** Scheduler riêng cho ACTIVITY_REPORT — thu thập có thể tốn ~3s (PowerShell). */
     private volatile ScheduledExecutorService activityScheduler;
+    /** Gửi INPUT_ACK ngoài EDT (consent/stop callback có thể chạy trên EDT). */
+    private volatile ExecutorService remoteInputAckExecutor;
     private volatile Thread connectorThread;
     private volatile Thread readerThread;
     /** JVM shutdown hook — đăng ký khi start(), hủy khi stop() để không rò rỉ. */
@@ -236,7 +248,8 @@ public class TcpClientEngine implements AutoCloseable {
         // field luôn null nên STREAM_CONTROL START bị bỏ qua và client không bao giờ gửi frame.
         this(config, deviceInfoCollector, parser, commandHandler, metricsCollector,
                 hostsFileManager, actionDispatcher, identityManager, unpairListener,
-                activityCollector, processBlockerManager, new ScreenCaptureService());
+                activityCollector, processBlockerManager, new ScreenCaptureService(),
+                RemoteInputController.createDefault());
     }
 
     /**
@@ -250,6 +263,24 @@ public class TcpClientEngine implements AutoCloseable {
                     Runnable unpairListener, ActivityCollector activityCollector,
                     com.parental.client.enforcement.ProcessBlockerManager processBlockerManager,
                     ScreenCaptureService screenCaptureService) {
+        this(config, deviceInfoCollector, parser, commandHandler, metricsCollector,
+                hostsFileManager, actionDispatcher, identityManager, unpairListener,
+                activityCollector, processBlockerManager, screenCaptureService,
+                RemoteInputController.createDefault());
+    }
+
+    /**
+     * Full constructor with injectable remote-input controller (test seam).
+     * Truyền {@code null} cho controller để dùng controller production.
+     */
+    TcpClientEngine(ClientConfig config, DeviceInfoCollector deviceInfoCollector,
+                    JsonProtocolParser parser, ServerCommandHandler commandHandler,
+                    NetworkMetricsCollector metricsCollector, HostsFileManager hostsFileManager,
+                    ActionDispatcher actionDispatcher, ClientIdentityManager identityManager,
+                    Runnable unpairListener, ActivityCollector activityCollector,
+                    com.parental.client.enforcement.ProcessBlockerManager processBlockerManager,
+                    ScreenCaptureService screenCaptureService,
+                    RemoteInputController remoteInputController) {
         this.config = Objects.requireNonNull(config, "config");
         this.deviceInfoCollector = Objects.requireNonNull(deviceInfoCollector, "deviceInfoCollector");
         this.parser = Objects.requireNonNull(parser, "parser");
@@ -263,6 +294,9 @@ public class TcpClientEngine implements AutoCloseable {
         this.processBlockerManager = processBlockerManager; // nullable — null = không sync qua CONFIG_SYNC
         this.screenCaptureService = screenCaptureService != null
                 ? screenCaptureService : new ScreenCaptureService();
+        this.remoteInputController = remoteInputController != null
+                ? remoteInputController : RemoteInputController.createDefault();
+        this.remoteInputController.setAckSender(this::sendRemoteInputAck);
     }
 
     // ------------------------------------------------------------------
@@ -346,12 +380,24 @@ public class TcpClientEngine implements AutoCloseable {
         if (screenCaptureService != null) {
             screenCaptureService.stop();
         }
+        // Mục 3.11: dừng phiên điều khiển (nếu có) và nhả mọi phím/nút đang giữ.
+        remoteInputController.stopForConnectionLoss();
+        shutdownRemoteInputAckExecutor();
         // Đóng socket ĐẦU TIÊN để đánh thức readLine() đang block trên Windows.
         closeConnectionQuietly();
         // Task 3.3: luôn khôi phục mạng khi client tắt (xóa firewall rule) —
         // không để máy con trong trạng thái mất mạng vĩnh viễn.
         if (actionDispatcher != null) {
             actionDispatcher.cleanup();
+        }
+        // Engine đã dừng thì watchdog chặn app không được tiếp tục kill ngầm.
+        // (UNPAIR còn xóa hẳn danh sách chặn ở handleUnpair.)
+        if (processBlockerManager != null) {
+            try {
+                processBlockerManager.stopWatchdog();
+            } catch (RuntimeException e) {
+                log.warn("Stopping process watchdog failed: {}", e.getMessage());
+            }
         }
 
         Thread connector = connectorThread;
@@ -983,6 +1029,9 @@ public class TcpClientEngine implements AutoCloseable {
             case UNPAIR -> handleUnpair(message);
             case STREAM_CONTROL -> handleStreamControl(message);
             case STREAM_FRAME -> handleStreamFrame(message);
+            case INPUT_CONTROL -> handleRemoteInputControl(message);
+            case INPUT_EVENT -> handleRemoteInputEvent(message);
+            case INPUT_ACK -> log.debug("INPUT_ACK from server ignored (client sends only)");
             case HANDSHAKE, HEARTBEAT, METRICS_REPORT, PAIR_REQUEST, PAIR_RESPONSE ->
                     log.debug("Unexpected {} from server, ignored", message.getType());
             case ACTIVITY_REPORT -> log.debug("ACTIVITY_REPORT from server ignored (client does not expect)");
@@ -1015,6 +1064,17 @@ public class TcpClientEngine implements AutoCloseable {
                 hostsFileManager.clearBlocks(); // gỡ domains block
             } catch (RuntimeException e) {
                 log.error("UNPAIR clear hosts blocks failed: {}", e.getMessage());
+            }
+        }
+        // Thiết bị đã bị gỡ khỏi quản lý: dừng watchdog + xóa danh sách chặn
+        // tiến trình. Nếu chỉ dừng engine mà giữ file, watchdog cũ vẫn kill
+        // app và lần ghép đôi sau sẽ áp lại chính sách cũ trước khi sync.
+        if (processBlockerManager != null) {
+            try {
+                processBlockerManager.stopWatchdog();
+                processBlockerManager.clearAll();
+            } catch (RuntimeException e) {
+                log.error("UNPAIR clear blocked processes failed: {}", e.getMessage());
             }
         }
 
@@ -1086,6 +1146,106 @@ public class TcpClientEngine implements AutoCloseable {
                     frame.width(), frame.height(), frame.seqNo(), frame.quality(), frame.tsMs());
         } else {
             log.warn("STREAM_FRAME with unexpected payload: {}", message.getPayload());
+        }
+    }
+
+    /**
+     * INPUT_CONTROL (Mục 3.11): REQUEST → hỏi người dùng tại máy Client; STOP
+     * → thu hồi đúng phiên hiện tại. Không tự chấp nhận, không bật điều khiển
+     * khi thiếu hộp thoại/không có GUI.
+     */
+    private void handleRemoteInputControl(BaseMessage<?> message) {
+        if (!(message.getPayload() instanceof RemoteInputControlPayload control)) {
+            log.warn("INPUT_CONTROL with unexpected payload: {}", message.getPayload());
+            return;
+        }
+        if (RemoteInputControlPayload.ACTION_REQUEST.equalsIgnoreCase(control.action())) {
+            RemoteInputController.RequestResult result = remoteInputController.handleStartRequest(
+                    control.sessionId(), control.effectiveConsentTimeoutSeconds(),
+                    control.effectiveMaxSessionSeconds());
+            log.info("INPUT_CONTROL REQUEST {} -> {}", control.sessionId(), result);
+        } else if (RemoteInputControlPayload.ACTION_STOP.equalsIgnoreCase(control.action())) {
+            remoteInputController.handleStopRequest(control.sessionId());
+        } else {
+            log.warn("INPUT_CONTROL action không hợp lệ: {}", control.action());
+        }
+    }
+
+    /**
+     * INPUT_EVENT (Mục 3.11): controller kiểm tra phiên đã được chấp thuận,
+     * đúng sessionId/seqNo/tọa độ/loại/tốc độ trước khi inject. Sự kiện bị từ
+     * chối không chạm tới Robot.
+     */
+    private void handleRemoteInputEvent(BaseMessage<?> message) {
+        if (!(message.getPayload() instanceof RemoteInputEventPayload event)) {
+            log.warn("INPUT_EVENT with unexpected payload: {}", message.getPayload());
+            return;
+        }
+        RemoteInputController.EventResult result = remoteInputController.handleEvent(event);
+        if (result != RemoteInputController.EventResult.APPLIED) {
+            log.debug("INPUT_EVENT rejected ({}): {}", result, event.eventType());
+        }
+    }
+
+    /**
+     * Gửi INPUT_ACK (Mục 3.11) trên thread nền — không chứa nội dung người
+     * dùng gõ, không chặn EDT khi callback đồng ý/dừng chạy trên Swing.
+     */
+    private void sendRemoteInputAck(RemoteInputAckPayload ack) {
+        if (ack == null) {
+            return;
+        }
+        try {
+            remoteInputAckExecutor().execute(() -> sendRemoteInputAckNow(ack));
+        } catch (RejectedExecutionException e) {
+            log.debug("INPUT_ACK dropped (executor stopping): {}", ack.status());
+        }
+    }
+
+    private synchronized ExecutorService remoteInputAckExecutor() {
+        ExecutorService executor = remoteInputAckExecutor;
+        if (executor == null || executor.isShutdown()) {
+            executor = Executors.newSingleThreadExecutor(
+                    namedDaemonFactory("parental-client-input-ack"));
+            remoteInputAckExecutor = executor;
+        }
+        return executor;
+    }
+
+    private void shutdownRemoteInputAckExecutor() {
+        ExecutorService executor;
+        synchronized (this) {
+            executor = remoteInputAckExecutor;
+            remoteInputAckExecutor = null;
+        }
+        if (executor != null) {
+            executor.shutdownNow();
+        }
+    }
+
+    private void sendRemoteInputAckNow(RemoteInputAckPayload ack) {
+        String line;
+        try {
+            line = parser.toLine(BaseMessage.of(MessageType.INPUT_ACK,
+                    config.getClientId(), ack));
+        } catch (ProtocolParseException e) {
+            log.error("Serialize INPUT_ACK failed ({}): {}", ack.status(), e.getMessage());
+            return;
+        }
+        try {
+            synchronized (writeLock) {
+                Writer w = writer;
+                Socket s = socket;
+                if (w == null || s == null || s.isClosed()) {
+                    return;
+                }
+                w.write(line);
+                w.flush();
+            }
+            log.info("INPUT_ACK sent: status={} (sessionId={})",
+                    ack.status(), ack.sessionId());
+        } catch (IOException e) {
+            log.warn("Failed to send INPUT_ACK ({}): {}", ack.status(), e.getMessage());
         }
     }
 
@@ -1267,6 +1427,8 @@ public class TcpClientEngine implements AutoCloseable {
         if (screenCaptureService != null) {
             screenCaptureService.stop();
         }
+        // Mục 3.11: mất kết nối → thu hồi phiên điều khiển + nhả phím/nút.
+        remoteInputController.stopForConnectionLoss();
         Socket s = socket;
         socket = null;
         writer = null;

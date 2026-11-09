@@ -13,6 +13,9 @@ import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.PairRequestPayload;
 import com.parental.common.protocol.payload.PairResponsePayload;
+import com.parental.common.protocol.payload.RemoteInputAckPayload;
+import com.parental.common.protocol.payload.RemoteInputControlPayload;
+import com.parental.common.protocol.payload.RemoteInputEventPayload;
 import com.parental.common.protocol.payload.ScreenFramePayload;
 import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.common.protocol.payload.UnpairPayload;
@@ -145,6 +148,9 @@ public final class JsonProtocolParser {
             case ACTIVITY_REPORT -> ActivityReportPayload.class;
             case STREAM_CONTROL -> StreamControlPayload.class;
             case STREAM_FRAME -> ScreenFramePayload.class;
+            case INPUT_CONTROL -> RemoteInputControlPayload.class;
+            case INPUT_EVENT -> RemoteInputEventPayload.class;
+            case INPUT_ACK -> RemoteInputAckPayload.class;
             case HEARTBEAT, ACK -> Map.class; // payload rỗng: {}
         };
 

@@ -36,6 +36,39 @@ final class ScreenImagePanel extends JPanel {
         repaint();
     }
 
+    /**
+     * Quy đổi một điểm trên panel sang pixel của frame ảnh đang hiển thị.
+     * Trả {@code null} nếu điểm nằm ngoài vùng ảnh (viền đen letterbox) hoặc
+     * frame/kích thước không hợp lệ.
+     */
+    static java.awt.Point toImagePoint(int panelX, int panelY,
+                                       int imageWidth, int imageHeight, int areaWidth, int areaHeight) {
+        Rectangle bounds = fitBounds(imageWidth, imageHeight, areaWidth, areaHeight);
+        if (bounds.width <= 0 || bounds.height <= 0) {
+            return null;
+        }
+        if (panelX < bounds.x || panelY < bounds.y
+                || panelX >= bounds.x + bounds.width || panelY >= bounds.y + bounds.height) {
+            return null;
+        }
+        int imageX = (int) Math.floor((panelX - bounds.x)
+                * (imageWidth / (double) bounds.width));
+        int imageY = (int) Math.floor((panelY - bounds.y)
+                * (imageHeight / (double) bounds.height));
+        imageX = Math.max(0, Math.min(imageWidth - 1, imageX));
+        imageY = Math.max(0, Math.min(imageHeight - 1, imageY));
+        return new java.awt.Point(imageX, imageY);
+    }
+
+    static java.awt.Point toImagePointForMouseButton(int panelX, int panelY,
+                                                    int imageWidth, int imageHeight,
+                                                    int areaWidth, int areaHeight,
+                                                    boolean down) {
+        java.awt.Point point = toImagePoint(panelX, panelY,
+                imageWidth, imageHeight, areaWidth, areaHeight);
+        return point == null && !down ? new java.awt.Point(0, 0) : point;
+    }
+
     static Rectangle fitBounds(int imageWidth, int imageHeight, int areaWidth, int areaHeight) {
         if (imageWidth <= 0 || imageHeight <= 0 || areaWidth <= 0 || areaHeight <= 0) {
             return new Rectangle();

@@ -90,6 +90,18 @@ public class ClientSessionManager {
         }
     }
 
+    /** Fire callback INPUT_ACK (Mục 3.11) cho mọi listener (viewer cập nhật consent). */
+    public void fireRemoteInputAck(ClientSession session,
+            com.parental.common.protocol.payload.RemoteInputAckPayload ack) {
+        for (ClientConnectionListener listener : listeners) {
+            try {
+                listener.onRemoteInputAck(session, ack);
+            } catch (RuntimeException e) {
+                log.error("ConnectionListener.onRemoteInputAck threw: {}", e.getMessage());
+            }
+        }
+    }
+
     /**
      * Đăng ký phiên mới. Nếu clientId đã tồn tại (reconnect đè lên) thì phiên
      * cũ bị đóng trước khi thay thế (reason REPLACED) để không rò rỉ socket.

@@ -39,4 +39,13 @@ public interface ClientConnectionListener {
     default void onConfigAck(ClientSession session, long revision,
             String status, String message) {
     }
+
+    /**
+     * Client vừa ACK phiên điều khiển chuột/bàn phím (PROTOCOL.md Mục 3.11)
+     * — ACCEPTED/DECLINED/EXPIRED/STOPPED/REJECTED/UNAVAILABLE. Viewer dùng
+     * để chỉ bật chuyển input khi thực sự được chấp thuận.
+     */
+    default void onRemoteInputAck(ClientSession session,
+            com.parental.common.protocol.payload.RemoteInputAckPayload ack) {
+    }
 }

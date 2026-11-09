@@ -25,6 +25,7 @@ import com.parental.common.protocol.payload.HandshakePayload;
 import com.parental.common.protocol.payload.MetricsPayload;
 import com.parental.common.protocol.payload.PairRequestPayload;
 import com.parental.common.protocol.payload.PairResponsePayload;
+import com.parental.common.protocol.payload.RemoteInputAckPayload;
 import com.parental.common.protocol.payload.ScreenFramePayload;
 import com.parental.common.protocol.payload.StreamControlPayload;
 import com.parental.server.db.ActivityDao;
@@ -314,6 +315,24 @@ public class ClientHandler implements Runnable {
                         sessionManager.fireActivityReport(session, activity);
                     }
                 }
+                case INPUT_ACK -> {
+                    // Mục 3.11: ACK đồng ý/trạng thái phiên điều khiển — chỉ
+                    // chuyển cho viewer khi đúng session; không lưu nội dung
+                    // người dùng gõ (payload chỉ có trạng thái).
+                    session.setLastHeartbeatTimestamp(Instant.now().getEpochSecond());
+                    if (message.getPayload() instanceof RemoteInputAckPayload ack
+                            && !ack.sessionId().isBlank() && !ack.status().isBlank()) {
+                        session.setLastRemoteInputAck(ack);
+                        sessionManager.fireRemoteInputAck(session, ack);
+                        log.debug("[{}] INPUT_ACK status={} sessionId={}",
+                                session.getClientId(), ack.status(), ack.sessionId());
+                    } else {
+                        log.warn("[{}] INPUT_ACK với payload không hợp lệ", session.getClientId());
+                    }
+                }
+                case INPUT_CONTROL, INPUT_EVENT ->
+                        log.warn("[{}] {} from client ignored (server-only message)",
+                                session.getClientId(), message.getType());
                 case HANDSHAKE ->
                         log.warn("[{}] Redundant HANDSHAKE ignored", session.getClientId());
                 case STREAM_CONTROL -> {
